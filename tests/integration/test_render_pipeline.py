@@ -1,0 +1,122 @@
+"""End-to-end render pipeline with a mocked AtlasCloud client.
+
+Exercises: POST /render -> submit -> background worker polls -> download ->
+RenderOutput persisted -> job status succeeded.
+"""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlmodel import Session, SQLModel, create_engine
+
+import app.models  # noqa: F401
+from app.database import get_session
+
+
+class FakeLLM:
+    async def generate(self, *, response_model, **kw):
+        from app.schemas import QAResult
+
+        assert response_model is QAResult
+        return QAResult(score=8, passed=True, issues=[], recommendation="accept")
+
+
+class FakeAtlas:
+    def __init__(self):
+        self.videos = 0
+
+    async def upload_media(self, file_path: str) -> str:
+        return f"https://static.atlascloud.ai/up/{Path(file_path).name}"
+
+    async def generate_video(self, payload: dict) -> str:
+        self.videos += 1
+        return f"pred_{self.videos}"
+
+    async def get_prediction(self, pid: str) -> dict:
+        return {"status": "completed", "outputs": ["https://static.atlascloud.ai/out.mp4"]}
+
+
+@pytest.fixture
+def client(monkeypatch, tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path/'t.db'}", connect_args={"check_same_thread": False}
+    )
+    SQLModel.metadata.create_all(engine)
+    # Point the app's engine (used by the worker) at the temp DB.
+    monkeypatch.setattr("app.database.engine", engine)
+    monkeypatch.setattr("app.services.poll_service.engine", engine)
+    monkeypatch.setattr("app.jobs.worker.reconcile_pending", lambda: 0)
+
+    fake = FakeAtlas()
+    monkeypatch.setattr("app.services.render_service.get_atlas_client", lambda: fake)
+    monkeypatch.setattr("app.providers.atlascloud_video.get_atlas_client", lambda: fake)
+
+    async def fake_download(url, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"fake-mp4")
+        return dest
+
+    async def fake_thumb(video_path, dest, **kw):
+        return None
+
+    monkeypatch.setattr("app.services.media.download", fake_download)
+    monkeypatch.setattr("app.services.poll_service.media.download", fake_download)
+    monkeypatch.setattr("app.services.poll_service.media.make_thumbnail", fake_thumb)
+    # QA runs automatically after a successful render; mock its LLM.
+    monkeypatch.setattr("app.agents.base.get_llm_client", lambda: FakeLLM())
+
+    # Seed a reference asset to resolve.
+    from app.models import Asset
+
+    with Session(engine) as s:
+        s.add(Asset(id="asset_ref", type="character_reference", file_path=str(tmp_path / "ref.png")))
+        s.commit()
+    (tmp_path / "ref.png").write_bytes(b"img")
+
+    from app.main import create_app
+
+    app = create_app()
+
+    def _session():
+        with Session(engine) as s:
+            yield s
+
+    app.dependency_overrides[get_session] = _session
+    with TestClient(app) as c:  # context form runs lifespan (starts workers)
+        yield c
+
+
+def test_render_job_succeeds(client):
+    spec = {
+        "scene_id": "scene_x",
+        "shot_id": "shot_x",
+        "duration": 5,
+        "prompt": "@Image color river streaks across black",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+        "sound": True,
+        "keep_original_sound": True,
+    }
+    resp = client.post("/render", json=spec)
+    assert resp.status_code == 202
+    job_id = resp.json()["job_id"]
+
+    # Wait for the background worker to finish.
+    status = None
+    for _ in range(50):
+        body = client.get(f"/render-jobs/{job_id}").json()
+        status = body["job"]["status"]
+        if status in ("succeeded", "failed"):
+            break
+        time.sleep(0.1)
+
+    assert status == "succeeded", body
+    outputs = body["outputs"]
+    assert len(outputs) == 1
+    assert outputs[0]["video_path"].endswith(".mp4")
+    # QA ran automatically and persisted a score + recommendation.
+    assert outputs[0]["score"] == 8
+    assert outputs[0]["qa_json"]["recommendation"] == "accept"

@@ -1,0 +1,26 @@
+"""Pydantic wire/agent schemas — the structured outputs the AI must produce.
+
+These are deliberately separate from the SQLModel tables in `app.models`:
+agent output shape must not be coupled to DB shape (the `*_json` columns).
+"""
+
+from app.schemas.asset_schema import AssetMetadata
+from app.schemas.character_schema import CharacterBible
+from app.schemas.qa_schema import QAResult
+from app.schemas.render_schema import ReferenceImage, RenderSpec, StoryboardShot
+from app.schemas.scene_schema import SceneSpec, ScriptDraft, ScriptScene, ShotSpec
+from app.schemas.shot_schema import ShotList
+
+__all__ = [
+    "AssetMetadata",
+    "CharacterBible",
+    "QAResult",
+    "ReferenceImage",
+    "RenderSpec",
+    "StoryboardShot",
+    "SceneSpec",
+    "ScriptDraft",
+    "ScriptScene",
+    "ShotSpec",
+    "ShotList",
+]

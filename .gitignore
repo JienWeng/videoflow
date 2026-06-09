@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+db.sqlite
+db.sqlite-*
+storage/assets/*
+storage/characters/*
+storage/outputs/*
+!storage/**/.gitkeep
+.pytest_cache/
+*.egg-info/

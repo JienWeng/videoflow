@@ -1,0 +1,101 @@
+"""Asset persistence + recognition orchestration."""
+
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+from sqlmodel import Session, select
+
+from app.agents.asset_recogniser import recognise_asset
+from app.config import get_settings
+from app.errors import NotFoundError
+from app.models import Asset, Character
+from app.models.base import new_id
+
+
+def save_upload(
+    session: Session,
+    *,
+    filename: str,
+    fileobj,
+    asset_type: str | None = None,
+    character_id: str | None = None,
+) -> Asset:
+    """Persist an uploaded file to storage and create an Asset row.
+
+    If `character_id` is given, the asset is linked to that character and added to
+    its reference_asset_ids — so an uploaded photo can be used directly as a video
+    reference image, exactly like an AI-generated reference sheet. When linking a
+    character and no type is given, the asset defaults to character_reference.
+    """
+    if asset_type is None:
+        asset_type = "character_reference" if character_id else "prop"
+    settings = get_settings()
+    settings.ensure_dirs()
+    asset_id = new_id("asset")
+    suffix = Path(filename).suffix
+
+    if character_id:
+        char = session.get(Character, character_id)
+        if char is None:
+            raise NotFoundError(f"character {character_id} not found")
+        dest = settings.characters_dir / character_id / f"{asset_id}{suffix}"
+    else:
+        char = None
+        dest = settings.assets_dir / f"{asset_id}{suffix}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    with dest.open("wb") as out:
+        shutil.copyfileobj(fileobj, out)
+
+    asset = Asset(
+        id=asset_id,
+        type=asset_type,
+        name=Path(filename).stem,
+        file_path=str(dest),
+        character_id=character_id,
+    )
+    session.add(asset)
+
+    if char is not None:
+        ref_ids = list(char.reference_asset_ids_json or [])
+        ref_ids.append(asset_id)
+        char.reference_asset_ids_json = ref_ids
+        session.add(char)
+
+    session.commit()
+    session.refresh(asset)
+    return asset
+
+
+def get_asset(session: Session, asset_id: str) -> Asset:
+    asset = session.get(Asset, asset_id)
+    if asset is None:
+        raise NotFoundError(f"asset {asset_id} not found")
+    return asset
+
+
+def list_assets(session: Session) -> list[Asset]:
+    return list(session.exec(select(Asset)).all())
+
+
+async def recognise(session: Session, asset_id: str, description: str) -> Asset:
+    """Run the asset recogniser and persist its metadata onto the asset."""
+    asset = get_asset(session, asset_id)
+    known = [c.id for c in session.exec(select(Character)).all()]
+    meta = await recognise_asset(
+        asset_id=asset.id,
+        filename=asset.file_path or asset.name,
+        description=description,
+        known_character_ids=known,
+    )
+    asset.type = meta.asset_type
+    asset.name = meta.name
+    asset.tags_json = meta.tags
+    asset.description = meta.description
+    asset.character_id = meta.character_id
+    session.add(asset)
+    session.commit()
+    session.refresh(asset)
+    return asset
