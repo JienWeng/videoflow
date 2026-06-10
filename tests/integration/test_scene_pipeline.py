@@ -47,12 +47,14 @@ class FakeLLM:
                         asset_type="prop",
                         description="a shiny red cup",
                         image_prompt="a shiny red ceramic cup, warm daylight, 3D cartoon",
+                        shot_orders=[0],
                     ),
                     PlannedAsset(
                         name="Picnic Blanket",
                         asset_type="prop",
                         description="a checkered blanket",
                         image_prompt="a checkered picnic blanket on grass, warm daylight",
+                        shot_orders=[0],
                     ),
                 ],
                 reasoning="scene needs props",
@@ -386,6 +388,40 @@ def test_generate_scene_assets(ctx):
     for a in assets:
         assert a["id"] in ids
         assert ("scene_1", a["id"]) in pairs
+
+    # Auto-tagging: the planned shot_orders=[0] means shot_1 now references
+    # the new assets in asset_ids_json AND mentions each as @Name in its prompt.
+    shot = client.get("/scenes/scene_1/shots").json()[0]
+    assert shot["id"] == "shot_1"
+    for a in assets:
+        assert a["id"] in shot["asset_ids_json"]
+        assert f"@{a['name']}" in shot["prompt"]
+    # shot_2 (order 1) untouched
+    shot2 = client.get("/scenes/scene_1/shots").json()[1]
+    assert shot2["asset_ids_json"] in (None, [])
+    assert "@" not in shot2["prompt"]
+
+
+def test_plan_scene_assets_endpoint_no_generation(ctx):
+    client, fake = ctx
+    resp = client.post(
+        "/scenes/scene_1/assets/plan", json={"instruction": "need a red cup"}
+    )
+    assert resp.status_code == 200, resp.text
+    plan = resp.json()
+    names = {a["name"] for a in plan["assets"]}
+    assert names == {"Red Cup", "Picnic Blanket"}
+    assert plan["reasoning"]
+    assert plan["assets"][0]["shot_orders"] == [0]
+
+    # Plan-only: no images generated, no Asset rows created, shots untouched.
+    assert fake.image_payloads == []
+    g = client.get("/graph").json()
+    asset_nodes = [n for n in g["nodes"] if n["id"].startswith("asset")]
+    assert {n["id"] for n in asset_nodes} == {"asset_char", "asset_bg"}
+    shot = client.get("/scenes/scene_1/shots").json()[0]
+    assert shot["asset_ids_json"] in (None, [])
+    assert "@" not in shot["prompt"]
 
 
 def test_generate_scene_assets_unknown_scene_404(ctx):

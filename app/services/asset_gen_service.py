@@ -5,6 +5,9 @@ needs (honoring a free-text user instruction like "the cup looks wrong, make a
 red one"); each planned asset is rendered with the ERNIE image provider, stored
 as a normal Asset row (metadata scene_id links it on the graph), and appended
 to the scene's asset_ids_json so the next render picks it up as a reference.
+The planner also tags each asset with the shot_orders that use it, so generated
+assets are auto-attached to those shots and @-mentioned in their prompts —
+which the render pipeline turns into Kling named references.
 """
 
 from __future__ import annotations
@@ -13,12 +16,58 @@ from sqlmodel import Session
 
 from app.agents.asset_planner import plan_assets
 from app.config import get_settings
-from app.models import Asset
+from app.models import Asset, Shot
 from app.models.base import new_id, utcnow
 from app.providers.atlascloud_client import get_atlas_client
 from app.providers.atlascloud_image import AtlasCloudImageProvider
 from app.providers.polling import poll_until_terminal
+from app.schemas import AssetPlan
 from app.services import media, scene_service
+
+
+def tag_prompt(prompt: str, name: str) -> str:
+    """Mention an asset as @Name in a shot prompt, deterministically.
+
+    Already @-tagged -> unchanged; bare name present -> first occurrence gets
+    the @; otherwise append ", featuring @Name".
+    """
+    if f"@{name}" in prompt:
+        return prompt
+    if name in prompt:
+        return prompt.replace(name, f"@{name}", 1)
+    return prompt.rstrip() + f", featuring @{name}"
+
+
+async def plan_scene_assets(
+    session: Session,
+    scene_id: str,
+    instruction: str = "",
+    max_assets: int = 4,
+    *,
+    shots: list[Shot] | None = None,
+) -> AssetPlan:
+    """Plan-only: run the asset planner for a scene (no image generation, no
+    DB writes) and return the truncated AssetPlan."""
+    scene = scene_service.get_scene(session, scene_id)  # 404 via NotFoundError
+
+    existing = []
+    for aid in scene.asset_ids_json or []:
+        asset = session.get(Asset, aid)
+        if asset:
+            existing.append(
+                {"name": asset.name, "type": asset.type, "description": asset.description}
+            )
+
+    if shots is None:
+        shots = scene_service.list_shots(session, scene_id)
+    plan = await plan_assets(
+        scene_summary=scene.summary,
+        scene_json=scene.scene_json or {},
+        existing_assets=existing,
+        instruction=instruction,
+        shots=[{"shot_order": s.shot_order, "prompt": s.prompt} for s in shots],
+    )
+    return AssetPlan(assets=plan.assets[:max_assets], reasoning=plan.reasoning)
 
 
 async def generate_scene_assets(
@@ -30,29 +79,22 @@ async def generate_scene_assets(
     image_provider: AtlasCloudImageProvider | None = None,
 ) -> list[Asset]:
     """Plan the scene's missing assets, generate each as an image, register and
-    link them. Returns the created Asset rows ([] when the plan is empty)."""
+    link them — to the scene and to the shots the planner tagged (asset_ids_json
+    plus an @Name mention in the shot prompt). Returns the created Asset rows
+    ([] when the plan is empty)."""
     settings = get_settings()
     settings.ensure_dirs()
     scene = scene_service.get_scene(session, scene_id)  # 404 via NotFoundError
+    shots = scene_service.list_shots(session, scene_id)
 
-    existing = []
-    for aid in scene.asset_ids_json or []:
-        asset = session.get(Asset, aid)
-        if asset:
-            existing.append(
-                {"name": asset.name, "type": asset.type, "description": asset.description}
-            )
-
-    plan = await plan_assets(
-        scene_summary=scene.summary,
-        scene_json=scene.scene_json or {},
-        existing_assets=existing,
-        instruction=instruction,
+    plan = await plan_scene_assets(
+        session, scene_id, instruction=instruction, max_assets=max_assets, shots=shots
     )
-    planned = plan.assets[:max_assets]
+    planned = plan.assets
     if not planned:
         return []
 
+    shots_by_order = {s.shot_order: s for s in shots}
     provider = image_provider or AtlasCloudImageProvider(get_atlas_client())
     created: list[Asset] = []
     for item in planned:
@@ -79,6 +121,19 @@ async def generate_scene_assets(
         )
         session.add(asset)
         created.append(asset)
+
+        # Auto-attach to the shots the planner tagged: link the asset id and
+        # @-mention it in the shot prompt (REASSIGN JSON columns, never mutate).
+        for order in item.shot_orders:
+            shot = shots_by_order.get(order)
+            if shot is None:
+                continue
+            ids = list(shot.asset_ids_json or [])
+            if asset_id not in ids:
+                shot.asset_ids_json = [*ids, asset_id]
+            shot.prompt = tag_prompt(shot.prompt, item.name)
+            shot.updated_at = utcnow()
+            session.add(shot)
 
     # Reassign (never mutate in place) — JSON column change detection.
     scene.asset_ids_json = [*(scene.asset_ids_json or []), *[a.id for a in created]]

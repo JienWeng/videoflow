@@ -152,6 +152,17 @@ async def generate_scene_assets(
     )
 
 
+@router.post("/scenes/{scene_id}/assets/plan")
+async def plan_scene_assets(
+    scene_id: str, body: AssetGenRequest, session: Session = Depends(get_session)
+):
+    """Plan-only suggestions: which assets the scene needs (and the shots that
+    use them) without generating images or writing to the database."""
+    return await asset_gen_service.plan_scene_assets(
+        session, scene_id, instruction=body.instruction, max_assets=body.max_assets
+    )
+
+
 class RefineRequest(BaseModel):
     instruction: str
 

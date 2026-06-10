@@ -15,6 +15,7 @@ class PlannedAsset(BaseModel):
     asset_type: str = "prop"  # prop | background | tool | other
     description: str = ""
     image_prompt: str  # full text-to-image prompt, consistent with scene style/lighting
+    shot_orders: list[int] = []  # shot_order values of the shots that should use this asset
 
 
 class AssetPlan(BaseModel):

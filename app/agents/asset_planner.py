@@ -14,6 +14,7 @@ async def plan_assets(
     scene_json: dict | None = None,
     existing_assets: list[dict] | None = None,
     instruction: str = "",
+    shots: list[dict] | None = None,
     client: StructuredLLMClient | None = None,
 ) -> AssetPlan:
     parts = [
@@ -21,6 +22,8 @@ async def plan_assets(
         as_block("Scene spec", scene_json or {}),
         as_block("Existing assets (do NOT duplicate)", existing_assets or []),
     ]
+    if shots:
+        parts.append(as_block("Scene shots", shots))
     if instruction:
         parts.append(as_block("User instruction", instruction))
     return await run_agent(

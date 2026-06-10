@@ -130,6 +130,10 @@ PROMPTS: dict[str, str] = {
         "instruction is given, honor it precisely (e.g. 'the cup looks wrong, "
         "make a red one' -> plan one replacement red cup). Never request "
         "on-screen text, words, captions, or watermarks in image prompts. "
+        "When the scene's shot list is provided (each entry has shot_order and "
+        "prompt), fill each asset's `shot_orders` with the shot_order values of "
+        "the shots where that asset appears or is needed; leave it empty only "
+        "if no shot uses the asset. "
         "Plan at most 4 assets unless the instruction explicitly asks for more."
     ),
     "refine_agent": (

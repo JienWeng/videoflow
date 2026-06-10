@@ -76,3 +76,54 @@ def test_asset_planner_skill_and_prompt_registered():
     # Core rules: no duplicates, standalone image prompts, no on-screen text.
     assert "exist" in prompt.lower()
     assert "text" in prompt.lower()
+
+async def test_plan_assets_shots_block_reaches_prompt():
+    from app.agents.asset_planner import plan_assets
+
+    llm = FakeLLM(AssetPlan())
+    await plan_assets(
+        scene_summary="s",
+        scene_json={},
+        existing_assets=[],
+        shots=[
+            {"shot_order": 0, "prompt": "Grace waves at camera"},
+            {"shot_order": 1, "prompt": "Grace points at the meadow"},
+        ],
+        client=llm,
+    )
+    assert "Scene shots" in llm.user_prompt
+    assert "Grace waves at camera" in llm.user_prompt
+    assert "Grace points at the meadow" in llm.user_prompt
+
+
+async def test_plan_assets_without_shots_omits_shots_block():
+    from app.agents.asset_planner import plan_assets
+
+    llm = FakeLLM(AssetPlan())
+    await plan_assets(scene_summary="s", scene_json={}, existing_assets=[], client=llm)
+    assert "Scene shots" not in llm.user_prompt
+
+
+def test_planned_asset_shot_orders_defaults_empty():
+    assert PlannedAsset(name="Cup", image_prompt="a cup").shot_orders == []
+
+
+class TestTagPrompt:
+    def test_name_present_first_occurrence_replaced(self):
+        from app.services.asset_gen_service import tag_prompt
+
+        out = tag_prompt("Grace lifts the Red Cup, the Red Cup shines", "Red Cup")
+        assert out == "Grace lifts the @Red Cup, the Red Cup shines"
+
+    def test_name_absent_appended(self):
+        from app.services.asset_gen_service import tag_prompt
+
+        assert tag_prompt("Grace waves at camera", "Red Cup") == (
+            "Grace waves at camera, featuring @Red Cup"
+        )
+
+    def test_already_tagged_unchanged(self):
+        from app.services.asset_gen_service import tag_prompt
+
+        prompt = "Grace lifts the @Red Cup"
+        assert tag_prompt(prompt, "Red Cup") == prompt
