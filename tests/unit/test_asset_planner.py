@@ -127,3 +127,16 @@ class TestTagPrompt:
 
         prompt = "Grace lifts the @Red Cup"
         assert tag_prompt(prompt, "Red Cup") == prompt
+
+    def test_substring_of_longer_word_not_corrupted(self):
+        from app.services.asset_gen_service import tag_prompt
+
+        # "Cup" must not splice into "Cupboard"; falls back to appending.
+        assert tag_prompt("She opens the Cupboard", "Cup") == (
+            "She opens the Cupboard, featuring @Cup"
+        )
+
+    def test_cjk_name_embedded_in_longer_word_appended(self):
+        from app.services.asset_gen_service import tag_prompt
+
+        assert tag_prompt("小红帽走进森林", "红帽") == "小红帽走进森林, featuring @红帽"

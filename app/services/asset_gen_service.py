@@ -12,6 +12,8 @@ which the render pipeline turns into Kling named references.
 
 from __future__ import annotations
 
+import re
+
 from sqlmodel import Session
 
 from app.agents.asset_planner import plan_assets
@@ -33,8 +35,11 @@ def tag_prompt(prompt: str, name: str) -> str:
     """
     if f"@{name}" in prompt:
         return prompt
-    if name in prompt:
-        return prompt.replace(name, f"@{name}", 1)
+    # Word-boundary match so "Cup" never corrupts "Cupboard" (and an asset
+    # name embedded inside a longer CJK word is appended, not spliced).
+    pattern = re.compile(r"(?<!\w)" + re.escape(name) + r"(?!\w)")
+    if pattern.search(prompt):
+        return pattern.sub(f"@{name}", prompt, count=1)
     return prompt.rstrip() + f", featuring @{name}"
 
 
