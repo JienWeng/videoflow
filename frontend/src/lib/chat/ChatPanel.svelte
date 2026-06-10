@@ -66,6 +66,7 @@
     if (intent.style) lines.push(`style: ${intent.style}`);
     if (intent.language) lines.push(`language: ${intent.language}`);
     if (intent.idea) lines.push(`idea: ${intent.idea}`);
+    if (intent.scene_count != null) lines.push(`scenes: ${intent.scene_count}`);
     if (intent.confidence != null) lines.push(`confidence: ${intent.confidence}`);
     return lines.join('\n\n');
   }

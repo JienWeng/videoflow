@@ -7,7 +7,7 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
   import { toast } from 'svelte-sonner';
-  import { Wand2, Save, Film, LayoutGrid, Video, Images, Trash2, Sparkles, ImagePlus } from '@lucide/svelte';
+  import { Wand2, Save, Film, LayoutGrid, Video, Images, Trash2, Sparkles, ImagePlus, Lightbulb } from '@lucide/svelte';
 
   let scenes: any[] = $state([]);
   let characters: any[] = $state([]);
@@ -19,6 +19,7 @@
 
   let idea = $state('');
   let targetDuration: number | '' = $state('');
+  let sceneCount: number | '' = $state('');
   let castSelection: Record<string, string[]> = $state({});
   let deleteTarget: any = $state(null);
   let sceneRefine: Record<string, string> = $state({});
@@ -26,6 +27,8 @@
   let assetInstr: Record<string, string> = $state({});
   let assetMax: Record<string, number> = $state({});
   let generatedAssets: Record<string, any[]> = $state({});
+  let assetPlans: Record<string, { assets: any[]; reasoning: string } | null> = $state({});
+  let planSelected: Record<string, boolean[]> = $state({});
 
   async function refresh() {
     [scenes, characters] = await Promise.all([get('/scenes'), get('/characters')]);
@@ -64,7 +67,12 @@
     e.preventDefault();
     run(
       'script',
-      () => post('/scripts/generate', { idea, target_duration: targetDuration || null }),
+      () =>
+        post('/scripts/generate', {
+          idea,
+          target_duration: targetDuration || null,
+          ...(sceneCount ? { scene_count: sceneCount } : {})
+        }),
       'Script generated — scenes created below.'
     );
   };
@@ -176,6 +184,53 @@
       });
       generatedAssets[s.id] = created;
       toast.success(`Generated ${created.length} asset${created.length === 1 ? '' : 's'}.`);
+      // Generation auto-attaches assets and @-tags shot prompts — refresh the shot table.
+      shotsByScene[s.id] = await get(`/scenes/${s.id}/shots`);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      busy = '';
+    }
+  }
+
+  async function suggestAssets(s: any) {
+    busy = `plan-${s.id}`;
+    try {
+      const plan = await post(`/scenes/${s.id}/assets/plan`, {
+        instruction: (assetInstr[s.id] ?? '').trim(),
+        max_assets: assetMax[s.id] ?? 4
+      });
+      assetPlans[s.id] = plan;
+      planSelected[s.id] = (plan.assets ?? []).map(() => true);
+      if (!plan.assets?.length) toast.info('No new assets suggested for this scene.');
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      busy = '';
+    }
+  }
+
+  async function generateSelectedAssets(s: any) {
+    const plan = assetPlans[s.id];
+    if (!plan) return;
+    const selected = plan.assets.filter((_, i) => planSelected[s.id]?.[i]);
+    if (!selected.length) return;
+    const userInstruction = (assetInstr[s.id] ?? '').trim();
+    const instruction =
+      'Generate exactly these assets: ' +
+      selected.map((a) => `${a.name} — ${a.description}`).join('; ') +
+      (userInstruction ? `. ${userInstruction}` : '');
+    busy = `assets-${s.id}`;
+    try {
+      const created = await post(`/scenes/${s.id}/assets/generate`, {
+        instruction,
+        max_assets: selected.length
+      });
+      generatedAssets[s.id] = created;
+      assetPlans[s.id] = null;
+      toast.success(`Generated ${created.length} asset${created.length === 1 ? '' : 's'}.`);
+      // Prompts were @-tagged with the new assets — refresh the shot table.
+      shotsByScene[s.id] = await get(`/scenes/${s.id}/shots`);
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -207,6 +262,12 @@
         <label class="block text-xs text-muted-foreground mb-1" for="dur">Target duration (s, optional)</label>
         <input id="dur" type="number" bind:value={targetDuration} min="3"
           class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm" />
+      </div>
+      <div class="min-w-[120px]">
+        <label class="block text-xs text-muted-foreground mb-1" for="scene-count">Scenes (optional)</label>
+        <input id="scene-count" type="number" bind:value={sceneCount} min="1" max="20" placeholder="auto"
+          class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm" />
+        <p class="text-xs text-muted-foreground mt-1">1 scene = 1 video</p>
       </div>
       <div>
         <Button type="submit" disabled={busy === 'script' || !idea} size="sm">
@@ -384,10 +445,48 @@
               onchange={(e) => (assetMax[s.id] = Number((e.currentTarget as HTMLInputElement).value) || 4)}
               class="w-16 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
             />
+            <Button variant="outline" size="sm" disabled={!!busy} onclick={() => suggestAssets(s)}>
+              <Lightbulb class="size-3 mr-1" />{busy === `plan-${s.id}` ? 'Suggesting…' : 'Suggest'}
+            </Button>
             <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateAssets(s)}>
               <ImagePlus class="size-3 mr-1" />{busy === `assets-${s.id}` ? 'Generating…' : 'Generate assets'}
             </Button>
           </div>
+          {#if assetPlans[s.id]?.assets?.length}
+            {@const plan = assetPlans[s.id]!}
+            <div class="mt-2 rounded-md border border-border p-2 space-y-2">
+              <div class="text-xs font-medium">Suggested assets</div>
+              <div class="flex flex-wrap gap-2">
+                {#each plan.assets as a, i (a.name)}
+                  <label class="flex w-[230px] cursor-pointer items-start gap-2 rounded-md border border-border p-2 text-xs">
+                    <input type="checkbox" class="mt-0.5 w-auto" bind:checked={planSelected[s.id][i]} />
+                    <span class="min-w-0">
+                      <span class="flex items-center gap-1.5">
+                        <span class="font-medium truncate">{a.name}</span>
+                        <Badge variant="secondary" class="text-[10px] px-1.5 py-0">{a.asset_type}</Badge>
+                      </span>
+                      <span class="block text-muted-foreground mt-0.5">{a.description}</span>
+                      {#if a.shot_orders?.length}
+                        <span class="block text-muted-foreground mt-0.5">
+                          shots {a.shot_orders.map((o: number) => `#${o + 1}`).join(', ')}
+                        </span>
+                      {/if}
+                    </span>
+                  </label>
+                {/each}
+              </div>
+              {#if plan.reasoning}
+                <p class="text-xs text-muted-foreground">{plan.reasoning}</p>
+              {/if}
+              <Button size="sm" disabled={!!busy || !planSelected[s.id]?.some(Boolean)}
+                onclick={() => generateSelectedAssets(s)}>
+                <ImagePlus class="size-3 mr-1" />
+                {busy === `assets-${s.id}`
+                  ? 'Generating…'
+                  : `Generate selected (${planSelected[s.id]?.filter(Boolean).length ?? 0})`}
+              </Button>
+            </div>
+          {/if}
           {#if generatedAssets[s.id]?.length}
             <div class="flex flex-wrap gap-2 mt-2">
               {#each generatedAssets[s.id] as a (a.id)}

@@ -24,6 +24,7 @@
     style?: string | null;
     language?: string | null;
     idea?: string | null;
+    scene_count?: number | null;
     confidence?: number;
     reply?: string;
   }
@@ -53,6 +54,8 @@
   let busy = $state(false);
   // svelte-ignore state_referenced_locally
   let idea = $state(intent.idea ?? '');
+  // svelte-ignore state_referenced_locally
+  let sceneCount = $state<number | ''>(intent.scene_count ?? '');
   // svelte-ignore state_referenced_locally
   let sceneId = $state(intent.scene_id ?? '');
   // svelte-ignore state_referenced_locally
@@ -136,7 +139,10 @@
       let focusId: string | undefined;
       switch (intent.action) {
         case 'generate_script':
-          result = await post('/scripts/generate', { idea: idea.trim() });
+          result = await post('/scripts/generate', {
+            idea: idea.trim(),
+            ...(sceneCount ? { scene_count: sceneCount } : {})
+          });
           focusId = result.scenes?.at(-1)?.id;
           toast.success(`Script generated — ${result.scenes?.length ?? 0} scenes`);
           break;
@@ -222,6 +228,12 @@
         <div>
           <label class={labelClass} for="idea-{intent.action}">Idea</label>
           <Textarea id="idea-{intent.action}" bind:value={idea} rows={3} placeholder="Describe the video idea…" />
+        </div>
+        <div>
+          <label class={labelClass} for="scenes-{intent.action}">Scenes (optional)</label>
+          <input id="scenes-{intent.action}" type="number" min="1" max="20"
+            bind:value={sceneCount} placeholder="auto" class={selectClass} />
+          <p class="text-xs text-muted-foreground mt-1">1 scene = 1 video</p>
         </div>
       {/if}
 
