@@ -9,7 +9,7 @@ from sqlmodel import Session
 
 from app.config import get_settings
 from app.database import engine
-from app.models import RenderJob, RenderOutput, RenderStatus
+from app.models import Asset, RenderJob, RenderOutput, RenderStatus
 from app.models.base import utcnow
 from app.providers.atlascloud_video import AtlasCloudVideoProvider
 from app.providers.polling import poll_until_terminal
@@ -66,6 +66,19 @@ async def process_job(job_id: str) -> None:
         session.add(output)
         session.commit()
         session.refresh(output)
+
+        # Surface the render in the Assets library (reusable as a reference).
+        session.add(Asset(
+            type="video",
+            name=f"Render {job.scene_id or job.id}",
+            file_path=str(video_path),
+            metadata_json={
+                "render_output_id": output.id,
+                "render_job_id": job.id,
+                "scene_id": job.scene_id,
+            },
+        ))
+        session.commit()
 
         # Run QA (best-effort) BEFORE marking the job succeeded, so that a
         # `succeeded` status guarantees QA has been attempted.

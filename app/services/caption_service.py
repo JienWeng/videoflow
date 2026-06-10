@@ -15,11 +15,11 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.config import get_settings
 from app.errors import NotFoundError, ProviderError, ValidationFailedError
-from app.models import RenderOutput
+from app.models import Asset, RenderOutput
 from app.models.base import utcnow
 
 logger = logging.getLogger("videoflow.captions")
@@ -184,6 +184,20 @@ async def caption_output(
     output.updated_at = utcnow()
     session.add(output)
     session.commit()
+    session.refresh(output)
+
+    # Mirror captioned_path onto the linked video asset so the Assets library
+    # stays in sync. Linear scan is fine; table is small and SQLite JSON
+    # columns aren't easily queryable.
+    captioned_path_str = output.captioned_path
+    for a in session.exec(select(Asset)).all():
+        if a.metadata_json.get("render_output_id") == output_id:
+            a.metadata_json = {**a.metadata_json, "captioned_path": captioned_path_str}
+            session.add(a)
+            session.commit()
+            break
+
+    # Re-attach output after the asset commit (SQLAlchemy expires objects on commit).
     session.refresh(output)
     logger.info("captioned %s (%d segments, style=%s)", output_id, len(segments), style)
     return output

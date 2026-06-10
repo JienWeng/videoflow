@@ -136,6 +136,13 @@ def test_caption_output_endpoint(client, monkeypatch):
     resp_bad = client.post(f"/outputs/{output_id}/caption", json={"style": "kids", "model": "bogus"})
     assert resp_bad.status_code in (400, 422), resp_bad.text
 
+    # After captioning, the linked video asset's metadata_json must reflect the
+    # captioned_path so the Assets library stays in sync.
+    assets = client.get("/assets").json()
+    video_assets = [a for a in assets if a["type"] == "video"]
+    assert len(video_assets) == 1
+    assert video_assets[0]["metadata_json"]["captioned_path"] == out["captioned_path"]
+
 
 def test_caption_config_endpoint(client):
     r = client.get("/caption-config")
@@ -182,3 +189,12 @@ def test_render_job_succeeds(client):
     # QA ran automatically and persisted a score + recommendation.
     assert outputs[0]["score"] == 8
     assert outputs[0]["qa_json"]["recommendation"] == "accept"
+
+    # The rendered video must appear in the Assets library.
+    assets = client.get("/assets").json()
+    video_assets = [a for a in assets if a["type"] == "video"]
+    assert len(video_assets) == 1
+    a = video_assets[0]
+    assert a["file_path"].endswith(".mp4")
+    assert a["metadata_json"]["render_job_id"]
+    assert a["metadata_json"]["render_output_id"]
