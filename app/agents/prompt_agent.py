@@ -12,6 +12,11 @@ from app.agents.base import as_block, run_agent
 from app.config import get_settings
 from app.schemas import CharacterBible, ReferenceImage, RenderSpec, ShotSpec
 
+# Captions/subtitles are added in post-production by the caption pipeline —
+# the video model must never draw text. Shared by enforce_render_defaults and
+# render_service so the wording can't drift between the two render paths.
+NO_TEXT_NEGATIVE = "no subtitles, no on-screen text, no captions"
+
 
 def collect_named_references(
     *,
@@ -61,6 +66,8 @@ def enforce_render_defaults(spec: RenderSpec, *, named_references: list[dict]) -
         spec.multi_shot = True
         spec.shot_type = "intelligence"
         spec.multi_prompt = []
+    if "no subtitles" not in spec.prompt.lower():
+        spec.prompt = f"{spec.prompt} — {NO_TEXT_NEGATIVE} (added in post)."
     present = {r.asset_id for r in spec.reference_images}
     for ref in named_references:
         if ref["asset_id"] not in present:

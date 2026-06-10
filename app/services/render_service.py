@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from sqlmodel import Session, select
 
-from app.agents.prompt_agent import collect_named_references
+from app.agents.prompt_agent import NO_TEXT_NEGATIVE, collect_named_references
 from app.errors import NotFoundError, ValidationFailedError
 from app.jobs import worker
 from app.models import Asset, Character, RenderJob, RenderOutput, RenderStatus
@@ -88,8 +88,8 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
         f"{scene.summary}. "
         + ("Follow the @分镜图 storyboard panels in order for composition, scene "
            "continuity and lighting. " if storyboard else "")
-        + "Spoken dialogue, clear and natural. Negative: no subtitles, no "
-        "on-screen text, no captions, no watermark, no outfit changes, no extra "
+        + "Spoken dialogue, clear and natural. Negative: "
+        f"{NO_TEXT_NEGATIVE}, no watermark, no outfit changes, no extra "
         "characters, no distorted faces."
     )
     spec = RenderSpec(

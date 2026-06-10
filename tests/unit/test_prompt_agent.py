@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from app.agents.prompt_agent import collect_named_references, enforce_render_defaults
+from app.agents.prompt_agent import (
+    NO_TEXT_NEGATIVE,
+    collect_named_references,
+    enforce_render_defaults,
+)
+from app.llm.prompts import PROMPTS
 from app.schemas import CharacterBible, ReferenceImage, RenderSpec, StoryboardShot
 
 
@@ -199,3 +204,32 @@ class TestEnforceRenderDefaults:
             ("Grace", "a"),
             ("Sofa", "b"),
         ]
+
+    def test_no_text_negative_appended_when_missing(self):
+        spec = self.spec()  # prompt has no subtitle negative
+        enforce_render_defaults(spec, named_references=[])
+        assert NO_TEXT_NEGATIVE in spec.prompt
+        assert "no subtitles" in spec.prompt.lower()
+
+    def test_no_text_negative_not_double_appended(self):
+        spec = self.spec(
+            prompt="@Grace waves. Negative: NO SUBTITLES, no on-screen text."
+        )
+        enforce_render_defaults(spec, named_references=[])
+        assert spec.prompt.lower().count("no subtitles") == 1
+        assert NO_TEXT_NEGATIVE not in spec.prompt
+
+
+class TestPromptRules:
+    """The planning prompts must teach the two production rules: captions are
+    post-production (dialogue in 「」), and one scene renders ONE video."""
+
+    def test_caption_rule_in_planning_prompts(self):
+        for agent in ("script_agent", "scene_agent", "shot_agent", "prompt_agent"):
+            assert "post-production" in PROMPTS[agent], agent
+            assert "「」" in PROMPTS[agent], agent
+
+    def test_one_video_rule_in_scene_and_shot_prompts(self):
+        assert "ONE multi-shot video" in PROMPTS["scene_agent"]
+        assert "ONE multi-shot video" in PROMPTS["shot_agent"]
+        assert "ONE RenderSpec for ONE video" in PROMPTS["prompt_agent"]
