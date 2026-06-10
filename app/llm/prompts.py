@@ -124,6 +124,15 @@ PROMPTS: dict[str, str] = {
         "on-screen text, words, captions, or watermarks in image prompts. "
         "Plan at most 4 assets unless the instruction explicitly asks for more."
     ),
+    "refine_agent": (
+        "You are an editor for a video studio. Given an entity's current fields "
+        "and the user's instruction, return ONLY the fields that should change "
+        "(leave others null) with a short note explaining what changed and why. "
+        "Keep changes minimal and faithful to the instruction. Production rules: "
+        "never request on-screen text, subtitles, captions, or titles — captions "
+        "are added in post-production; write spoken dialogue inside 「」 quotes "
+        "verbatim; a scene renders as exactly ONE multi-shot video."
+    ),
 }
 
 

@@ -10,11 +10,18 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import app.models  # noqa: F401
 from app.database import get_session
-from app.schemas import AssetPlan, PlannedAsset, QAResult
+from app.schemas import AssetPlan, PlannedAsset, QAResult, SceneRefinement, ShotRefinement
 
 
 class FakeLLM:
     async def generate(self, *, response_model, **kw):
+        if response_model is SceneRefinement:
+            return SceneRefinement(summary="warmer dusk lighting", note="warmed the lighting")
+        if response_model is ShotRefinement:
+            return ShotRefinement(
+                prompt="Grace waves at camera under warm dusk light",
+                note="warmed the shot lighting",
+            )
         if response_model is AssetPlan:
             return AssetPlan(
                 assets=[
@@ -376,6 +383,37 @@ def test_generate_scene_assets_respects_max_assets(ctx):
     assert resp.status_code == 200, resp.text
     assert len(resp.json()) == 1
     assert len(fake.image_payloads) == 1
+
+
+def test_refine_scene(ctx):
+    client, fake = ctx
+    resp = client.post("/scenes/scene_1/refine", json={"instruction": "warmer lighting"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["scene"]["summary"] == "warmer dusk lighting"
+    assert body["scene"]["title"] == "t"  # untouched fields preserved
+    assert body["note"]
+    # Persistence: a follow-up GET sees the change.
+    scene = client.get("/scenes/scene_1").json()
+    assert scene["summary"] == "warmer dusk lighting"
+
+
+def test_refine_shot(ctx):
+    client, fake = ctx
+    resp = client.post("/shots/shot_1/refine", json={"instruction": "warmer lighting"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["shot"]["prompt"] == "Grace waves at camera under warm dusk light"
+    assert body["shot"]["camera"] == "mid"  # untouched fields preserved
+    assert body["note"]
+    shots = client.get("/scenes/scene_1/shots").json()
+    assert shots[0]["prompt"] == "Grace waves at camera under warm dusk light"
+
+
+def test_refine_unknown_ids_404(ctx):
+    client, fake = ctx
+    assert client.post("/scenes/nope/refine", json={"instruction": "x"}).status_code == 404
+    assert client.post("/shots/nope/refine", json={"instruction": "x"}).status_code == 404
 
 
 def test_graph_nodes_carry_canvas_data(ctx):

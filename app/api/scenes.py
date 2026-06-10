@@ -8,7 +8,13 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.database import get_session
-from app.services import asset_gen_service, render_service, scene_service, storyboard_service
+from app.services import (
+    asset_gen_service,
+    refine_service,
+    render_service,
+    scene_service,
+    storyboard_service,
+)
 
 router = APIRouter(tags=["scenes"])
 
@@ -140,6 +146,24 @@ async def generate_scene_assets(
     return await asset_gen_service.generate_scene_assets(
         session, scene_id, instruction=body.instruction, max_assets=body.max_assets
     )
+
+
+class RefineRequest(BaseModel):
+    instruction: str
+
+
+@router.post("/scenes/{scene_id}/refine")
+async def refine_scene(
+    scene_id: str, body: RefineRequest, session: Session = Depends(get_session)
+):
+    """AI-assisted edit: rewrite the scene's fields from a natural-language instruction."""
+    return await refine_service.refine_scene(session, scene_id, body.instruction)
+
+
+@router.post("/shots/{shot_id}/refine")
+async def refine_shot(shot_id: str, body: RefineRequest, session: Session = Depends(get_session)):
+    """AI-assisted edit: rewrite the shot's fields from a natural-language instruction."""
+    return await refine_service.refine_shot(session, shot_id, body.instruction)
 
 
 @router.post("/scenes/{scene_id}/render")

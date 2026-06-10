@@ -53,6 +53,9 @@ SKILLS: dict[str, AgentSkill] = {
     "asset_planner": AgentSkill(
         "asset_planner", PROMPTS["asset_planner"], provider=_P, model=_M, temperature=0.4
     ),
+    "refine_agent": AgentSkill(
+        "refine_agent", PROMPTS["refine_agent"], provider=_P, model=_M, temperature=0.4
+    ),
 }
 
 

@@ -9,6 +9,7 @@ from app.schemas.asset_schema import AssetMetadata
 from app.schemas.character_schema import CharacterBible
 from app.schemas.intent import Intent, IntentAction
 from app.schemas.qa_schema import QAResult
+from app.schemas.refine import SceneRefinement, ShotRefinement
 from app.schemas.render_schema import ReferenceImage, RenderSpec, StoryboardShot
 from app.schemas.scene_schema import SceneSpec, ScriptDraft, ScriptScene, ShotSpec
 from app.schemas.shot_schema import ShotList
@@ -24,7 +25,9 @@ __all__ = [
     "ReferenceImage",
     "RenderSpec",
     "StoryboardShot",
+    "SceneRefinement",
     "SceneSpec",
+    "ShotRefinement",
     "ScriptDraft",
     "ScriptScene",
     "ShotSpec",
