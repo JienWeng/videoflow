@@ -205,3 +205,84 @@ def test_graph_endpoint(ctx):
     assert ("scene_1", "shot_1") in pairs
     assert ("scene_1", "char_grace") in pairs
     assert ("char_grace", "asset_char") in pairs
+
+
+def test_cast_and_shot_asset_relationships(ctx):
+    client, fake = ctx
+
+    # POST /scenes/{id}/cast/{char} adds to character_ids_json (idempotent)
+    resp = client.post("/scenes/scene_1/cast/char_grace")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "char_grace" in body["character_ids_json"]
+    count_before = body["character_ids_json"].count("char_grace")
+    assert count_before == 1
+
+    # Posting again doesn't duplicate
+    resp2 = client.post("/scenes/scene_1/cast/char_grace")
+    assert resp2.status_code == 200
+    assert resp2.json()["character_ids_json"].count("char_grace") == 1
+
+    # DELETE removes the cast member
+    resp3 = client.delete("/scenes/scene_1/cast/char_grace")
+    assert resp3.status_code == 200
+    assert "char_grace" not in resp3.json()["character_ids_json"]
+
+    # Unknown character -> 404
+    assert client.post("/scenes/scene_1/cast/no_such_char").status_code == 404
+
+    # Unknown scene -> 404
+    assert client.post("/scenes/no_such_scene/cast/char_grace").status_code == 404
+
+    # POST /shots/{id}/assets/{asset} adds to asset_ids_json (idempotent)
+    resp4 = client.post("/shots/shot_1/assets/asset_bg")
+    assert resp4.status_code == 200, resp4.text
+    assert "asset_bg" in resp4.json()["asset_ids_json"]
+    assert resp4.json()["asset_ids_json"].count("asset_bg") == 1
+
+    # Posting again doesn't duplicate
+    resp5 = client.post("/shots/shot_1/assets/asset_bg")
+    assert resp5.status_code == 200
+    assert resp5.json()["asset_ids_json"].count("asset_bg") == 1
+
+    # DELETE removes the asset reference
+    resp6 = client.delete("/shots/shot_1/assets/asset_bg")
+    assert resp6.status_code == 200
+    assert "asset_bg" not in resp6.json()["asset_ids_json"]
+
+    # Unknown shot -> 404
+    assert client.post("/shots/no_such_shot/assets/asset_bg").status_code == 404
+
+    # Unknown asset -> 404
+    assert client.post("/shots/shot_1/assets/no_such_asset").status_code == 404
+
+
+def test_shot_reorder_via_patch(ctx):
+    client, fake = ctx
+    resp = client.patch("/shots/shot_1", json={"shot_order": 5})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["shot_order"] == 5
+
+
+def test_graph_nodes_carry_canvas_data(ctx):
+    client, fake = ctx
+    body = client.get("/graph").json()
+    nodes_by_id = {n["id"]: n for n in body["nodes"]}
+
+    # All nodes must have a "data" key
+    for n in body["nodes"]:
+        assert "data" in n, f"node {n['id']} missing 'data'"
+
+    # Asset nodes carry file_path and asset_type
+    asset_node = nodes_by_id["asset_bg"]
+    assert "file_path" in asset_node["data"]
+    assert "asset_type" in asset_node["data"]
+
+    # Scene node carries aspect_ratio
+    scene_node = nodes_by_id["scene_1"]
+    assert "aspect_ratio" in scene_node["data"]
+
+    # Shot node carries scene_id and prompt
+    shot_node = nodes_by_id["shot_1"]
+    assert "scene_id" in shot_node["data"]
+    assert "prompt" in shot_node["data"]

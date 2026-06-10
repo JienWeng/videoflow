@@ -41,6 +41,7 @@ class ShotEdit(BaseModel):
     camera: str | None = None
     movement: str | None = None
     asset_ids: list[str] | None = None
+    shot_order: int | None = None
 
 
 @router.post("/scripts/generate")
@@ -86,6 +87,26 @@ def edit_scene(scene_id: str, body: SceneEdit, session: Session = Depends(get_se
 @router.patch("/shots/{shot_id}")
 def edit_shot(shot_id: str, body: ShotEdit, session: Session = Depends(get_session)):
     return scene_service.update_shot(session, shot_id, **body.model_dump(exclude_none=True))
+
+
+@router.post("/scenes/{scene_id}/cast/{character_id}")
+def add_cast(scene_id: str, character_id: str, session: Session = Depends(get_session)):
+    return scene_service.add_cast_member(session, scene_id, character_id)
+
+
+@router.delete("/scenes/{scene_id}/cast/{character_id}")
+def remove_cast(scene_id: str, character_id: str, session: Session = Depends(get_session)):
+    return scene_service.remove_cast_member(session, scene_id, character_id)
+
+
+@router.post("/shots/{shot_id}/assets/{asset_id}")
+def attach_asset(shot_id: str, asset_id: str, session: Session = Depends(get_session)):
+    return scene_service.attach_shot_asset(session, shot_id, asset_id)
+
+
+@router.delete("/shots/{shot_id}/assets/{asset_id}")
+def detach_asset(shot_id: str, asset_id: str, session: Session = Depends(get_session)):
+    return scene_service.detach_shot_asset(session, shot_id, asset_id)
 
 
 @router.post("/scenes/{scene_id}/storyboard")

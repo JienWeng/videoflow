@@ -8,7 +8,7 @@ from app.agents.scene_agent import generate_scene
 from app.agents.script_agent import generate_script
 from app.agents.shot_agent import generate_shots
 from app.errors import NotFoundError
-from app.models import Character, Scene, Shot
+from app.models import Asset, Character, Scene, Shot
 from app.models.base import new_id, utcnow
 from app.schemas import CharacterBible, SceneSpec, ScriptDraft
 
@@ -170,6 +170,7 @@ def update_shot(
     camera: str | None = None,
     movement: str | None = None,
     asset_ids: list[str] | None = None,
+    shot_order: int | None = None,
 ) -> Shot:
     shot = session.get(Shot, shot_id)
     if shot is None:
@@ -184,8 +185,66 @@ def update_shot(
         shot.movement = movement
     if asset_ids is not None:
         shot.asset_ids_json = asset_ids
+    if shot_order is not None:
+        shot.shot_order = shot_order
     shot.updated_at = utcnow()
     session.add(shot)
     session.commit()
     session.refresh(shot)
+    return shot
+
+
+def add_cast_member(session: Session, scene_id: str, character_id: str) -> Scene:
+    scene = get_scene(session, scene_id)
+    if session.get(Character, character_id) is None:
+        raise NotFoundError(f"character {character_id} not found")
+    ids = list(scene.character_ids_json or [])
+    if character_id not in ids:
+        scene.character_ids_json = [*ids, character_id]
+        scene.updated_at = utcnow()
+        session.add(scene)
+        session.commit()
+        session.refresh(scene)
+    return scene
+
+
+def remove_cast_member(session: Session, scene_id: str, character_id: str) -> Scene:
+    scene = get_scene(session, scene_id)
+    ids = list(scene.character_ids_json or [])
+    if character_id in ids:
+        scene.character_ids_json = [i for i in ids if i != character_id]
+        scene.updated_at = utcnow()
+        session.add(scene)
+        session.commit()
+        session.refresh(scene)
+    return scene
+
+
+def attach_shot_asset(session: Session, shot_id: str, asset_id: str) -> Shot:
+    shot = session.get(Shot, shot_id)
+    if shot is None:
+        raise NotFoundError(f"shot {shot_id} not found")
+    if session.get(Asset, asset_id) is None:
+        raise NotFoundError(f"asset {asset_id} not found")
+    ids = list(shot.asset_ids_json or [])
+    if asset_id not in ids:
+        shot.asset_ids_json = [*ids, asset_id]
+        shot.updated_at = utcnow()
+        session.add(shot)
+        session.commit()
+        session.refresh(shot)
+    return shot
+
+
+def detach_shot_asset(session: Session, shot_id: str, asset_id: str) -> Shot:
+    shot = session.get(Shot, shot_id)
+    if shot is None:
+        raise NotFoundError(f"shot {shot_id} not found")
+    ids = list(shot.asset_ids_json or [])
+    if asset_id in ids:
+        shot.asset_ids_json = [i for i in ids if i != asset_id]
+        shot.updated_at = utcnow()
+        session.add(shot)
+        session.commit()
+        session.refresh(shot)
     return shot
