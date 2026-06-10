@@ -54,7 +54,7 @@ def graph(session: Session = Depends(get_session)) -> dict:
             edge(sh.id, aid, "uses")
 
     for j in session.exec(select(RenderJob)).all():
-        node(j.id, "render_job", f"{j.status} ({j.model.split('/')[-1]})",
+        node(j.id, "render_job", f"{j.status.value} ({j.model.split('/')[-1]})",
              status=j.status.value)
         edge(j.shot_id or j.scene_id, j.id, "render")
 
