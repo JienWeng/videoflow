@@ -6,6 +6,7 @@ import logging
 
 from sqlmodel import Session, select
 
+from app.agents import refine_agent
 from app.agents.scene_agent import generate_scene
 from app.agents.script_agent import generate_script
 from app.agents.shot_agent import generate_shots
@@ -14,8 +15,14 @@ from app.models import Asset, Character, Scene, Shot
 from app.models.base import new_id, utcnow
 from app.schemas import CharacterBible, SceneSpec, ScriptDraft
 from app.services import style_service
+from app.services.dialogue import has_dialogue
 
 logger = logging.getLogger(__name__)
+
+DIALOGUE_FIX_INSTRUCTION = (
+    "Add exactly one short spoken line in 「」 quotes (max 10 words) "
+    "for a character in this shot; change nothing else."
+)
 
 
 def character_to_bible(char: Character) -> CharacterBible:
@@ -185,6 +192,7 @@ async def create_shots(
         session.add(row)
         rows.append(row)
     session.commit()
+    await _ensure_shot_dialogue(session, scene, rows)
     _auto_link(session, scene.id)
 
     if auto_assets:
@@ -203,6 +211,47 @@ async def create_shots(
     for row in rows:
         session.refresh(row)
     return rows
+
+
+async def _ensure_shot_dialogue(session: Session, scene: Scene, rows: list[Shot]) -> None:
+    """Bounded auto-fix: ONE refine pass per shot missing a 「」 spoken line.
+
+    The refined prompt is applied only when it actually contains dialogue;
+    agent failures or still-silent results keep the original prompt (no retry).
+    """
+    changed = False
+    for row in rows:
+        if has_dialogue(row.prompt):
+            continue
+        try:
+            refinement = await refine_agent.refine_shot(
+                shot={
+                    "prompt": row.prompt,
+                    "duration": row.duration,
+                    "camera": row.camera,
+                    "movement": row.movement,
+                },
+                scene_summary=scene.summary,
+                instruction=DIALOGUE_FIX_INSTRUCTION,
+            )
+        except Exception:
+            logger.exception(
+                "dialogue auto-fix failed for shot %s; keeping original prompt", row.id
+            )
+            continue
+        new_prompt = refinement.prompt
+        if new_prompt and has_dialogue(new_prompt):
+            row.prompt = new_prompt
+            row.updated_at = utcnow()
+            session.add(row)
+            changed = True
+        else:
+            logger.warning(
+                "dialogue auto-fix for shot %s returned no 「」 line; keeping original",
+                row.id,
+            )
+    if changed:
+        session.commit()
 
 
 def delete_shot(session: Session, shot_id: str) -> None:

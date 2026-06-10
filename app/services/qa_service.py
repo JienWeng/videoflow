@@ -61,6 +61,7 @@ async def run_qa(
             f"{s.get('index', i + 1)}. {s.get('prompt', '')} ({s.get('duration')}s)"
             for i, s in enumerate(shots)
         )
+        requirements += "\nEvery shot must contain a short spoken line (「」)."
     description = (
         f"Generated video at {video_path.name}. "
         f"Multi-shot={ (job.request_json or {}).get('multi_shot') }. "

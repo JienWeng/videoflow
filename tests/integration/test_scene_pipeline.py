@@ -39,12 +39,18 @@ def _make_draft(n: int) -> ScriptDraft:
 
 
 class FakeLLM:
+    # Returned by the ShotRefinement branch; tests may monkeypatch this on the
+    # class to simulate a refine pass that fails to add dialogue.
+    refinement_prompt = (
+        "Grace waves at camera under warm dusk light and says, 「What a lovely evening!」"
+    )
+
     async def generate(self, *, response_model, **kw):
         if response_model is SceneRefinement:
             return SceneRefinement(summary="warmer dusk lighting", note="warmed the lighting")
         if response_model is ShotRefinement:
             return ShotRefinement(
-                prompt="Grace waves at camera under warm dusk light",
+                prompt=self.refinement_prompt,
                 note="warmed the shot lighting",
             )
         if response_model is AssetPlan:
@@ -71,9 +77,11 @@ class FakeLLM:
             return ShotList(
                 scene_id="scene_1",
                 shots=[
+                    # One shot WITH a spoken line, one WITHOUT — the missing
+                    # one exercises the bounded dialogue auto-fix.
                     ShotSpec(shot_id="gen_sh1", duration=3,
-                             prompt="@Grace lifts the Red Cup", camera="mid",
-                             movement="static"),
+                             prompt="@Grace lifts the Red Cup and says, 「Cheers!」",
+                             camera="mid", movement="static"),
                     ShotSpec(shot_id="gen_sh2", duration=3,
                              prompt="@Grace smiles at camera", camera="close-up",
                              movement="static"),
@@ -485,11 +493,11 @@ def test_refine_shot(ctx):
     resp = client.post("/shots/shot_1/refine", json={"instruction": "warmer lighting"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["shot"]["prompt"] == "Grace waves at camera under warm dusk light"
+    assert body["shot"]["prompt"] == FakeLLM.refinement_prompt
     assert body["shot"]["camera"] == "mid"  # untouched fields preserved
     assert body["note"]
     shots = client.get("/scenes/scene_1/shots").json()
-    assert shots[0]["prompt"] == "Grace waves at camera under warm dusk light"
+    assert shots[0]["prompt"] == FakeLLM.refinement_prompt
 
 
 def test_refine_unknown_ids_404(ctx):
@@ -660,6 +668,34 @@ def test_shots_generate_auto_assets_false(ctx):
     assert scene["asset_ids_json"] == ["asset_bg"]
 
 
+def test_shots_generate_enforces_dialogue(ctx):
+    """A generated shot missing a 「」 line gets ONE auto-fix refine pass; after
+    /shots/generate every persisted shot from this batch speaks."""
+    client, fake = ctx
+    resp = client.post("/scenes/scene_1/shots/generate", json={"auto_assets": False})
+    assert resp.status_code == 200, resp.text
+    shots = resp.json()
+    assert len(shots) == 2
+    # gen_sh1 already had dialogue and is untouched.
+    assert shots[0]["prompt"] == "@Grace lifts the Red Cup and says, 「Cheers!」"
+    # gen_sh2 lacked dialogue → replaced with the refine agent's spoken version.
+    assert shots[1]["prompt"] == FakeLLM.refinement_prompt
+    for s in shots:
+        assert "「" in s["prompt"] and "」" in s["prompt"]
+
+
+def test_shots_generate_dialogue_fix_failure_keeps_original(ctx, monkeypatch):
+    """If the refine pass STILL returns a prompt without dialogue, the original
+    prompt is kept (no retry) and the request succeeds."""
+    client, fake = ctx
+    monkeypatch.setattr(FakeLLM, "refinement_prompt", "still silent, no quotes here")
+    resp = client.post("/scenes/scene_1/shots/generate", json={"auto_assets": False})
+    assert resp.status_code == 200, resp.text
+    shots = resp.json()
+    assert shots[0]["prompt"] == "@Grace lifts the Red Cup and says, 「Cheers!」"
+    assert shots[1]["prompt"] == "@Grace smiles at camera"  # unchanged
+
+
 def test_shots_generate_tolerates_asset_failure(ctx, monkeypatch):
     """Auto prop generation failing (provider down) never fails the shots call."""
     client, fake = ctx
@@ -673,10 +709,10 @@ def test_shots_generate_tolerates_asset_failure(ctx, monkeypatch):
     resp = client.post("/scenes/scene_1/shots/generate")
     assert resp.status_code == 200, resp.text
     shots = resp.json()
-    assert any(s["prompt"] == "@Grace lifts the Red Cup" for s in shots)
+    assert any(s["prompt"].startswith("@Grace lifts the Red Cup") for s in shots)
     # Shots persisted despite the asset failure.
     persisted = client.get("/scenes/scene_1/shots").json()
-    assert any(s["prompt"] == "@Grace lifts the Red Cup" for s in persisted)
+    assert any(s["prompt"].startswith("@Grace lifts the Red Cup") for s in persisted)
 
 
 # ── /scripts/generate scene_count tests ──────────────────────────────────────

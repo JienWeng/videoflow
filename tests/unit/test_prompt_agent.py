@@ -233,3 +233,9 @@ class TestPromptRules:
         assert "ONE multi-shot video" in PROMPTS["scene_agent"]
         assert "ONE multi-shot video" in PROMPTS["shot_agent"]
         assert "ONE RenderSpec for ONE video" in PROMPTS["prompt_agent"]
+
+    def test_every_shot_speaks_rule_in_shot_prompt(self):
+        assert "EVERY shot MUST include" in PROMPTS["shot_agent"]
+
+    def test_every_multi_prompt_entry_speaks_rule_in_prompt_agent(self):
+        assert "EVERY multi_prompt entry" in PROMPTS["prompt_agent"]

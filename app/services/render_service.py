@@ -7,6 +7,8 @@ surface immediately), persists a RenderJob, and enqueues background polling.
 
 from __future__ import annotations
 
+import logging
+
 from sqlmodel import Session, select
 
 from app.agents.prompt_agent import NO_TEXT_NEGATIVE, collect_named_references
@@ -17,6 +19,9 @@ from app.providers.atlascloud_client import get_atlas_client
 from app.providers.registry import get_video_provider
 from app.providers.url_resolver import AtlasCloudUploadResolver
 from app.schemas import ReferenceImage, RenderSpec, StoryboardShot
+from app.services.dialogue import has_dialogue
+
+logger = logging.getLogger(__name__)
 
 
 async def start_render(session: Session, spec: RenderSpec) -> RenderJob:
@@ -80,6 +85,15 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
         shot_asset_ids=asset_ids,
         asset_names=asset_names,
     )
+    # Every shot is supposed to speak (one 「」 line); warn but never block.
+    for shot in shots:
+        if not has_dialogue(shot.prompt):
+            logger.warning(
+                "shot %s (order %s) of scene %s has no 「」 spoken line — "
+                "it will render silent",
+                shot.id, shot.shot_order, scene_id,
+            )
+
     storyboard = storyboard_service.latest_storyboard_for_scene(session, scene_id)
     if storyboard and storyboard.id not in {r["asset_id"] for r in refs}:
         refs.append({"name": "分镜图", "asset_id": storyboard.id})
