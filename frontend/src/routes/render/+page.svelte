@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onMount } from 'svelte';
   import { get, post } from '$lib/api';
+  import { subscribeJobs } from '$lib/sse';
   import VideoPreview from '$lib/components/VideoPreview.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -28,7 +29,6 @@
   let captionLanguage: Record<string, string> = $state({});
   let captioning = $state('');
 
-  let timer: ReturnType<typeof setInterval>;
 
   async function refresh() {
     [jobs, scenes] = await Promise.all([get('/render-jobs'), get('/scenes')]);
@@ -55,9 +55,11 @@
         // Fallback to legacy endpoint
         get('/caption-styles').then((s) => (captionStyles = s)).catch(() => {});
       });
-    timer = setInterval(() => refresh().catch(() => {}), 5000);
+    return subscribeJobs(
+      () => refresh().catch(() => {}),
+      () => refresh().catch(() => {})
+    );
   });
-  onDestroy(() => clearInterval(timer));
 
   async function addCaptions(jobId: string, out: any) {
     captioning = out.id;
