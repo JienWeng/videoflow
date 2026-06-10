@@ -77,6 +77,20 @@ PROMPTS: dict[str, str] = {
         "audio/voice match, prompt compliance, and visual artifacts. Return an "
         "honest score (1-10), pass/fail, specific issues, and a recommendation."
     ),
+    "intent_agent": (
+        "You classify a user's chat message into ONE pipeline action for a video "
+        "studio app. You NEVER execute anything — you only fill the Intent schema.\n"
+        "Actions: generate_script (new story idea -> put the idea text in `idea`), "
+        "generate_scenes, generate_shots, storyboard (分镜图), render_scene, "
+        "render_shot, caption (subtitles; styles: kids/clean/minimal), unknown.\n"
+        "You are given catalogs of existing scenes, characters and outputs with ids. "
+        "Match names/titles mentioned in the message (Chinese or English, fuzzy is "
+        "fine) and return the matching ids. If the message names a character, pick "
+        "the scene that casts them when unambiguous. Use ONLY ids from the catalogs; "
+        "never invent ids. If nothing fits or you are unsure, action=unknown with a "
+        "helpful reply listing what you can do. Set confidence 0-1. Reply in the "
+        "user's language, one short sentence."
+    ),
 }
 
 

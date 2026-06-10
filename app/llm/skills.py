@@ -25,10 +25,12 @@ class AgentSkill:
     max_retries: int = 3
 
 
-# Default routing: everything on MiniMax. Override `provider`/`model` per agent to
-# route a specific task to OpenAI / Anthropic / Gemini.
-_P = "gemini"  # text-agent provider; flip to "minimax"/"openai"/"anthropic" anytime
-_M = "gemini-2.5-flash"  # model with available quota on this key
+# Default routing. Text agents ride MiniMax (key live-verified 2026-06-10:
+# MiniMax-Text-01 and the M-series both work on this plan); the QA agent rides
+# an AtlasCloud-hosted vision model so it can actually SEE frames (the gemini
+# key in .env is empty, so gemini routing would fail at runtime).
+_P = "minimax"  # text-agent provider; flip to "openai"/"anthropic"/"gemini" anytime
+_M = None  # None -> the provider's default model from settings
 
 SKILLS: dict[str, AgentSkill] = {
     "asset_recogniser": AgentSkill(
@@ -43,7 +45,11 @@ SKILLS: dict[str, AgentSkill] = {
     "scene_agent": AgentSkill("scene_agent", PROMPTS["scene_agent"], provider=_P, model=_M, temperature=0.6),
     "shot_agent": AgentSkill("shot_agent", PROMPTS["shot_agent"], provider=_P, model=_M, temperature=0.5),
     "prompt_agent": AgentSkill("prompt_agent", PROMPTS["prompt_agent"], provider=_P, model=_M, temperature=0.6),
-    "qa_agent": AgentSkill("qa_agent", PROMPTS["qa_agent"], provider=_P, model=_M, temperature=0.2),
+    # Vision QA: AtlasCloud OpenAI-compatible endpoint, qwen3-vl by default.
+    "qa_agent": AgentSkill("qa_agent", PROMPTS["qa_agent"], provider="atlas", model=None, temperature=0.2),
+    "intent_agent": AgentSkill(
+        "intent_agent", PROMPTS["intent_agent"], provider=_P, model=_M, temperature=0.0
+    ),
 }
 
 
