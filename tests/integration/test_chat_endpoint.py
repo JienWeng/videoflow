@@ -1,0 +1,85 @@
+"""POST /chat — guided intent: LLM classifies, service validates ids, response
+carries the options needed to build a pre-filled action card."""
+
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlmodel import Session, SQLModel, create_engine
+
+import app.models  # noqa: F401
+from app.database import get_session
+from app.schemas import Intent, IntentAction
+
+
+class FakeLLM:
+    def __init__(self, intent: Intent):
+        self.intent = intent
+
+    async def generate(self, *, agent, response_model, user_prompt, context=None, images=None):
+        assert response_model is Intent
+        return self.intent
+
+
+def make_client(monkeypatch, tmp_path, intent: Intent) -> TestClient:
+    engine = create_engine(
+        f"sqlite:///{tmp_path/'t.db'}", connect_args={"check_same_thread": False}
+    )
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr("app.database.engine", engine)
+    monkeypatch.setattr("app.jobs.worker.reconcile_pending", lambda: 0)
+    monkeypatch.setattr("app.agents.base.get_llm_client", lambda: FakeLLM(intent))
+
+    from app.models import Character, Scene
+
+    with Session(engine) as s:
+        s.add(Scene(id="scene_1", title="我是乐乐", summary="x"))
+        s.add(Character(id="char_1", name="乐乐"))
+        s.commit()
+
+    from app.main import create_app
+
+    app = create_app()
+
+    def _session():
+        with Session(engine) as s:
+            yield s
+
+    app.dependency_overrides[get_session] = _session
+    return TestClient(app)
+
+
+def test_chat_returns_intent_and_options(monkeypatch, tmp_path):
+    intent = Intent(action=IntentAction.storyboard, scene_id="scene_1",
+                    confidence=0.9, reply="好的，为《我是乐乐》生成分镜图")
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        r = client.post("/chat", json={"message": "给乐乐的场景生成分镜图"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["intent"]["action"] == "storyboard"
+    assert body["intent"]["scene_id"] == "scene_1"
+    assert [s["id"] for s in body["options"]["scenes"]] == ["scene_1"]
+    assert [c["id"] for c in body["options"]["characters"]] == ["char_1"]
+    assert "kids" in body["options"]["caption_styles"]
+
+
+def test_chat_discards_hallucinated_ids_and_low_confidence(monkeypatch, tmp_path):
+    intent = Intent(action=IntentAction.render_scene, scene_id="scene_NOPE",
+                    confidence=0.2, reply="…")
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        r = client.post("/chat", json={"message": "随便说点什么"})
+    body = r.json()
+    assert body["intent"]["scene_id"] is None          # invalid id dropped
+    assert body["intent"]["action"] == "unknown"        # confidence < 0.5
+
+
+def test_chat_llm_failure_degrades_to_unknown(monkeypatch, tmp_path):
+    class Boom:
+        async def generate(self, **kw):
+            raise RuntimeError("llm down")
+
+    with make_client(monkeypatch, tmp_path, Intent()) as client:
+        monkeypatch.setattr("app.agents.base.get_llm_client", lambda: Boom())
+        r = client.post("/chat", json={"message": "hi"})
+    assert r.status_code == 200
+    assert r.json()["intent"]["action"] == "unknown"

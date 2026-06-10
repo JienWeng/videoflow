@@ -6,10 +6,11 @@ from fastapi import FastAPI
 
 
 def register_routers(app: FastAPI) -> None:
-    from app.api import assets, characters, graph, render, scenes
+    from app.api import assets, characters, chat, graph, render, scenes
 
     app.include_router(assets.router)
     app.include_router(characters.router)
     app.include_router(scenes.router)
     app.include_router(render.router)
     app.include_router(graph.router)
+    app.include_router(chat.router)
