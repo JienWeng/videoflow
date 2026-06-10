@@ -13,7 +13,7 @@ from app.models import RenderJob, RenderOutput, RenderStatus
 from app.models.base import utcnow
 from app.providers.atlascloud_video import AtlasCloudVideoProvider
 from app.providers.polling import poll_until_terminal
-from app.services import media
+from app.services import event_bus, media
 
 logger = logging.getLogger("videoflow.poll")
 
@@ -32,6 +32,7 @@ async def process_job(job_id: str) -> None:
         job.status = RenderStatus.running
         session.add(job)
         session.commit()
+        event_bus.publish({"job_id": job.id, "status": "running"})
 
         provider = AtlasCloudVideoProvider()
         try:
@@ -75,6 +76,7 @@ async def process_job(job_id: str) -> None:
         job.updated_at = utcnow()
         session.add(job)
         session.commit()
+        event_bus.publish({"job_id": job.id, "status": "succeeded", "output_id": output.id})
         logger.info("job %s succeeded -> %s", job.id, video_path)
 
 
@@ -84,6 +86,7 @@ def _fail(session: Session, job: RenderJob, error: str) -> None:
     job.updated_at = utcnow()
     session.add(job)
     session.commit()
+    event_bus.publish({"job_id": job.id, "status": "failed", "error": error})
     logger.error("job %s failed: %s", job.id, error)
 
 
