@@ -59,3 +59,45 @@ from app.services.caption_service import WHISPER_MODELS
 
 def test_whisper_model_registry():
     assert WHISPER_MODELS == ["tiny", "base", "small", "medium", "large-v3"]
+
+
+# ---------------------------------------------------------------------------
+# Script-corrected captions
+# ---------------------------------------------------------------------------
+
+from app.services.caption_service import correct_segments, extract_script_lines
+
+
+def test_extract_script_lines_from_spec():
+    spec = {
+        "prompt": "Wide shot: 乐乐 says 「我是乐乐 乐乐是我」 cheerfully",
+        "multi_prompt": [
+            {"prompt": '天天 waves and says 「我是天天 天天是我」', "duration": 3},
+            {"prompt": "The kitten just meows", "duration": 2},
+        ],
+    }
+    assert extract_script_lines(spec) == ["我是乐乐 乐乐是我", "我是天天 天天是我"]
+
+
+def test_extract_script_lines_handles_missing():
+    assert extract_script_lines(None) == []
+    assert extract_script_lines({"prompt": "no quotes here"}) == []
+
+
+def test_correct_segments_fixes_misheard_text_keeps_timing():
+    segs = [
+        CaptionSegment(start=0.0, end=1.5, text="我是乐乐乐乐是我"),   # close match (exact after norm)
+        CaptionSegment(start=1.5, end=3.0, text="我是天天天是我"),     # misheard — closer to "我是天天 天天是我"
+        CaptionSegment(start=3.0, end=4.0, text="喵"),               # no match -> kept
+    ]
+    lines = ["我是乐乐 乐乐是我", "我是天天 天天是我"]
+    out = correct_segments(segs, lines)
+    assert out[0].text == "我是乐乐 乐乐是我"
+    assert out[1].text == "我是天天 天天是我"
+    assert out[2].text == "喵"
+    assert (out[0].start, out[0].end) == (0.0, 1.5)
+
+
+def test_correct_segments_no_lines_is_noop():
+    segs = [CaptionSegment(start=0, end=1, text="hello")]
+    assert correct_segments(segs, []) == segs

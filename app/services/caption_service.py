@@ -10,7 +10,10 @@ from storage/fonts (Noto Sans CJK SC ships there for Chinese).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import difflib
 import logging
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +23,7 @@ from sqlmodel import Session, select
 from app.config import get_settings
 from app.errors import NotFoundError, ProviderError, ValidationFailedError
 from app.models import Asset, RenderOutput
+from app.models.render_job import RenderJob
 from app.models.base import utcnow
 
 logger = logging.getLogger("videoflow.captions")
@@ -46,6 +50,61 @@ STYLES: dict[str, dict] = {
     "minimal": dict(fontsize=46, primary="&H00FFFFFF", outline_colour="&H00000000",
                     back="&H66000000", borderstyle=3, outline=0, shadow=0, marginv=150),
 }
+
+
+QUOTE_RE = re.compile(r'[「『"“]([^」』"”]{1,80})[」』"”]')
+
+_NORM_RE = re.compile(r"[\s，。！？、,.!?…~～]")
+
+
+def extract_script_lines(spec: dict | None) -> list[str]:
+    """Pull quoted dialogue lines from a RenderSpec dict (prompt + multi_prompt)."""
+    if not spec:
+        return []
+    texts = [spec.get("prompt") or ""]
+    texts += [(p.get("prompt") or "") for p in spec.get("multi_prompt") or []]
+    lines: list[str] = []
+    for t in texts:
+        for m in QUOTE_RE.findall(t):
+            line = m.strip()
+            if line and line not in lines:
+                lines.append(line)
+    return lines
+
+
+def _normalize(text: str) -> str:
+    """Strip whitespace and CJK/ASCII punctuation for fuzzy matching."""
+    return _NORM_RE.sub("", text)
+
+
+def correct_segments(
+    segments: list[CaptionSegment], script_lines: list[str], min_ratio: float = 0.5
+) -> list[CaptionSegment]:
+    """Replace each segment's text with the best-matching script line (timings kept).
+
+    Uses difflib ratio on whitespace/punctuation-stripped text; a segment keeps
+    its whisper text when no line clears `min_ratio`.
+    """
+    if not script_lines:
+        return segments
+
+    norm_lines = [_normalize(line) for line in script_lines]
+
+    result: list[CaptionSegment] = []
+    for seg in segments:
+        norm_seg = _normalize(seg.text)
+        best_ratio = 0.0
+        best_line = None
+        for line, norm_line in zip(script_lines, norm_lines):
+            ratio = difflib.SequenceMatcher(None, norm_seg, norm_line).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_line = line
+        if best_ratio >= min_ratio and best_line is not None:
+            result.append(dataclasses.replace(seg, text=best_line))
+        else:
+            result.append(seg)
+    return result
 
 
 def format_ass_time(seconds: float) -> str:
@@ -173,6 +232,11 @@ async def caption_output(
     segments = await transcribe(video_path, language=language, model_size=model)
     if not segments:
         raise ValidationFailedError("no speech detected in the video")
+
+    job = session.get(RenderJob, output.render_job_id)
+    script_lines = extract_script_lines(job.request_json if job else None)
+    if script_lines:
+        segments = correct_segments(segments, script_lines)
 
     base = video_path.with_suffix("")
     ass_path = Path(f"{base}.ass")
