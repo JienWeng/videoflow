@@ -106,9 +106,10 @@ def _fail(session: Session, job: RenderJob, error: str) -> None:
 async def _run_qa_if_available(
     session: Session, job: RenderJob, output: RenderOutput, video_path: Path
 ) -> None:
-    """Hook for the QA agent (M6). No-op until QA is wired."""
+    """Best-effort QA: a QA crash must never strand the job (it has output)."""
     try:
         from app.services import qa_service
-    except ImportError:
-        return
-    await qa_service.run_qa(session, job, output, video_path)
+
+        await qa_service.run_qa(session, job, output, video_path)
+    except Exception:
+        logger.exception("QA failed for job %s; continuing without QA", job.id)
