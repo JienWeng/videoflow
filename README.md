@@ -24,7 +24,7 @@ cp .env.example .env      # fill in MINIMAX_API_KEY and ATLASCLOUD_API_KEY
 uv run uvicorn app.main:app --reload
 ```
 
-### Frontend (SvelteKit)
+### Frontend (SvelteKit Studio)
 
 ```bash
 cd frontend
@@ -32,9 +32,16 @@ npm install
 npm run dev        # http://localhost:5173 (expects the API on :8000)
 ```
 
-Pages: Dashboard, Assets (upload / AI tag / search), Characters (bible,
-reference sheets, photo upload), Scenes (idea → script → scenes → shots →
-分镜图 → render), Render (job table + video previews), Graph (relationships).
+Svelte 5 + Tailwind + shadcn-svelte. The home page is the **Studio**: an
+editable entity canvas (@xyflow/svelte) showing characters → assets → scenes →
+shots → jobs → outputs, side by side with a **guided-intent chat** panel.
+Type 「给乐乐的场景生成分镜图」 — the intent agent classifies the message
+(`POST /chat`), the panel shows a pre-filled action card, and Run calls the
+real pipeline endpoint. On the canvas: click a node to edit it in a side
+panel, drag-connect character→scene (cast) or asset→shot (reference), delete
+an edge to detach, drag shots to reorder. Job status streams in live over SSE
+(`GET /events`). Secondary pages: Assets (uploads + rendered videos), Characters,
+Scenes (step-by-step pipeline), Render (jobs + caption controls).
 The backend serves `/storage` statically and allows CORS from :5173/:4173.
 
 `ffmpeg` is required for thumbnails / QA frame extraction (degrades gracefully if
@@ -110,6 +117,11 @@ character ─bible─▶ CharacterBible ─ERNIE─▶ reference sheets (assets)
 | `POST /render/from-shot` | prompt-agent builds the spec from a stored shot |
 | `GET /render-jobs/{id}` | job status + outputs (with QA score) |
 | `GET /graph` | relationship graph (characters → assets → scenes → shots → jobs → outputs) |
+| `POST /chat` | guided-intent chat: classifies a message into a pipeline action + pre-filled slots (LLM never executes) |
+| `GET /events` | SSE stream of render-job status transitions |
+| `POST`/`DELETE /scenes/{id}/cast/{character_id}` | add / remove a character from a scene's cast |
+| `POST`/`DELETE /shots/{id}/assets/{asset_id}` | attach / detach a reference asset on a shot |
+| `GET /caption-config` | caption styles + whisper model sizes + defaults |
 
 ## Render example (named references + voice + multi-shot)
 
@@ -160,10 +172,12 @@ network or keys required).
 
 ## Auto-captions (CapCut-style)
 
-`POST /outputs/{id}/caption` (or the button on the Render page) transcribes the
-rendered video's voice track with **faster-whisper** (local, open source — model
-size via `WHISPER_MODEL`, default `small`) and burns styled subtitles in with
-FFmpeg/libass. Style presets: `kids` (big yellow + black outline), `clean`,
+`POST /outputs/{id}/caption {style, model, language}` (or the controls on the
+Render page) transcribes the rendered video's voice track with
+**faster-whisper** (local, open source — model selectable per request from
+tiny→large-v3, default via `WHISPER_MODEL`; `language: null` auto-detects) and
+burns styled subtitles in with FFmpeg/libass. Rendered and captioned videos
+are also registered in the Assets library automatically. Style presets: `kids` (big yellow + black outline), `clean`,
 `minimal` — see `GET /caption-styles`. Chinese renders via Noto Sans CJK in
 `storage/fonts/` (gitignored; on a fresh clone fetch it with
 `curl -fsSL -o storage/fonts/NotoSansCJKsc-Bold.otf https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf`).
