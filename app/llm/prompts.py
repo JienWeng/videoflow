@@ -45,7 +45,11 @@ PROMPTS: dict[str, str] = {
         "rendered as exactly ONE multi-shot video; never plan multiple videos "
         "per scene. Never request on-screen text, subtitles, captions, or "
         "titles — captions are added in post-production. Write any spoken "
-        "dialogue inside 「」 quotes verbatim."
+        "dialogue inside 「」 quotes verbatim. "
+        "Reference every character and important prop inline as @Name using "
+        "EXACT names from the cast/linked-asset lists — these @mentions are "
+        "auto-linked by the system. Keep entities consistent with their "
+        "descriptions."
     ),
     "shot_agent": (
         "You are a shot planner. Break the scene into a precise ordered shot list. "
@@ -55,7 +59,11 @@ PROMPTS: dict[str, str] = {
         "exactly ONE multi-shot video; never plan multiple videos per scene. "
         "Never request on-screen text, subtitles, captions, or titles — "
         "captions are added in post-production. Write any spoken dialogue "
-        "inside 「」 quotes verbatim."
+        "inside 「」 quotes verbatim. "
+        "Reference every character and important prop inline as @Name using "
+        "EXACT names from the cast/linked-asset lists — these @mentions are "
+        "auto-linked by the system. Keep entities consistent with their "
+        "descriptions."
     ),
     "prompt_agent": (
         "You are a prompt engineer for the Kling reference-to-video model. You "
@@ -122,8 +130,10 @@ PROMPTS: dict[str, str] = {
     "asset_planner": (
         "You are an asset planner for a video scene. Decide which visual assets "
         "(props, backgrounds, tools) the scene still needs and define each one. "
-        "Consider the EXISTING assets supplied in the context and never duplicate "
-        "them — only plan what is missing or what the user asked to replace. "
+        "Consider the EXISTING assets supplied in the context: NEVER propose an "
+        "asset that duplicates or closely resembles an existing one; return an "
+        "empty list when the scene is fully covered. Only plan what is missing "
+        "or what the user asked to replace. "
         "For every planned asset write `image_prompt` as a COMPLETE standalone "
         "text-to-image prompt that matches the scene's style, lighting, mood and "
         "audience — it will be rendered with no other context. When a user "

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from sqlmodel import Session, select
 
 from app.agents.scene_agent import generate_scene
@@ -12,6 +14,8 @@ from app.models import Asset, Character, Scene, Shot
 from app.models.base import new_id, utcnow
 from app.schemas import CharacterBible, SceneSpec, ScriptDraft
 from app.services import style_service
+
+logger = logging.getLogger(__name__)
 
 
 def character_to_bible(char: Character) -> CharacterBible:
@@ -81,6 +85,7 @@ async def expand_scene(session: Session, scene_id: str, character_ids: list[str]
         summary=scene.summary,
         suggested_duration=scene.duration,
         character_bibles=bibles,
+        assets=_asset_dicts(session, scene.asset_ids_json or []),
         style=style_service.style_context(style_service.get_style(session)),
     )
     scene.title = spec.title
@@ -121,12 +126,47 @@ def _scene_to_spec(scene: Scene) -> SceneSpec:
     )
 
 
-async def create_shots(session: Session, scene_id: str) -> list[Shot]:
-    """Run the shot agent and persist Shot rows for the scene."""
+def _asset_dicts(session: Session, asset_ids: list[str]) -> list[dict]:
+    """Resolve asset ids to {name, type, description} dicts (deduplicated,
+    missing ids skipped) for agent context blocks."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    for aid in asset_ids:
+        if aid in seen:
+            continue
+        seen.add(aid)
+        asset = session.get(Asset, aid)
+        if asset:
+            out.append(
+                {"name": asset.name, "type": asset.type, "description": asset.description}
+            )
+    return out
+
+
+async def create_shots(
+    session: Session, scene_id: str, auto_assets: bool = True
+) -> list[Shot]:
+    """Run the shot agent and persist Shot rows for the scene.
+
+    With auto_assets (default), missing props are then planned and generated
+    automatically; asset-generation failures are logged and never fail the
+    shots request."""
     scene = get_scene(session, scene_id)
     spec = _scene_to_spec(scene)
+
+    bibles = []
+    for cid in scene.character_ids_json or []:
+        char = session.get(Character, cid)
+        if char:
+            bibles.append(character_to_bible(char))
+    asset_ids = list(scene.asset_ids_json or [])
+    for existing in list_shots(session, scene_id):
+        asset_ids.extend(existing.asset_ids_json or [])
+
     shot_list = await generate_shots(
         scene=spec,
+        characters=bibles or None,
+        assets=_asset_dicts(session, asset_ids) or None,
         style=style_service.style_context(style_service.get_style(session)),
     )
 
@@ -146,6 +186,20 @@ async def create_shots(session: Session, scene_id: str) -> list[Shot]:
         rows.append(row)
     session.commit()
     _auto_link(session, scene.id)
+
+    if auto_assets:
+        from app.services import asset_gen_service  # local import: avoids circularity
+
+        try:
+            await asset_gen_service.generate_scene_assets(
+                session, scene_id, instruction="", max_assets=4
+            )
+        except Exception:
+            # Shots are still valuable when the image provider is down —
+            # log and return them; props can be generated manually later.
+            logger.exception("auto asset generation failed for scene %s", scene_id)
+            session.rollback()  # discard any half-finished asset writes
+
     for row in rows:
         session.refresh(row)
     return rows

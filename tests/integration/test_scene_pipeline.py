@@ -10,7 +10,15 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.models  # noqa: F401
 from app.database import get_session
-from app.schemas import AssetPlan, PlannedAsset, QAResult, SceneRefinement, ShotRefinement
+from app.schemas import (
+    AssetPlan,
+    PlannedAsset,
+    QAResult,
+    SceneRefinement,
+    ShotList,
+    ShotRefinement,
+    ShotSpec,
+)
 from app.schemas.scene_schema import ScriptDraft, ScriptScene
 
 
@@ -58,6 +66,18 @@ class FakeLLM:
                     ),
                 ],
                 reasoning="scene needs props",
+            )
+        if response_model is ShotList:
+            return ShotList(
+                scene_id="scene_1",
+                shots=[
+                    ShotSpec(shot_id="gen_sh1", duration=3,
+                             prompt="@Grace lifts the Red Cup", camera="mid",
+                             movement="static"),
+                    ShotSpec(shot_id="gen_sh2", duration=3,
+                             prompt="@Grace smiles at camera", camera="close-up",
+                             movement="static"),
+                ],
             )
         if response_model is ScriptDraft:
             return _make_draft(3)
@@ -602,6 +622,61 @@ def test_asset_generation_without_refs_or_style_uses_plain_ernie(ctx):
         assert "images" not in payload
     prompts = [p["prompt"] for p in fake.image_payloads]
     assert "a shiny red ceramic cup, warm daylight, 3D cartoon" in prompts
+
+
+# ── shots/generate: auto prop generation ─────────────────────────────────────
+
+def test_shots_generate_auto_assets_default(ctx):
+    """POST /scenes/{id}/shots/generate (no body) plans + generates props
+    automatically: new assets are linked to the scene and @-tagged into shots."""
+    client, fake = ctx
+    resp = client.post("/scenes/scene_1/shots/generate")
+    assert resp.status_code == 200, resp.text
+    shots = resp.json()
+    # Response shape unchanged: a list of persisted Shot rows (the auto-asset
+    # step may have @-tagged the new prop names into the prompts).
+    assert isinstance(shots, list)
+    assert any(s["prompt"].startswith("@Grace lifts the") for s in shots)
+
+    # Auto assets: the planner's props were generated and linked to the scene.
+    scene = client.get("/scenes/scene_1").json()
+    new_ids = [a for a in scene["asset_ids_json"] if a != "asset_bg"]
+    assert len(new_ids) == 2
+    assert fake.image_payloads  # images actually rendered
+
+    # At least one shot prompt got @-tagged with a generated asset name.
+    all_shots = client.get("/scenes/scene_1/shots").json()
+    assert any("@Red Cup" in s["prompt"] for s in all_shots)
+
+
+def test_shots_generate_auto_assets_false(ctx):
+    client, fake = ctx
+    resp = client.post("/scenes/scene_1/shots/generate", json={"auto_assets": False})
+    assert resp.status_code == 200, resp.text
+    assert isinstance(resp.json(), list)
+    # No images generated, no new assets linked to the scene.
+    assert fake.image_payloads == []
+    scene = client.get("/scenes/scene_1").json()
+    assert scene["asset_ids_json"] == ["asset_bg"]
+
+
+def test_shots_generate_tolerates_asset_failure(ctx, monkeypatch):
+    """Auto prop generation failing (provider down) never fails the shots call."""
+    client, fake = ctx
+
+    async def boom(*a, **kw):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(
+        "app.services.asset_gen_service.generate_scene_assets", boom
+    )
+    resp = client.post("/scenes/scene_1/shots/generate")
+    assert resp.status_code == 200, resp.text
+    shots = resp.json()
+    assert any(s["prompt"] == "@Grace lifts the Red Cup" for s in shots)
+    # Shots persisted despite the asset failure.
+    persisted = client.get("/scenes/scene_1/shots").json()
+    assert any(s["prompt"] == "@Grace lifts the Red Cup" for s in persisted)
 
 
 # ── /scripts/generate scene_count tests ──────────────────────────────────────

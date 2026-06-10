@@ -79,9 +79,18 @@ async def expand_scene(
     return await scene_service.expand_scene(session, scene_id, body.character_ids)
 
 
+class ShotsGenRequest(BaseModel):
+    auto_assets: bool = True
+
+
 @router.post("/scenes/{scene_id}/shots/generate")
-async def generate_shots(scene_id: str, session: Session = Depends(get_session)):
-    return await scene_service.create_shots(session, scene_id)
+async def generate_shots(
+    scene_id: str,
+    body: ShotsGenRequest | None = None,
+    session: Session = Depends(get_session),
+):
+    auto_assets = body.auto_assets if body else True
+    return await scene_service.create_shots(session, scene_id, auto_assets=auto_assets)
 
 
 @router.get("/scenes/{scene_id}/shots")

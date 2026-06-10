@@ -14,6 +14,7 @@ async def generate_scene(
     suggested_duration: int,
     character_bibles: list[CharacterBible] | None = None,
     available_asset_ids: list[str] | None = None,
+    assets: list[dict] | None = None,
     style: dict | None = None,
     client=None,
 ) -> SceneSpec:
@@ -25,6 +26,8 @@ async def generate_scene(
         as_block("Character bibles", [b.model_dump() for b in character_bibles or []]),
         as_block("Available asset ids", available_asset_ids or []),
     ]
+    if assets:
+        parts.append(as_block("Linked assets (use @Name)", assets))
     if style:
         parts.append(as_block("Project style guide", style))
     parts.append(

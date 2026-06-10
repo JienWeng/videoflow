@@ -3,13 +3,27 @@
 from __future__ import annotations
 
 from app.agents.base import as_block, run_agent
-from app.schemas import SceneSpec, ShotList
+from app.schemas import CharacterBible, SceneSpec, ShotList
 
 
 async def generate_shots(
-    *, scene: SceneSpec, style: dict | None = None, client=None
+    *,
+    scene: SceneSpec,
+    style: dict | None = None,
+    characters: list[CharacterBible] | None = None,
+    assets: list[dict] | None = None,
+    client=None,
 ) -> ShotList:
     parts = [as_block("Scene", scene)]
+    if characters:
+        parts.append(
+            as_block(
+                "Cast (use @Name to reference them)",
+                [b.model_dump() for b in characters],
+            )
+        )
+    if assets:
+        parts.append(as_block("Linked assets (use @Name)", assets))
     if style:
         parts.append(as_block("Project style guide", style))
     parts.append(
