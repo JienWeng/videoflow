@@ -183,6 +183,7 @@
         max_assets: assetMax[s.id] ?? 4
       });
       generatedAssets[s.id] = created;
+      assetPlans[s.id] = null; // any pending suggestion plan is now out of date
       toast.success(`Generated ${created.length} asset${created.length === 1 ? '' : 's'}.`);
       // Generation auto-attaches assets and @-tags shot prompts — refresh the shot table.
       shotsByScene[s.id] = await get(`/scenes/${s.id}/shots`);
@@ -195,6 +196,7 @@
 
   async function suggestAssets(s: any) {
     busy = `plan-${s.id}`;
+    assetPlans[s.id] = null; // hide any stale plan while re-planning
     try {
       const plan = await post(`/scenes/${s.id}/assets/plan`, {
         instruction: (assetInstr[s.id] ?? '').trim(),
@@ -457,7 +459,7 @@
             <div class="mt-2 rounded-md border border-border p-2 space-y-2">
               <div class="text-xs font-medium">Suggested assets</div>
               <div class="flex flex-wrap gap-2">
-                {#each plan.assets as a, i (a.name)}
+                {#each plan.assets as a, i (i)}
                   <label class="flex w-[230px] cursor-pointer items-start gap-2 rounded-md border border-border p-2 text-xs">
                     <input type="checkbox" class="mt-0.5 w-auto" bind:checked={planSelected[s.id][i]} />
                     <span class="min-w-0">
