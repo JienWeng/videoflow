@@ -82,28 +82,45 @@ def correct_segments(
 ) -> list[CaptionSegment]:
     """Replace each segment's text with the best-matching script line (timings kept).
 
-    Uses difflib ratio on whitespace/punctuation-stripped text; a segment keeps
-    its whisper text when no line clears `min_ratio`.
+    Monotonic alignment policy:
+    - A cursor marks the earliest script line still eligible for matching.
+    - For each segment (time-ordered), we score lines from cursor onward only;
+      lines before the cursor are already consumed and cannot be re-matched.
+    - On a tie the EARLIEST eligible line wins (cursor stays low → earlier speaker).
+    - After matching line[i], we advance the cursor to i (not i+1) so the SAME
+      line can be re-matched by the next segment (handles one script line split
+      across multiple whisper segments). The cursor never moves backward.
+    - A segment keeps its whisper text when no eligible line clears `min_ratio`.
     """
     if not script_lines:
         return segments
 
     norm_lines = [_normalize(line) for line in script_lines]
-
+    cursor = 0  # first eligible script-line index
     result: list[CaptionSegment] = []
+
     for seg in segments:
         norm_seg = _normalize(seg.text)
         best_ratio = 0.0
-        best_line = None
-        for line, norm_line in zip(script_lines, norm_lines):
-            ratio = difflib.SequenceMatcher(None, norm_seg, norm_line).ratio()
-            if ratio > best_ratio:
+        best_idx = cursor  # tie-break: prefer earliest eligible line
+        # Score only lines at-or-after the cursor.
+        for i in range(cursor, len(script_lines)):
+            ratio = difflib.SequenceMatcher(None, norm_seg, norm_lines[i]).ratio()
+            if ratio > best_ratio:  # strict > keeps earliest on a tie
                 best_ratio = ratio
-                best_line = line
-        if best_ratio >= min_ratio and best_line is not None:
-            result.append(dataclasses.replace(seg, text=best_line))
+                best_idx = i
+        if best_ratio >= min_ratio:
+            result.append(dataclasses.replace(seg, text=script_lines[best_idx]))
+            # Advance cursor past the matched line so the next segment cannot
+            # re-match an earlier (already-consumed) line. This is the key
+            # monotonic guarantee: once line[i] is matched, only line[i+1]…
+            # are eligible for future segments. If a single long script line
+            # spans multiple whisper segments, the script should have that line
+            # appear once — the two-segment split will match consecutive lines.
+            cursor = best_idx + 1
         else:
             result.append(seg)
+
     return result
 
 
