@@ -1,7 +1,12 @@
 <script lang="ts">
   import { mediaUrl, isImage } from '$lib/api';
 
-  export let asset: any;
+  interface Props {
+    asset: any;
+    children?: import('svelte').Snippet;
+  }
+
+  let { asset, children }: Props = $props();
 </script>
 
 <div class="card">
@@ -22,5 +27,5 @@
       <span class="tag">{tag}</span>
     {/each}
   </div>
-  <slot />
+  {@render children?.()}
 </div>

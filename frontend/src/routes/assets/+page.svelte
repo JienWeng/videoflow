@@ -1,17 +1,19 @@
 <script lang="ts">
+  import { preventDefault } from 'svelte/legacy';
+
   import { onMount } from 'svelte';
   import { get, post, upload } from '$lib/api';
   import AssetCard from '$lib/components/AssetCard.svelte';
 
-  let assets: any[] = [];
-  let characters: any[] = [];
-  let error = '';
-  let busy = false;
-  let search = '';
+  let assets: any[] = $state([]);
+  let characters: any[] = $state([]);
+  let error = $state('');
+  let busy = $state(false);
+  let search = $state('');
 
-  let file: FileList | null = null;
-  let assetType = '';
-  let characterId = '';
+  let file: FileList | null = $state(null);
+  let assetType = $state('');
+  let characterId = $state('');
 
   const ASSET_TYPES = ['', 'character_reference', 'location', 'prop', 'video_reference', 'audio_reference', 'voice'];
 
@@ -53,19 +55,19 @@
     }
   }
 
-  $: filtered = search
+  let filtered = $derived(search
     ? assets.filter((a) =>
         [a.name, a.type, a.description, ...(a.tags_json ?? [])]
           .join(' ')
           .toLowerCase()
           .includes(search.toLowerCase())
       )
-    : assets;
+    : assets);
 </script>
 
 <h1>Assets</h1>
 
-<form class="panel" on:submit|preventDefault={doUpload}>
+<form class="panel" onsubmit={preventDefault(doUpload)}>
   <div class="row">
     <div>
       <label for="file">File</label>
@@ -94,7 +96,7 @@
 <div class="grid">
   {#each filtered.slice().reverse() as asset (asset.id)}
     <AssetCard {asset}>
-      <button class="small secondary" disabled={busy} on:click={() => recognise(asset)}>
+      <button class="small secondary" disabled={busy} onclick={() => recognise(asset)}>
         AI tag
       </button>
     </AssetCard>

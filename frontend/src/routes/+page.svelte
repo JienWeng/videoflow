@@ -4,12 +4,12 @@
   import AssetCard from '$lib/components/AssetCard.svelte';
   import VideoPreview from '$lib/components/VideoPreview.svelte';
 
-  let assets: any[] = [];
-  let characters: any[] = [];
-  let scenes: any[] = [];
-  let jobs: any[] = [];
-  let outputs: any[] = [];
-  let error = '';
+  let assets: any[] = $state([]);
+  let characters: any[] = $state([]);
+  let scenes: any[] = $state([]);
+  let jobs: any[] = $state([]);
+  let outputs: any[] = $state([]);
+  let error = $state('');
 
   onMount(async () => {
     try {

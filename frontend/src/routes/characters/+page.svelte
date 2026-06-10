@@ -1,14 +1,16 @@
 <script lang="ts">
+  import { preventDefault } from 'svelte/legacy';
+
   import { onMount } from 'svelte';
   import { get, post, upload, mediaUrl, isImage } from '$lib/api';
 
-  let characters: any[] = [];
-  let assets: Record<string, any> = {};
-  let error = '';
-  let busy = '';
+  let characters: any[] = $state([]);
+  let assets: Record<string, any> = $state({});
+  let error = $state('');
+  let busy = $state('');
 
-  let name = '';
-  let description = '';
+  let name = $state('');
+  let description = $state('');
 
   async function refresh() {
     characters = await get('/characters');
@@ -58,7 +60,7 @@
 
 <h1>Characters</h1>
 
-<form class="panel" on:submit|preventDefault={createCharacter}>
+<form class="panel" onsubmit={preventDefault(createCharacter)}>
   <div class="row">
     <div>
       <label for="name">Name</label>
@@ -93,15 +95,15 @@
         {/each}
       </div>
       <div>
-        <button class="small secondary" disabled={!!busy} on:click={() => generateBible(c)}>
+        <button class="small secondary" disabled={!!busy} onclick={() => generateBible(c)}>
           {busy === `bible-${c.id}` ? '…' : 'Generate bible'}
         </button>
-        <button class="small secondary" disabled={!!busy} on:click={() => generateSheets(c)}>
+        <button class="small secondary" disabled={!!busy} onclick={() => generateSheets(c)}>
           {busy === `sheets-${c.id}` ? '…' : 'Reference sheets (ERNIE)'}
         </button>
         <label class="small" style="margin-top:0.4rem">
           Upload reference photo
-          <input type="file" on:change={(e) => uploadPhoto(c, e)} />
+          <input type="file" onchange={(e) => uploadPhoto(c, e)} />
         </label>
       </div>
     </div>

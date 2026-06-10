@@ -2,9 +2,9 @@
   import { onMount } from 'svelte';
   import { get } from '$lib/api';
 
-  let nodes: any[] = [];
-  let edges: any[] = [];
-  let error = '';
+  let nodes: any[] = $state([]);
+  let edges: any[] = $state([]);
+  let error = $state('');
 
   const COLUMNS = ['character', 'asset', 'scene', 'shot', 'render_job', 'output'];
   const COLORS: Record<string, string> = {
@@ -19,8 +19,8 @@
   const COL_W = 190;
   const ROW_H = 46;
 
-  let positions: Record<string, { x: number; y: number }> = {};
-  let height = 400;
+  let positions: Record<string, { x: number; y: number }> = $state({});
+  let height = $state(400);
 
   onMount(async () => {
     try {

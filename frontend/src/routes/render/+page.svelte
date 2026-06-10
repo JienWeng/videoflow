@@ -1,20 +1,22 @@
 <script lang="ts">
+  import { preventDefault } from 'svelte/legacy';
+
   import { onDestroy, onMount } from 'svelte';
   import { get, post } from '$lib/api';
   import VideoPreview from '$lib/components/VideoPreview.svelte';
 
-  let jobs: any[] = [];
-  let scenes: any[] = [];
-  let shots: any[] = [];
-  let outputs: Record<string, any[]> = {};
-  let error = '';
-  let busy = false;
+  let jobs: any[] = $state([]);
+  let scenes: any[] = $state([]);
+  let shots: any[] = $state([]);
+  let outputs: Record<string, any[]> = $state({});
+  let error = $state('');
+  let busy = $state(false);
 
-  let sceneId = '';
-  let shotId = '';
-  let captionStyles: string[] = [];
-  let captionStyle: Record<string, string> = {};
-  let captioning = '';
+  let sceneId = $state('');
+  let shotId = $state('');
+  let captionStyles: string[] = $state([]);
+  let captionStyle: Record<string, string> = $state({});
+  let captioning = $state('');
 
   let timer: ReturnType<typeof setInterval>;
 
@@ -74,11 +76,11 @@
 
 <h1>Render</h1>
 
-<form class="panel" on:submit|preventDefault={renderFromShot}>
+<form class="panel" onsubmit={preventDefault(renderFromShot)}>
   <div class="row">
     <div>
       <label for="scene">Scene</label>
-      <select id="scene" bind:value={sceneId} on:change={loadShots}>
+      <select id="scene" bind:value={sceneId} onchange={loadShots}>
         <option value="">choose…</option>
         {#each scenes as s}<option value={s.id}>{s.title}</option>{/each}
       </select>
@@ -130,7 +132,7 @@
                       class="small secondary"
                       style="flex:0 0 auto;min-width:auto"
                       disabled={!!captioning}
-                      on:click={() => addCaptions(j.id, out)}
+                      onclick={() => addCaptions(j.id, out)}
                     >
                       {captioning === out.id ? 'transcribing…' : out.captioned_path ? 'Re-caption' : 'Auto captions'}
                     </button>

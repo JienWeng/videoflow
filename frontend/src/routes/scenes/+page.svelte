@@ -1,18 +1,20 @@
 <script lang="ts">
+  import { preventDefault } from 'svelte/legacy';
+
   import { onMount } from 'svelte';
   import { get, patch, post, mediaUrl } from '$lib/api';
 
-  let scenes: any[] = [];
-  let characters: any[] = [];
-  let shotsByScene: Record<string, any[]> = {};
-  let storyboards: Record<string, any> = {};
-  let error = '';
-  let busy = '';
-  let ok = '';
+  let scenes: any[] = $state([]);
+  let characters: any[] = $state([]);
+  let shotsByScene: Record<string, any[]> = $state({});
+  let storyboards: Record<string, any> = $state({});
+  let error = $state('');
+  let busy = $state('');
+  let ok = $state('');
 
-  let idea = '';
-  let targetDuration: number | '' = '';
-  let castSelection: Record<string, string[]> = {};
+  let idea = $state('');
+  let targetDuration: number | '' = $state('');
+  let castSelection: Record<string, string[]> = $state({});
 
   async function refresh() {
     [scenes, characters] = await Promise.all([get('/scenes'), get('/characters')]);
@@ -101,9 +103,9 @@
 
 <h1>Scenes</h1>
 
-<form class="panel" on:submit|preventDefault={generateScript}>
+<form class="panel" onsubmit={preventDefault(generateScript)}>
   <label for="idea">Story idea → script + scenes</label>
-  <textarea id="idea" bind:value={idea} placeholder="e.g. 中文识字短片：我是乐乐，乐乐是我…" />
+  <textarea id="idea" bind:value={idea} placeholder="e.g. 中文识字短片：我是乐乐，乐乐是我…"></textarea>
   <div class="row">
     <div>
       <label for="dur">Target duration (s, optional)</label>
@@ -133,13 +135,13 @@
         </select>
       </div>
       <div style="flex:0 0 auto;min-width:auto">
-        <button class="small secondary" disabled={!!busy} on:click={() => saveScene(s)}>
+        <button class="small secondary" disabled={!!busy} onclick={() => saveScene(s)}>
           {busy === `save-${s.id}` ? '…' : 'Save scene'}
         </button>
       </div>
     </div>
     <label for="sum-{s.id}">Summary <span class="meta">({s.id})</span></label>
-    <textarea id="sum-{s.id}" bind:value={s.summary} />
+    <textarea id="sum-{s.id}" bind:value={s.summary}></textarea>
 
 
     <div class="meta">Cast for expansion:</div>
@@ -149,40 +151,40 @@
           type="checkbox"
           style="width:auto"
           checked={(castSelection[s.id] ?? s.character_ids_json ?? []).includes(c.id)}
-          on:change={() => toggleCast(s.id, c.id)}
+          onchange={() => toggleCast(s.id, c.id)}
         />
         {c.name}
       </label>
     {/each}
 
     <div>
-      <button class="small secondary" disabled={!!busy} on:click={() => expandScene(s)}>
+      <button class="small secondary" disabled={!!busy} onclick={() => expandScene(s)}>
         {busy === `expand-${s.id}` ? '…' : '1. Expand scene (AI)'}
       </button>
-      <button class="small secondary" disabled={!!busy} on:click={() => generateShots(s)}>
+      <button class="small secondary" disabled={!!busy} onclick={() => generateShots(s)}>
         {busy === `shots-${s.id}` ? '…' : '2. Generate shots (AI)'}
       </button>
-      <button class="small secondary" disabled={!!busy || !(shotsByScene[s.id]?.length)} on:click={() => generateStoryboard(s)}>
+      <button class="small secondary" disabled={!!busy || !(shotsByScene[s.id]?.length)} onclick={() => generateStoryboard(s)}>
         {busy === `sb-${s.id}` ? '…' : '3. Generate 分镜图 (ERNIE)'}
       </button>
-      <button class="small" disabled={!!busy || !(shotsByScene[s.id]?.length)} on:click={() => renderScene(s)}>
+      <button class="small" disabled={!!busy || !(shotsByScene[s.id]?.length)} onclick={() => renderScene(s)}>
         {busy === `render-${s.id}` ? '…' : '4. Render scene (Kling)'}
       </button>
     </div>
 
     {#if shotsByScene[s.id]?.length}
       <table style="margin-top:0.8rem">
-        <thead><tr><th>#</th><th style="width:50%">prompt</th><th>camera</th><th>movement</th><th>s</th><th /></tr></thead>
+        <thead><tr><th>#</th><th style="width:50%">prompt</th><th>camera</th><th>movement</th><th>s</th><th></th></tr></thead>
         <tbody>
           {#each shotsByScene[s.id] as shot (shot.id)}
             <tr>
               <td>{shot.shot_order + 1}</td>
-              <td><textarea style="min-height:46px" bind:value={shot.prompt} /></td>
+              <td><textarea style="min-height:46px" bind:value={shot.prompt}></textarea></td>
               <td><input bind:value={shot.camera} /></td>
               <td><input bind:value={shot.movement} /></td>
               <td style="width:70px"><input type="number" min="1" max="15" bind:value={shot.duration} /></td>
               <td>
-                <button class="small secondary" disabled={!!busy} on:click={() => saveShot(shot)}>
+                <button class="small secondary" disabled={!!busy} onclick={() => saveShot(shot)}>
                   {busy === `save-${shot.id}` ? '…' : 'Save'}
                 </button>
               </td>
