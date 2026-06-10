@@ -63,10 +63,11 @@
     captioning = out.id;
     error = '';
     try {
+      const lang = captionLanguage[out.id] ?? captionDefaultLanguage ?? 'zh';
       const updated = await post(`/outputs/${out.id}/caption`, {
         style: captionStyle[out.id] ?? captionStyles[0] ?? 'kids',
         model: captionModel[out.id] ?? (captionDefaultModel || undefined),
-        language: captionLanguage[out.id] ?? captionDefaultLanguage ?? 'zh'
+        language: lang === 'auto' ? null : lang
       });
       outputs[jobId] = outputs[jobId].map((o) => (o.id === out.id ? updated : o));
       outputs = outputs;
