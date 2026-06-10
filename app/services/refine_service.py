@@ -7,7 +7,7 @@ from sqlmodel import Session
 from app.agents import refine_agent
 from app.errors import NotFoundError
 from app.models import Scene, Shot
-from app.services import scene_service
+from app.services import linking_service, scene_service
 
 
 async def refine_scene(session: Session, scene_id: str, instruction: str) -> dict:
@@ -24,6 +24,9 @@ async def refine_scene(session: Session, scene_id: str, instruction: str) -> dic
     changes.pop("note", None)
     if changes:
         scene = scene_service.update_scene(session, scene_id, **changes)
+    # update_scene already auto-links; this also covers the no-change path.
+    linking_service.auto_link_scene(session, scene_id)
+    session.refresh(scene)
     return {"scene": scene, "note": refinement.note}
 
 
@@ -49,4 +52,8 @@ async def refine_shot(session: Session, shot_id: str, instruction: str) -> dict:
     changes.pop("note", None)
     if changes:
         shot = scene_service.update_shot(session, shot_id, **changes)
+    if shot.scene_id:
+        # update_shot already auto-links; this also covers the no-change path.
+        linking_service.auto_link_scene(session, shot.scene_id)
+        session.refresh(shot)
     return {"shot": shot, "note": refinement.note}

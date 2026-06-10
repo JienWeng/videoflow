@@ -94,7 +94,16 @@ async def expand_scene(session: Session, scene_id: str, character_ids: list[str]
     session.add(scene)
     session.commit()
     session.refresh(scene)
+    _auto_link(session, scene.id)
+    session.refresh(scene)
     return scene
+
+
+def _auto_link(session: Session, scene_id: str) -> None:
+    """Resolve @Name mentions in the summary/shot prompts into relationships."""
+    from app.services import linking_service  # local import: avoids circularity
+
+    linking_service.auto_link_scene(session, scene_id)
 
 
 def _scene_to_spec(scene: Scene) -> SceneSpec:
@@ -136,6 +145,7 @@ async def create_shots(session: Session, scene_id: str) -> list[Shot]:
         session.add(row)
         rows.append(row)
     session.commit()
+    _auto_link(session, scene.id)
     for row in rows:
         session.refresh(row)
     return rows
@@ -193,6 +203,7 @@ def update_scene(
     scene.updated_at = utcnow()
     session.add(scene)
     session.commit()
+    _auto_link(session, scene.id)
     session.refresh(scene)
     return scene
 
@@ -226,6 +237,7 @@ def update_shot(
     shot.updated_at = utcnow()
     session.add(shot)
     session.commit()
+    _auto_link(session, shot.scene_id)
     session.refresh(shot)
     return shot
 

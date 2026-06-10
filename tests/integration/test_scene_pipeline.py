@@ -676,6 +676,67 @@ def test_generate_script_scene_count_respects_cap(script_ctx):
     assert len(body["draft"]["scenes"]) == 2
 
 
+def test_mention_autolink_on_shot_edit(ctx):
+    """PATCH /shots with @Name mentions auto-links characters (scene cast) and
+    assets (shot asset_ids_json). The fixture has BOTH a character named Grace
+    and an asset named Grace — the character wins for that mention."""
+    client, fake = ctx
+
+    # Start clean: remove Grace from the cast so the link is observable.
+    assert client.delete("/scenes/scene_1/cast/char_grace").status_code == 200
+
+    resp = client.patch(
+        "/shots/shot_1", json={"prompt": "Mid-shot: @Grace lifts @Meadow"}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Asset "Meadow" attached to the shot — the PATCH response already shows it.
+    assert "asset_bg" in body["asset_ids_json"]
+    # Character "Grace" wins over the asset of the same name: cast, not shot asset.
+    assert "asset_char" not in body["asset_ids_json"]
+    scene = client.get("/scenes/scene_1").json()
+    assert "char_grace" in scene["character_ids_json"]
+
+    # Idempotent: patching the same prompt again does not duplicate links.
+    resp2 = client.patch(
+        "/shots/shot_1", json={"prompt": "Mid-shot: @Grace lifts @Meadow"}
+    )
+    assert resp2.json()["asset_ids_json"].count("asset_bg") == 1
+    scene = client.get("/scenes/scene_1").json()
+    assert scene["character_ids_json"].count("char_grace") == 1
+
+
+def test_mention_autolink_on_scene_summary_edit(ctx):
+    """PATCH /scenes with an asset @mention in the summary attaches the asset to
+    the scene's asset_ids_json; a character mention joins the cast."""
+    client, fake = ctx
+    import app.database as _db_mod
+    from app.models import Asset, Scene
+
+    with Session(_db_mod.engine) as s:
+        s.add(Asset(id="asset_cup", type="prop", name="Red Cup"))
+        s.commit()
+    assert client.delete("/scenes/scene_1/cast/char_grace").status_code == 200
+
+    resp = client.patch(
+        "/scenes/scene_1",
+        json={"summary": "@Grace drinks from the @Red Cup in the meadow"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "asset_cup" in body["asset_ids_json"]
+    assert "char_grace" in body["character_ids_json"]
+    # Asset named "Grace" is NOT spuriously attached (character wins).
+    assert "asset_char" not in body["asset_ids_json"]
+
+
+def test_mention_no_match_is_noop(ctx):
+    client, fake = ctx
+    resp = client.patch("/shots/shot_1", json={"prompt": "@Nobody does anything"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["asset_ids_json"] in (None, [])
+
+
 def test_delete_asset_detaches_references(ctx):
     """DELETE /assets/{id} removes the row and detaches the id from all
     Scene.asset_ids_json, Shot.asset_ids_json, Character.reference_asset_ids_json,
