@@ -52,23 +52,41 @@ class AtlasCloudClient:
             raise ProviderError(f"AtlasCloud response missing prediction id: {body}")
         return pid
 
-    async def generate_image(self, payload: dict) -> str:
+    async def generate_image(self, payload: dict) -> dict:
+        """Return the full prediction data block. With enable_sync_mode the
+        outputs are already terminal in this response — no polling needed."""
         body = await self._post_json("/model/generateImage", payload)
-        return self._prediction_id(body)
+        data = body.get("data") or body
+        self._prediction_id(body)  # validate an id is present
+        return data
 
     async def generate_video(self, payload: dict) -> str:
         body = await self._post_json("/model/generateVideo", payload)
         return self._prediction_id(body)
 
     async def get_prediction(self, prediction_id: str) -> dict:
-        """Return the normalised {status, outputs, error} data block."""
+        """Return the normalised {status, outputs, error} data block.
+
+        AtlasCloud wraps terminally-failed jobs in an HTTP 500 whose body still
+        carries the authoritative data block — parse before judging the status
+        code, so a real 'failed' is terminal rather than a transient poll error.
+        """
         try:
             resp = await self._client.get(f"/model/prediction/{prediction_id}")
-            resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise ProviderError(f"AtlasCloud poll failed: {exc}") from exc
-        body = resp.json()
-        return body.get("data") or body
+        try:
+            body = resp.json()
+        except ValueError:
+            body = None
+        data = body.get("data") if isinstance(body, dict) else None
+        if isinstance(data, dict) and data.get("status"):
+            return data
+        if resp.is_error:
+            raise ProviderError(
+                f"AtlasCloud poll -> {resp.status_code}: {resp.text[:300]}"
+            )
+        return data or body or {}
 
     async def upload_media(self, file_path: str) -> str:
         """Upload a local file, return a hosted static.atlascloud.ai URL."""

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from app.errors import ProviderError, TimeoutError_
 from app.providers.base import PollResult
+
+logger = logging.getLogger("videoflow.polling")
 
 
 async def poll_until_terminal(

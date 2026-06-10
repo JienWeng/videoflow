@@ -23,6 +23,7 @@ async def run_agent(
     response_model: type[T],
     user_prompt: str,
     context: dict | None = None,
+    images: list[str] | None = None,
     client: StructuredLLMClient | None = None,
 ) -> T:
     client = client or get_llm_client()
@@ -31,6 +32,7 @@ async def run_agent(
         response_model=response_model,
         user_prompt=user_prompt,
         context=context,
+        images=images,
     )
 
 

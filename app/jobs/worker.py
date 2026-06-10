@@ -46,9 +46,12 @@ async def _worker_loop(worker_id: int) -> None:
 
 
 async def start_workers(concurrency: int, max_concurrent_polls: int) -> None:
-    global _semaphore
+    global _queue, _semaphore
+    # Bind a fresh queue to the current event loop; a queue left over from a
+    # previous loop (app restart, test re-run) would strand awaiting workers.
+    # Jobs from a prior run are recovered from the DB by reconcile_pending().
+    _queue = asyncio.Queue()
     _semaphore = asyncio.Semaphore(max_concurrent_polls)
-    get_queue()
     for i in range(concurrency):
         _workers.append(asyncio.create_task(_worker_loop(i)))
     logger.info("started %d render workers", concurrency)

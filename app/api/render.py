@@ -10,7 +10,7 @@ from sqlmodel import Session
 from app.agents.prompt_agent import build_render_spec
 from app.database import get_session
 from app.errors import NotFoundError
-from app.models import Character, Shot
+from app.models import Asset, Character, Shot
 from app.schemas import RenderSpec, ShotSpec
 from app.services import render_service, scene_service
 
@@ -60,11 +60,19 @@ async def render_from_shot(
         movement=shot_row.movement,
         asset_ids=list(shot_row.asset_ids_json or []),
     )
+    # Characters: explicit ids win, otherwise fall back to the scene's cast so
+    # their reference images always reach Kling images[].
+    character_ids = body.character_ids or list(scene.character_ids_json or [])
     bibles = [
         scene_service.character_to_bible(c)
-        for cid in body.character_ids
+        for cid in character_ids
         if (c := session.get(Character, cid))
     ]
+    asset_names = {
+        aid: a.name
+        for aid in shot.asset_ids
+        if (a := session.get(Asset, aid)) and a.name
+    }
     spec = await build_render_spec(
         scene_id=scene.id,
         scene_summary=scene.summary,
@@ -72,10 +80,36 @@ async def render_from_shot(
         aspect_ratio=body.aspect_ratio,
         named_references=[r.model_dump() for r in body.named_references],
         character_bibles=bibles,
+        asset_names=asset_names,
         video_asset_id=body.video_asset_id,
     )
     job = await render_service.start_render(session, spec)
     return _job_response(job)
+
+
+class CaptionRequest(BaseModel):
+    style: str = "kids"
+    language: str | None = "zh"  # None -> auto-detect
+
+
+@router.post("/outputs/{output_id}/caption")
+async def caption_output(
+    output_id: str, body: CaptionRequest, session: Session = Depends(get_session)
+):
+    """Auto-captions: transcribe the Kling voice track (faster-whisper) and burn
+    styled subtitles into a copy of the video."""
+    from app.services import caption_service
+
+    return await caption_service.caption_output(
+        session, output_id, style=body.style, language=body.language
+    )
+
+
+@router.get("/caption-styles")
+def caption_styles():
+    from app.services.caption_service import STYLES
+
+    return list(STYLES)
 
 
 @router.get("/render-jobs")

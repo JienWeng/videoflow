@@ -56,9 +56,10 @@ class AtlasCloudVideoProvider:
         if spec.multi_shot:
             payload["shot_type"] = spec.shot_type
             if spec.shot_type == "customize":
+                # Live API requires index on every entry (ret:1201), 1-based.
                 payload["multi_prompt"] = [
-                    {"prompt": s.prompt, "duration": s.duration}
-                    for s in spec.multi_prompt
+                    {"index": i + 1, "prompt": s.prompt, "duration": s.duration}
+                    for i, s in enumerate(spec.multi_prompt)
                 ]
         return payload
 

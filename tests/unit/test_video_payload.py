@@ -75,9 +75,10 @@ async def test_multi_shot_customize_payload(provider):
     payload = await provider.build_payload(spec, FakeResolver())
     assert payload["multi_shot"] is True
     assert payload["shot_type"] == "customize"
+    # Live API ret:1201 — "each entry in multi_prompt must have index and duration".
     assert payload["multi_prompt"] == [
-        {"prompt": "color river streaks", "duration": 3},
-        {"prompt": "lipstick blooms on water", "duration": 2},
+        {"index": 1, "prompt": "color river streaks", "duration": 3},
+        {"index": 2, "prompt": "lipstick blooms on water", "duration": 2},
     ]
     assert sum(s["duration"] for s in payload["multi_prompt"]) == payload["duration"]
 

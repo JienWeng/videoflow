@@ -54,6 +54,17 @@ class Settings(BaseSettings):
         default="kwaivgi/kling-video-o3-pro/reference-to-video",
         alias="ATLAS_VIDEO_MODEL",
     )
+    # Reference-image generation (分镜图 with character sheets as inputs).
+    atlas_image_ref_model: str = Field(
+        default="google/nano-banana-2/edit", alias="ATLAS_IMAGE_REF_MODEL"
+    )
+    # AtlasCloud-hosted LLMs (OpenAI-compatible; NOT under /api/v1).
+    atlas_llm_base_url: str = Field(
+        default="https://api.atlascloud.ai/v1", alias="ATLAS_LLM_BASE_URL"
+    )
+    atlas_vl_model: str = Field(
+        default="qwen/qwen3-vl-30b-a3b-instruct", alias="ATLAS_VL_MODEL"
+    )
 
     # Default video aspect ratio (16:9 | 9:16 | 1:1). Configurable per deployment.
     default_aspect_ratio: str = Field(default="9:16", alias="DEFAULT_ASPECT_RATIO")
@@ -74,6 +85,9 @@ class Settings(BaseSettings):
 
     # Worker
     worker_concurrency: int = Field(default=2, alias="WORKER_CONCURRENCY")
+
+    # Auto-captions (faster-whisper model size: tiny/base/small/medium/large-v3)
+    whisper_model: str = Field(default="small", alias="WHISPER_MODEL")
 
     @property
     def assets_dir(self) -> Path:

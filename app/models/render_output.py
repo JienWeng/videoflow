@@ -17,6 +17,7 @@ class RenderOutput(SQLModel, table=True):
     render_job_id: str = Field(foreign_key="render_jobs.id")
     video_path: str | None = None
     thumbnail_path: str | None = None
+    captioned_path: str | None = None  # video with burned-in auto-captions
     score: int | None = None
     selected: bool = False
     notes: str = ""

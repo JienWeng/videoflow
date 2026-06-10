@@ -23,6 +23,18 @@ def init_db() -> None:
     from app import models  # noqa: F401  (registers tables on SQLModel.metadata)
 
     SQLModel.metadata.create_all(engine)
+    _migrate(engine)
+
+
+def _migrate(target_engine) -> None:
+    """Additive SQLite migrations for columns create_all won't add."""
+    with target_engine.connect() as conn:
+        cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(render_outputs)")]
+        if cols and "captioned_path" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE render_outputs ADD COLUMN captioned_path VARCHAR"
+            )
+            conn.commit()
 
 
 def get_session() -> Iterator[Session]:

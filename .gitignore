@@ -10,3 +10,13 @@ storage/outputs/*
 !storage/**/.gitkeep
 .pytest_cache/
 *.egg-info/
+
+# frontend
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+
+# local media inbox
+character-to-upload/
+*:Zone.Identifier
+storage/fonts/*

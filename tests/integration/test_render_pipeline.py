@@ -90,6 +90,49 @@ def client(monkeypatch, tmp_path):
         yield c
 
 
+def test_caption_output_endpoint(client, monkeypatch):
+    """After a successful render, captions transcribe + style + burn into a new
+    file stored on the output row (ASR and FFmpeg mocked)."""
+    from app.services import caption_service
+
+    async def fake_transcribe(video_path, language=None):
+        return [caption_service.CaptionSegment(start=0.0, end=2.0, text="我是乐乐")]
+
+    async def fake_burn(video_path, ass_path, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"captioned")
+        return dest
+
+    monkeypatch.setattr(caption_service, "transcribe", fake_transcribe)
+    monkeypatch.setattr(caption_service, "burn_subtitles", fake_burn)
+
+    # Produce a finished render via the normal pipeline.
+    spec = {
+        "scene_id": "scene_x", "duration": 5, "prompt": "@Image p",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+    }
+    job_id = client.post("/render", json=spec).json()["job_id"]
+    for _ in range(50):
+        body = client.get(f"/render-jobs/{job_id}").json()
+        if body["job"]["status"] in ("succeeded", "failed"):
+            break
+        time.sleep(0.1)
+    output_id = body["outputs"][0]["id"]
+
+    resp = client.post(f"/outputs/{output_id}/caption", json={"style": "kids"})
+    assert resp.status_code == 200, resp.text
+    out = resp.json()
+    assert out["captioned_path"].endswith("_captioned.mp4")
+    assert Path(out["captioned_path"]).exists()
+    # The ASS subtitle file is kept alongside as an editable artifact.
+    assert Path(out["captioned_path"].replace("_captioned.mp4", ".ass")).exists()
+
+
+def test_caption_unknown_style_rejected(client):
+    resp = client.post("/outputs/nonexistent/caption", json={"style": "kids"})
+    assert resp.status_code == 404
+
+
 def test_render_job_succeeds(client):
     spec = {
         "scene_id": "scene_x",

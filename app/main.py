@@ -29,8 +29,23 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.staticfiles import StaticFiles
+
     app = FastAPI(title="VideoFlow", version="0.1.0", lifespan=lifespan)
     register_exception_handlers(app)
+
+    # Local-first SvelteKit dev/preview frontend.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173", "http://localhost:4173"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    # Media previews (assets, character refs, outputs) served straight from disk.
+    settings = get_settings()
+    settings.ensure_dirs()
+    app.mount("/storage", StaticFiles(directory=settings.storage_root), name="storage")
 
     @app.get("/health")
     async def health() -> dict:

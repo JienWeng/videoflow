@@ -11,7 +11,10 @@ identical on every backend — only the wiring differs.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
+import mimetypes
+from pathlib import Path
 from typing import TypeVar
 
 import instructor
@@ -57,7 +60,11 @@ class StructuredLLMClient:
         temperature: float | None = None,
         max_tokens: int = 4096,
         mode: instructor.Mode | None = None,
+        images: list[str] | None = None,
     ) -> T:
+        """`images`: local file paths (inlined as base64 data URLs) or http(s)
+        URLs, attached to the user message for vision-capable models. Supported
+        on OpenAI-compatible backends (minimax/openai/gemini/atlas)."""
         skill = get_skill(agent) if agent else None
 
         # Resolve config: explicit kwarg > skill > settings/default.
@@ -78,7 +85,19 @@ class StructuredLLMClient:
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": user_prompt})
+        if images:
+            if provider == "anthropic":
+                raise LLMProviderError(
+                    "images are only supported on OpenAI-compatible providers"
+                )
+            content: list[dict] = [{"type": "text", "text": user_prompt}]
+            content += [
+                {"type": "image_url", "image_url": {"url": _image_url(i)}}
+                for i in images
+            ]
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": user_prompt})
 
         backend = self._backend(provider, model, timeout_s)
         if mode is not None:
@@ -118,6 +137,16 @@ class StructuredLLMClient:
                 ) from exc
             logger.error("LLM provider error (agent=%s, provider=%s): %s", agent, provider, exc)
             raise LLMProviderError(f"{provider} error: {exc}") from exc
+
+
+def _image_url(image: str) -> str:
+    """Pass http(s) URLs through; inline local files as base64 data URLs."""
+    if image.startswith(("http://", "https://", "data:")):
+        return image
+    path = Path(image)
+    mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
+    data = base64.b64encode(path.read_bytes()).decode()
+    return f"data:{mime};base64,{data}"
 
 
 def _format(template: str, context: dict | None) -> str:

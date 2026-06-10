@@ -17,7 +17,7 @@ import instructor
 from app.config import Settings
 from app.errors import ProviderError
 
-ProviderName = Literal["minimax", "openai", "anthropic", "gemini"]
+ProviderName = Literal["minimax", "openai", "anthropic", "gemini", "atlas"]
 
 # Per-model structured-output Mode overrides (else the provider default is used).
 # NOTE: MiniMax's OpenAI-compatible endpoint rejects `response_format`
@@ -30,6 +30,8 @@ _PROVIDER_DEFAULT_MODE: dict[str, instructor.Mode] = {
     "openai": instructor.Mode.TOOLS,
     "gemini": instructor.Mode.JSON,
     "anthropic": instructor.Mode.ANTHROPIC_TOOLS,
+    # AtlasCloud-hosted open models (qwen3-vl etc.): schema-in-prompt is safest.
+    "atlas": instructor.Mode.MD_JSON,
 }
 
 
@@ -53,6 +55,7 @@ def default_model(provider: ProviderName, settings: Settings) -> str:
         "openai": settings.openai_model,
         "anthropic": settings.anthropic_model,
         "gemini": settings.gemini_model,
+        "atlas": settings.atlas_vl_model,
     }[provider]
 
 
@@ -61,13 +64,15 @@ def build_backend(
 ) -> Backend:
     mode = resolve_mode(provider, model)
 
-    if provider in ("minimax", "openai", "gemini"):
+    if provider in ("minimax", "openai", "gemini", "atlas"):
         from openai import AsyncOpenAI
 
         if provider == "minimax":
             key, base_url = settings.minimax_api_key, settings.minimax_base_url
         elif provider == "gemini":
             key, base_url = settings.gemini_api_key, settings.gemini_base_url
+        elif provider == "atlas":
+            key, base_url = settings.atlascloud_api_key, settings.atlas_llm_base_url
         else:
             key, base_url = settings.openai_api_key, settings.openai_base_url
         if not key:

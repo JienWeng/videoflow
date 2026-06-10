@@ -84,6 +84,43 @@ async def test_retry_exhaustion_maps_to_validation_error(monkeypatch):
     assert ei.value.extra.get("raw") == '{"name": "ava"}'
 
 
+async def test_images_become_multimodal_openai_content(monkeypatch, tmp_path):
+    """Local image paths are inlined as base64 data URLs; http URLs pass through."""
+    client = _client()
+    captured = {}
+
+    async def create(**kwargs):
+        captured.update(kwargs)
+        return Sample(name="ok", value=1)
+
+    monkeypatch.setattr(client, "_backend", lambda p, m, t: _fake_backend(create))
+    img = tmp_path / "frame.jpg"
+    img.write_bytes(b"\xff\xd8\xff fake-jpeg")
+    await client.generate(
+        response_model=Sample,
+        user_prompt="judge these",
+        images=[str(img), "https://x/ref.png"],
+    )
+    user = captured["messages"][-1]
+    assert user["role"] == "user"
+    parts = user["content"]
+    assert parts[0] == {"type": "text", "text": "judge these"}
+    assert parts[1]["type"] == "image_url"
+    assert parts[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert parts[2]["image_url"]["url"] == "https://x/ref.png"
+
+
+def test_atlas_llm_provider_backend():
+    """AtlasCloud-hosted LLMs (qwen3-vl etc.) ride the OpenAI-compatible backend."""
+    from app.llm.providers import build_backend, default_model, resolve_mode
+
+    settings = Settings(MINIMAX_API_KEY="k", ATLASCLOUD_API_KEY="k")
+    assert resolve_mode("atlas", "qwen/qwen3-vl-30b-a3b-instruct") == instructor.Mode.MD_JSON
+    assert default_model("atlas", settings) == settings.atlas_vl_model
+    backend = build_backend("atlas", "qwen/qwen3-vl-30b-a3b-instruct", settings, 30)
+    assert backend.kind == "openai"
+
+
 async def test_skill_routes_to_its_provider(monkeypatch):
     """A skill's provider/model selection reaches the backend factory."""
     from app.llm import skills

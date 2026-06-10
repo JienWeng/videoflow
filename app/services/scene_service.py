@@ -128,3 +128,64 @@ def list_shots(session: Session, scene_id: str) -> list[Shot]:
     return list(
         session.exec(select(Shot).where(Shot.scene_id == scene_id).order_by(Shot.shot_order)).all()
     )
+
+
+def update_scene(
+    session: Session,
+    scene_id: str,
+    *,
+    title: str | None = None,
+    summary: str | None = None,
+    duration: int | None = None,
+    aspect_ratio: str | None = None,
+    character_ids: list[str] | None = None,
+    asset_ids: list[str] | None = None,
+) -> Scene:
+    scene = get_scene(session, scene_id)
+    if title is not None:
+        scene.title = title
+    if summary is not None:
+        scene.summary = summary
+    if duration is not None:
+        scene.duration = duration
+    if aspect_ratio is not None:
+        scene.aspect_ratio = aspect_ratio
+    if character_ids is not None:
+        scene.character_ids_json = character_ids
+    if asset_ids is not None:
+        scene.asset_ids_json = asset_ids
+    scene.updated_at = utcnow()
+    session.add(scene)
+    session.commit()
+    session.refresh(scene)
+    return scene
+
+
+def update_shot(
+    session: Session,
+    shot_id: str,
+    *,
+    prompt: str | None = None,
+    duration: int | None = None,
+    camera: str | None = None,
+    movement: str | None = None,
+    asset_ids: list[str] | None = None,
+) -> Shot:
+    shot = session.get(Shot, shot_id)
+    if shot is None:
+        raise NotFoundError(f"shot {shot_id} not found")
+    if prompt is not None:
+        shot.prompt = prompt
+    if duration is not None:
+        shot.duration = duration
+    if camera is not None:
+        shot.camera = camera
+    if movement is not None:
+        shot.movement = movement
+    if asset_ids is not None:
+        shot.asset_ids_json = asset_ids
+    shot.updated_at = utcnow()
+    session.add(shot)
+    session.commit()
+    session.refresh(shot)
+    return shot

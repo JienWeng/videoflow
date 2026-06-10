@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from sqlmodel import Session, select
 
-from app.errors import NotFoundError
+from app.agents.prompt_agent import collect_named_references
+from app.errors import NotFoundError, ValidationFailedError
 from app.jobs import worker
-from app.models import RenderJob, RenderOutput, RenderStatus
+from app.models import Asset, Character, RenderJob, RenderOutput, RenderStatus
 from app.providers.atlascloud_client import get_atlas_client
 from app.providers.registry import get_video_provider
 from app.providers.url_resolver import AtlasCloudUploadResolver
-from app.schemas import RenderSpec
+from app.schemas import ReferenceImage, RenderSpec, StoryboardShot
 
 
 async def start_render(session: Session, spec: RenderSpec) -> RenderJob:
@@ -40,6 +41,72 @@ async def start_render(session: Session, spec: RenderSpec) -> RenderJob:
 
     worker.enqueue(job.id)
     return job
+
+
+async def render_scene(session: Session, scene_id: str) -> RenderJob:
+    """Deterministic whole-scene render: stored shots become the multi-shot
+    storyboard (customize, indexed), and every linked reference — characters'
+    images, scene/shot assets and the scene's 分镜图 — feeds Kling images[]."""
+    from app.services import scene_service, storyboard_service
+
+    scene = scene_service.get_scene(session, scene_id)
+    shots = scene_service.list_shots(session, scene_id)
+    if not shots:
+        raise ValidationFailedError(
+            f"scene {scene_id} has no shots — generate shots before rendering"
+        )
+    total = sum(max(1, s.duration) for s in shots)
+    if not 3 <= total <= 15:
+        raise ValidationFailedError(
+            f"scene duration {total}s outside the provider's 3-15s range — "
+            "adjust shot durations or split the scene"
+        )
+
+    bibles = [
+        scene_service.character_to_bible(c)
+        for cid in scene.character_ids_json or []
+        if (c := session.get(Character, cid))
+    ]
+    asset_ids = list(scene.asset_ids_json or [])
+    for shot in shots:
+        asset_ids.extend(shot.asset_ids_json or [])
+    asset_names = {
+        aid: a.name for aid in asset_ids
+        if (a := session.get(Asset, aid)) and a.name
+    }
+    refs = collect_named_references(
+        named_references=[],
+        character_bibles=bibles,
+        shot_asset_ids=asset_ids,
+        asset_names=asset_names,
+    )
+    storyboard = storyboard_service.latest_storyboard_for_scene(session, scene_id)
+    if storyboard and storyboard.id not in {r["asset_id"] for r in refs}:
+        refs.append({"name": "分镜图", "asset_id": storyboard.id})
+
+    prompt = (
+        f"{scene.summary}. "
+        + ("Follow the @分镜图 storyboard panels in order for composition, scene "
+           "continuity and lighting. " if storyboard else "")
+        + "Spoken dialogue, clear and natural. Negative: no subtitles, no "
+        "on-screen text, no captions, no watermark, no outfit changes, no extra "
+        "characters, no distorted faces."
+    )
+    spec = RenderSpec(
+        scene_id=scene.id,
+        duration=total,
+        aspect_ratio=scene.aspect_ratio,
+        prompt=prompt,
+        reference_images=[ReferenceImage(**r) for r in refs],
+        sound=True,
+        keep_original_sound=True,
+        multi_shot=True,
+        shot_type="customize",
+        multi_prompt=[
+            StoryboardShot(prompt=s.prompt, duration=max(1, s.duration)) for s in shots
+        ],
+    )
+    return await start_render(session, spec)
 
 
 def get_job(session: Session, job_id: str) -> RenderJob:
