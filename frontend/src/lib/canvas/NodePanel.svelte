@@ -7,8 +7,8 @@
   import { Textarea } from '$lib/components/ui/textarea';
   import { Badge } from '$lib/components/ui/badge';
   import { toast } from 'svelte-sonner';
-  import { Sparkles } from '@lucide/svelte';
-  import { patch, post, mediaUrl, isImage } from '$lib/api';
+  import { Sparkles, Trash2 } from '@lucide/svelte';
+  import { patch, post, del, mediaUrl, isImage } from '$lib/api';
 
   let {
     node,
@@ -24,10 +24,14 @@
   let saving = $state(false);
   let refineInstruction = $state('');
   let refining = $state(false);
+  let confirmingDelete = $state(false);
+  let deleting = $state(false);
+  let confirmTimer: ReturnType<typeof setTimeout> | undefined;
 
   $effect(() => {
     const d = (node?.data ?? {}) as Record<string, any>;
     refineInstruction = '';
+    confirmingDelete = false;
     if (node && String(d.kind) === 'scene') {
       form = {
         title: d.label ?? '',
@@ -107,6 +111,29 @@
       toast.error(err.message);
     } finally {
       refining = false;
+    }
+  }
+
+  async function deleteAsset() {
+    if (!node) return;
+    if (!confirmingDelete) {
+      confirmingDelete = true;
+      clearTimeout(confirmTimer);
+      confirmTimer = setTimeout(() => (confirmingDelete = false), 3000);
+      return;
+    }
+    clearTimeout(confirmTimer);
+    deleting = true;
+    try {
+      const r = await del(`/assets/${node.id}`);
+      toast.success(`Asset deleted (detached from ${r.detached_from} place${r.detached_from === 1 ? '' : 's'}).`);
+      onsaved();
+      onclose();
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      deleting = false;
+      confirmingDelete = false;
     }
   }
 
@@ -207,6 +234,10 @@
             <span class="truncate">{data.file_path}</span>
           </div>
         </div>
+        <Button variant="destructive" onclick={deleteAsset} disabled={deleting}>
+          <Trash2 class="size-4 mr-1" />
+          {deleting ? 'Deleting…' : confirmingDelete ? 'Confirm delete' : 'Delete asset'}
+        </Button>
       {:else if kind === 'render_job'}
         <div class="flex items-center gap-2 text-sm">
           <span class="text-muted-foreground">Status</span>

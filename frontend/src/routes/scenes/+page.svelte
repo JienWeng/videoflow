@@ -29,6 +29,7 @@
   let generatedAssets: Record<string, any[]> = $state({});
   let assetPlans: Record<string, { assets: any[]; reasoning: string } | null> = $state({});
   let planSelected: Record<string, boolean[]> = $state({});
+  let style: any = $state(null);
 
   async function refresh() {
     [scenes, characters] = await Promise.all([get('/scenes'), get('/characters')]);
@@ -45,7 +46,10 @@
     );
     shotsByScene = shotsByScene;
   }
-  onMount(() => refresh().catch((e) => (error = e.message)));
+  onMount(() => {
+    refresh().catch((e) => (error = e.message));
+    get('/style').then((s) => (style = s)).catch(() => {});
+  });
 
   async function run(key: string, fn: () => Promise<unknown>, doneMsg = '') {
     busy = key;
@@ -453,6 +457,15 @@
             <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateAssets(s)}>
               <ImagePlus class="size-3 mr-1" />{busy === `assets-${s.id}` ? 'Generating…' : 'Generate assets'}
             </Button>
+            {#if style?.style_prompt}
+              <Badge variant="secondary" class="text-muted-foreground max-w-[260px]" title={style.style_prompt}>
+                <span class="truncate">
+                  styled: {style.style_prompt.length > 30
+                    ? `${style.style_prompt.slice(0, 30)}…`
+                    : style.style_prompt}
+                </span>
+              </Badge>
+            {/if}
           </div>
           {#if assetPlans[s.id]?.assets?.length}
             {@const plan = assetPlans[s.id]!}

@@ -1,17 +1,128 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { get, post, upload, mediaUrl, isVideo } from '$lib/api';
+  import { get, post, patch, del, upload, mediaUrl, isImage, isVideo } from '$lib/api';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Card, CardContent } from '$lib/components/ui/card';
+  import * as Dialog from '$lib/components/ui/dialog';
+  import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
+  import { Textarea } from '$lib/components/ui/textarea';
   import { toast } from 'svelte-sonner';
-  import { Upload, Tag } from '@lucide/svelte';
+  import { Upload, Tag, Palette, Wand2, Pin, Trash2, X } from '@lucide/svelte';
 
   let assets: any[] = $state([]);
   let characters: any[] = $state([]);
   let error = $state('');
   let busy = $state(false);
   let search = $state('');
+
+  // --- Project style guide ---
+  let style: any = $state(null);
+  let styleLoaded = $state(false);
+  let styleEditing = $state(false); // "Create manually" with no row yet
+  let styleBusy = $state('');
+  let styleForm = $state({ style_prompt: '', palette: '', lighting: '', audience: '', tone: '' });
+  let reingestOpen = $state(false);
+  let deleteTarget: any = $state(null);
+
+  function seedStyleForm(s: any) {
+    styleForm = {
+      style_prompt: s?.style_prompt ?? '',
+      palette: s?.palette ?? '',
+      lighting: s?.lighting ?? '',
+      audience: s?.audience ?? '',
+      tone: s?.tone ?? ''
+    };
+  }
+
+  async function loadStyle() {
+    try {
+      style = await get('/style');
+      if (style) seedStyleForm(style);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      styleLoaded = true;
+    }
+  }
+
+  async function ingestStyle() {
+    styleBusy = 'ingest';
+    reingestOpen = false;
+    try {
+      style = await post('/style/ingest');
+      seedStyleForm(style);
+      styleEditing = false;
+      toast.success('Style derived from the story.');
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      styleBusy = '';
+    }
+  }
+
+  async function saveStyle() {
+    styleBusy = 'save';
+    try {
+      style = await patch('/style', styleForm);
+      styleEditing = false;
+      toast.success('Style saved.');
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      styleBusy = '';
+    }
+  }
+
+  const styleRefs = $derived(
+    ((style?.reference_asset_ids_json ?? []) as string[]).map(
+      (id) => assets.find((a) => a.id === id) ?? { id, name: id, file_path: null }
+    )
+  );
+
+  async function patchRefs(ids: string[], doneMsg: string) {
+    styleBusy = 'refs';
+    try {
+      style = await patch('/style', { reference_asset_ids: ids });
+      toast.success(doneMsg);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      styleBusy = '';
+    }
+  }
+
+  function addStyleRef(asset: any) {
+    const cur: string[] = style?.reference_asset_ids_json ?? [];
+    if (cur.includes(asset.id)) {
+      toast.info('Already a style reference.');
+      return;
+    }
+    patchRefs([...cur, asset.id], `"${asset.name || asset.id}" pinned as style reference.`);
+  }
+
+  const removeStyleRef = (id: string) =>
+    patchRefs(
+      ((style?.reference_asset_ids_json ?? []) as string[]).filter((r) => r !== id),
+      'Style reference removed.'
+    );
+
+  async function confirmDeleteAsset() {
+    const a = deleteTarget;
+    if (!a) return;
+    busy = true;
+    try {
+      const r = await del(`/assets/${a.id}`);
+      deleteTarget = null;
+      toast.success(`Asset deleted (detached from ${r.detached_from} place${r.detached_from === 1 ? '' : 's'}).`);
+      await Promise.all([refresh(), loadStyle()]);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      busy = false;
+    }
+  }
 
   let file: FileList | null = $state(null);
   let assetType = $state('');
@@ -22,7 +133,10 @@
   async function refresh() {
     [assets, characters] = await Promise.all([get('/assets'), get('/characters')]);
   }
-  onMount(() => refresh().catch((e) => (error = e.message)));
+  onMount(() => {
+    refresh().catch((e) => (error = e.message));
+    loadStyle();
+  });
 
   async function doUpload(e: Event) {
     e.preventDefault();
@@ -70,6 +184,95 @@
 
 <div class="p-6">
   <h1 class="text-lg font-semibold mb-4">Assets</h1>
+
+  <Card class="mb-4">
+    <CardContent class="p-4">
+      <div class="flex items-center gap-2 mb-1">
+        <Palette class="size-4" />
+        <span class="font-medium text-sm">Project style</span>
+      </div>
+      <p class="text-xs text-muted-foreground mb-3">
+        Applied automatically to all asset, storyboard and video generation.
+      </p>
+
+      {#if !styleLoaded}
+        <p class="text-sm text-muted-foreground">Loading…</p>
+      {:else if !style && !styleEditing}
+        <p class="text-sm text-muted-foreground mb-2">No style guide yet</p>
+        <div class="flex gap-2">
+          <Button size="sm" disabled={styleBusy === 'ingest'} onclick={ingestStyle}>
+            <Wand2 class="size-3 mr-1" />{styleBusy === 'ingest' ? 'Deriving…' : 'Ingest from story'}
+          </Button>
+          <Button variant="outline" size="sm" onclick={() => (styleEditing = true)}>
+            Create manually
+          </Button>
+        </div>
+      {:else}
+        <div class="grid gap-3">
+          <div class="grid gap-1.5">
+            <Label for="style-prompt">Style prompt</Label>
+            <Textarea id="style-prompt" rows={3} bind:value={styleForm.style_prompt}
+              placeholder="e.g. warm watercolor children's book illustration, soft edges…" />
+          </div>
+          <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div class="grid gap-1.5">
+              <Label for="style-palette">Palette</Label>
+              <Input id="style-palette" bind:value={styleForm.palette} />
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="style-lighting">Lighting</Label>
+              <Input id="style-lighting" bind:value={styleForm.lighting} />
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="style-audience">Audience</Label>
+              <Input id="style-audience" bind:value={styleForm.audience} />
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="style-tone">Tone</Label>
+              <Input id="style-tone" bind:value={styleForm.tone} />
+            </div>
+          </div>
+
+          {#if styleRefs.length}
+            <div>
+              <div class="text-xs text-muted-foreground mb-1">Style reference images</div>
+              <div class="flex flex-wrap gap-2">
+                {#each styleRefs as ref (ref.id)}
+                  <div class="relative w-[72px]">
+                    {#if mediaUrl(ref.file_path)}
+                      <img class="w-full aspect-square object-cover rounded-md border border-border"
+                        src={mediaUrl(ref.file_path)} alt={ref.name} title={ref.name} loading="lazy" />
+                    {:else}
+                      <div class="w-full aspect-square rounded-md border border-border bg-muted grid place-items-center text-[10px] text-muted-foreground p-1 text-center"
+                        title={ref.name}>{ref.name}</div>
+                    {/if}
+                    <button type="button" aria-label="Remove style reference"
+                      class="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full bg-background border border-border shadow hover:bg-muted"
+                      disabled={styleBusy === 'refs'} onclick={() => removeStyleRef(ref.id)}>
+                      <X class="size-3" />
+                    </button>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {:else}
+            <p class="text-xs text-muted-foreground">
+              No style reference images — pin image assets below with the pin button.
+            </p>
+          {/if}
+
+          <div class="flex gap-2">
+            <Button size="sm" disabled={!!styleBusy} onclick={saveStyle}>
+              {styleBusy === 'save' ? 'Saving…' : 'Save'}
+            </Button>
+            <Button variant="outline" size="sm" disabled={!!styleBusy} onclick={() => (reingestOpen = true)}>
+              <Wand2 class="size-3 mr-1" />{styleBusy === 'ingest' ? 'Deriving…' : 'Re-ingest from story'}
+            </Button>
+          </div>
+        </div>
+      {/if}
+    </CardContent>
+  </Card>
 
   <form class="mb-4 rounded-lg border border-border bg-card p-4" onsubmit={doUpload}>
     <div class="flex flex-wrap gap-4 items-end">
@@ -139,11 +342,59 @@
               <Badge variant="outline">{tag}</Badge>
             {/each}
           </div>
-          <Button variant="outline" size="sm" disabled={busy} onclick={() => recognise(asset)}>
-            <Tag class="size-3 mr-1" />AI tag
-          </Button>
+          <div class="flex items-center gap-1">
+            <Button variant="outline" size="sm" disabled={busy} onclick={() => recognise(asset)}>
+              <Tag class="size-3 mr-1" />AI tag
+            </Button>
+            {#if isImage(asset.file_path)}
+              <Button variant="ghost" size="icon" class="size-8" title="Use as style ref"
+                disabled={busy || !!styleBusy} onclick={() => addStyleRef(asset)}>
+                <Pin class="size-3.5" />
+              </Button>
+            {/if}
+            <Button variant="ghost" size="icon" class="size-8 text-destructive hover:text-destructive"
+              title="Delete asset" disabled={busy} onclick={() => (deleteTarget = asset)}>
+              <Trash2 class="size-3.5" />
+            </Button>
+          </div>
         </CardContent>
       </Card>
     {/each}
   </div>
 </div>
+
+<Dialog.Root open={reingestOpen} onOpenChange={(open) => !open && (reingestOpen = false)}>
+  <Dialog.Content>
+    <Dialog.Header>
+      <Dialog.Title>Re-ingest style from story?</Dialog.Title>
+      <Dialog.Description>
+        Overwrite the derived style fields from the current story?
+        The name and reference images are kept.
+      </Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Button variant="outline" size="sm" onclick={() => (reingestOpen = false)}>Cancel</Button>
+      <Button size="sm" disabled={!!styleBusy} onclick={ingestStyle}>
+        <Wand2 class="size-3 mr-1" />Re-ingest
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root open={deleteTarget !== null} onOpenChange={(open) => !open && (deleteTarget = null)}>
+  <Dialog.Content>
+    <Dialog.Header>
+      <Dialog.Title>Delete asset?</Dialog.Title>
+      <Dialog.Description>
+        "{deleteTarget?.name || deleteTarget?.id}" will be deleted and detached from
+        scenes, shots, characters and the style guide.
+      </Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Button variant="outline" size="sm" onclick={() => (deleteTarget = null)}>Cancel</Button>
+      <Button variant="destructive" size="sm" disabled={busy} onclick={confirmDeleteAsset}>
+        <Trash2 class="size-3 mr-1" />{busy ? 'Deleting…' : 'Delete'}
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
