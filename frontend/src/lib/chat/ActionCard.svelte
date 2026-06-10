@@ -66,6 +66,7 @@
   let captionLanguage = $state(intent.language ?? 'zh');
   let shots = $state<{ id: string; shot_order: number; prompt: string }[]>([]);
   let captionModels = $state<string[]>([]);
+  let maxAssets = $state(4);
 
   const labels: Record<string, string> = {
     generate_script: 'Generate script',
@@ -74,7 +75,8 @@
     storyboard: 'Generate storyboard',
     render_scene: 'Render scene',
     render_shot: 'Render shot',
-    caption: 'Add captions'
+    caption: 'Add captions',
+    generate_assets: 'Generate assets'
   };
 
   async function loadShots() {
@@ -111,6 +113,7 @@
       case 'generate_shots':
       case 'storyboard':
       case 'render_scene':
+      case 'generate_assets':
         return !!sceneId;
       case 'render_shot':
         return !!sceneId && !!shotId;
@@ -162,6 +165,14 @@
           focusId = result.job_id;
           toast.success(`Render started — job ${result.job_id}`);
           break;
+        case 'generate_assets':
+          result = await post(`/scenes/${sceneId}/assets/generate`, {
+            instruction: idea.trim(),
+            max_assets: maxAssets
+          });
+          focusId = Array.isArray(result) ? result[0]?.id : undefined;
+          toast.success(`Generated ${Array.isArray(result) ? result.length : 0} assets`);
+          break;
         case 'caption':
           result = await post(`/outputs/${outputId}/caption`, {
             style: captionStyle,
@@ -197,10 +208,12 @@
           <li>create a storyboard (分镜图)</li>
           <li>render a scene or a single shot</li>
           <li>add captions to a rendered video</li>
+          <li>generate props/assets for a scene (生成场景道具)</li>
         </ul>
+        <p>Scenes can be deleted from the Scenes page.</p>
       </div>
       <Suggestions>
-        {#each ['生成分镜图', 'Render scene', 'Add captions', 'Generate a script'] as s (s)}
+        {#each ['生成分镜图', 'Render scene', 'Add captions', 'Generate a script', '生成场景道具'] as s (s)}
           <Suggestion suggestion={s} onclick={(text) => onsuggest?.(text)} />
         {/each}
       </Suggestions>
@@ -212,7 +225,7 @@
         </div>
       {/if}
 
-      {#if ['generate_scenes', 'generate_shots', 'storyboard', 'render_scene', 'render_shot'].includes(intent.action)}
+      {#if ['generate_scenes', 'generate_shots', 'storyboard', 'render_scene', 'render_shot', 'generate_assets'].includes(intent.action)}
         <div>
           <label class={labelClass} for="scene-{intent.action}">Scene</label>
           <select
@@ -236,6 +249,19 @@
               <option value={sh.id}>#{sh.shot_order + 1} {sh.prompt.slice(0, 50)}</option>
             {/each}
           </select>
+        </div>
+      {/if}
+
+      {#if intent.action === 'generate_assets'}
+        <div>
+          <label class={labelClass} for="instr-{intent.action}">Instruction (optional)</label>
+          <Textarea id="instr-{intent.action}" bind:value={idea} rows={2}
+            placeholder="e.g. 需要一个红色杯子 / a red cup" />
+        </div>
+        <div>
+          <label class={labelClass} for="max-{intent.action}">Max assets</label>
+          <input id="max-{intent.action}" type="number" min="1" max="8"
+            bind:value={maxAssets} class={selectClass} />
         </div>
       {/if}
 

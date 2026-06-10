@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { get, patch, post, mediaUrl } from '$lib/api';
+  import { get, patch, post, del, mediaUrl } from '$lib/api';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Card, CardContent } from '$lib/components/ui/card';
+  import * as Dialog from '$lib/components/ui/dialog';
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
   import { toast } from 'svelte-sonner';
-  import { Wand2, Save, Film, LayoutGrid, Video, Images } from '@lucide/svelte';
+  import { Wand2, Save, Film, LayoutGrid, Video, Images, Trash2, Sparkles, ImagePlus } from '@lucide/svelte';
 
   let scenes: any[] = $state([]);
   let characters: any[] = $state([]);
@@ -19,6 +20,12 @@
   let idea = $state('');
   let targetDuration: number | '' = $state('');
   let castSelection: Record<string, string[]> = $state({});
+  let deleteTarget: any = $state(null);
+  let sceneRefine: Record<string, string> = $state({});
+  let shotRefine: Record<string, string> = $state({});
+  let assetInstr: Record<string, string> = $state({});
+  let assetMax: Record<string, number> = $state({});
+  let generatedAssets: Record<string, any[]> = $state({});
 
   async function refresh() {
     [scenes, characters] = await Promise.all([get('/scenes'), get('/characters')]);
@@ -97,6 +104,85 @@
       })
     , 'Scene saved.');
 
+  async function confirmDeleteScene() {
+    const s = deleteTarget;
+    if (!s) return;
+    busy = `delete-${s.id}`;
+    try {
+      const r = await del(`/scenes/${s.id}`);
+      deleteTarget = null;
+      toast.success(`Scene deleted (${r.shots_deleted} shots removed).`);
+      await refresh();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      busy = '';
+    }
+  }
+
+  async function deleteShot(scene: any, shot: any) {
+    busy = `delete-${shot.id}`;
+    try {
+      await del(`/shots/${shot.id}`);
+      toast.success('Shot deleted.');
+      shotsByScene[scene.id] = await get(`/scenes/${scene.id}/shots`);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      busy = '';
+    }
+  }
+
+  async function refineScene(s: any) {
+    const instruction = (sceneRefine[s.id] ?? '').trim();
+    if (!instruction) return;
+    busy = `refine-${s.id}`;
+    try {
+      const r = await post(`/scenes/${s.id}/refine`, { instruction });
+      Object.assign(s, r.scene);
+      sceneRefine[s.id] = '';
+      toast.success(r.note || 'Refined');
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      busy = '';
+    }
+  }
+
+  async function refineShot(scene: any, shot: any) {
+    const instruction = (shotRefine[scene.id] ?? '').trim();
+    if (!instruction) {
+      toast.error('Type an instruction in the shot refine box first.');
+      return;
+    }
+    busy = `refine-${shot.id}`;
+    try {
+      const r = await post(`/shots/${shot.id}/refine`, { instruction });
+      Object.assign(shot, r.shot);
+      toast.success(r.note || 'Refined');
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      busy = '';
+    }
+  }
+
+  async function generateAssets(s: any) {
+    busy = `assets-${s.id}`;
+    try {
+      const created = await post(`/scenes/${s.id}/assets/generate`, {
+        instruction: (assetInstr[s.id] ?? '').trim(),
+        max_assets: assetMax[s.id] ?? 4
+      });
+      generatedAssets[s.id] = created;
+      toast.success(`Generated ${created.length} asset${created.length === 1 ? '' : 's'}.`);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      busy = '';
+    }
+  }
+
   const saveShot = (shot: any) =>
     run(`save-${shot.id}`, () =>
       patch(`/shots/${shot.id}`, {
@@ -151,9 +237,13 @@
               <option>9:16</option><option>16:9</option><option>1:1</option>
             </select>
           </div>
-          <div>
+          <div class="flex gap-1">
             <Button variant="secondary" size="sm" disabled={!!busy} onclick={() => saveScene(s)}>
               <Save class="size-3 mr-1" />{busy === `save-${s.id}` ? 'Saving…' : 'Save scene'}
+            </Button>
+            <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive"
+              disabled={!!busy} onclick={() => (deleteTarget = s)}>
+              <Trash2 class="size-3 mr-1" />Delete
             </Button>
           </div>
         </div>
@@ -163,6 +253,18 @@
         </label>
         <textarea id="sum-{s.id}" bind:value={s.summary}
           class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm min-h-[70px] resize-y mb-3"></textarea>
+
+        <div class="flex gap-2 mb-3">
+          <input
+            bind:value={sceneRefine[s.id]}
+            placeholder="Tell AI what to change…"
+            class="flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+          />
+          <Button variant="outline" size="sm"
+            disabled={!!busy || !(sceneRefine[s.id] ?? '').trim()} onclick={() => refineScene(s)}>
+            <Sparkles class="size-3 mr-1" />{busy === `refine-${s.id}` ? 'Refining…' : 'AI refine'}
+          </Button>
+        </div>
 
         <div class="text-xs text-muted-foreground mb-1">Cast for expansion:</div>
         <div class="flex flex-wrap gap-3 mb-3">
@@ -195,7 +297,15 @@
         </div>
 
         {#if shotsByScene[s.id]?.length}
-          <div class="mt-3 overflow-x-auto">
+          <div class="mt-3 flex gap-2 items-center">
+            <Sparkles class="size-3.5 text-muted-foreground shrink-0" />
+            <input
+              bind:value={shotRefine[s.id]}
+              placeholder="Shot refine instruction — then click the sparkles on a shot row…"
+              class="flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs"
+            />
+          </div>
+          <div class="mt-2 overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -229,9 +339,19 @@
                         bind:value={shot.duration} />
                     </TableCell>
                     <TableCell>
-                      <Button variant="outline" size="sm" disabled={!!busy} onclick={() => saveShot(shot)}>
-                        {busy === `save-${shot.id}` ? 'Saving…' : 'Save'}
-                      </Button>
+                      <div class="flex items-center gap-0.5">
+                        <Button variant="outline" size="sm" disabled={!!busy} onclick={() => saveShot(shot)}>
+                          {busy === `save-${shot.id}` ? 'Saving…' : 'Save'}
+                        </Button>
+                        <Button variant="ghost" size="icon" class="size-7" title="AI refine this shot"
+                          disabled={!!busy || !(shotRefine[s.id] ?? '').trim()} onclick={() => refineShot(s, shot)}>
+                          <Sparkles class="size-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" class="size-7 text-destructive hover:text-destructive"
+                          title="Delete shot" disabled={!!busy} onclick={() => deleteShot(s, shot)}>
+                          <Trash2 class="size-3.5" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 {/each}
@@ -250,7 +370,59 @@
             <img class="max-w-[420px] w-full rounded-lg" src={mediaUrl(storyboards[s.id].file_path)} alt="Storyboard" loading="lazy" />
           </div>
         {/if}
+
+        <div class="mt-3 border-t border-border pt-3">
+          <div class="text-xs text-muted-foreground mb-1">Generate assets (props) for this scene:</div>
+          <div class="flex flex-wrap gap-2 items-center">
+            <input
+              bind:value={assetInstr[s.id]}
+              placeholder="e.g. 需要一个红色杯子 / a red cup"
+              class="flex-1 min-w-[200px] rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+            />
+            <input type="number" min="1" max="8" title="Max assets"
+              value={assetMax[s.id] ?? 4}
+              onchange={(e) => (assetMax[s.id] = Number((e.currentTarget as HTMLInputElement).value) || 4)}
+              class="w-16 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+            />
+            <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateAssets(s)}>
+              <ImagePlus class="size-3 mr-1" />{busy === `assets-${s.id}` ? 'Generating…' : 'Generate assets'}
+            </Button>
+          </div>
+          {#if generatedAssets[s.id]?.length}
+            <div class="flex flex-wrap gap-2 mt-2">
+              {#each generatedAssets[s.id] as a (a.id)}
+                <div class="w-[120px]">
+                  {#if mediaUrl(a.file_path)}
+                    <img class="w-full aspect-square object-cover rounded-md border border-border"
+                      src={mediaUrl(a.file_path)} alt={a.name} loading="lazy" />
+                  {/if}
+                  <div class="text-xs text-muted-foreground truncate mt-0.5" title={a.name}>{a.name}</div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </CardContent>
     </Card>
   {/each}
 </div>
+
+<Dialog.Root open={deleteTarget !== null} onOpenChange={(open) => !open && (deleteTarget = null)}>
+  <Dialog.Content>
+    <Dialog.Header>
+      <Dialog.Title>
+        Delete scene and its {shotsByScene[deleteTarget?.id]?.length ?? 0} shots?
+      </Dialog.Title>
+      <Dialog.Description>
+        "{deleteTarget?.title}" and all of its shots will be permanently deleted.
+        Rendered videos are kept.
+      </Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Button variant="outline" size="sm" onclick={() => (deleteTarget = null)}>Cancel</Button>
+      <Button variant="destructive" size="sm" disabled={!!busy} onclick={confirmDeleteScene}>
+        <Trash2 class="size-3 mr-1" />{busy === `delete-${deleteTarget?.id}` ? 'Deleting…' : 'Delete'}
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>

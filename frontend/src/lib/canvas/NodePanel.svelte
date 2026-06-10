@@ -7,7 +7,8 @@
   import { Textarea } from '$lib/components/ui/textarea';
   import { Badge } from '$lib/components/ui/badge';
   import { toast } from 'svelte-sonner';
-  import { patch, mediaUrl, isImage } from '$lib/api';
+  import { Sparkles } from '@lucide/svelte';
+  import { patch, post, mediaUrl, isImage } from '$lib/api';
 
   let {
     node,
@@ -21,9 +22,12 @@
   // Editable form state, re-seeded whenever the selected node changes.
   let form = $state<Record<string, any>>({});
   let saving = $state(false);
+  let refineInstruction = $state('');
+  let refining = $state(false);
 
   $effect(() => {
     const d = (node?.data ?? {}) as Record<string, any>;
+    refineInstruction = '';
     if (node && String(d.kind) === 'scene') {
       form = {
         title: d.label ?? '',
@@ -73,6 +77,39 @@
     }
   }
 
+  async function refine() {
+    if (!node || !refineInstruction.trim()) return;
+    refining = true;
+    try {
+      if (kind === 'scene') {
+        const r = await post(`/scenes/${node.id}/refine`, { instruction: refineInstruction.trim() });
+        form = {
+          title: r.scene.title ?? '',
+          summary: r.scene.summary ?? '',
+          duration: r.scene.duration ?? 0,
+          aspect_ratio: r.scene.aspect_ratio ?? ''
+        };
+        toast.success(r.note || 'Refined');
+      } else if (kind === 'shot') {
+        const r = await post(`/shots/${node.id}/refine`, { instruction: refineInstruction.trim() });
+        form = {
+          prompt: r.shot.prompt ?? '',
+          duration: r.shot.duration ?? 0,
+          camera: r.shot.camera ?? '',
+          movement: r.shot.movement ?? '',
+          shot_order: r.shot.shot_order ?? 0
+        };
+        toast.success(r.note || 'Refined');
+      }
+      refineInstruction = '';
+      onsaved();
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      refining = false;
+    }
+  }
+
   const videoSrc = $derived(
     kind === 'output' ? mediaUrl(data.captioned_path || data.video_path) : null
   );
@@ -108,6 +145,12 @@
             <Input id="np-aspect" bind:value={form.aspect_ratio} />
           </div>
         </div>
+        <div class="flex gap-2">
+          <Input placeholder="Tell AI what to change…" bind:value={refineInstruction} />
+          <Button variant="outline" onclick={refine} disabled={refining || !refineInstruction.trim()}>
+            <Sparkles class="size-4 mr-1" />{refining ? 'Refining…' : 'AI refine'}
+          </Button>
+        </div>
         <Button onclick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
       {:else if kind === 'shot'}
         <div class="grid gap-1.5">
@@ -131,6 +174,12 @@
         <div class="grid gap-1.5">
           <Label for="np-movement">Movement</Label>
           <Input id="np-movement" bind:value={form.movement} />
+        </div>
+        <div class="flex gap-2">
+          <Input placeholder="Tell AI what to change…" bind:value={refineInstruction} />
+          <Button variant="outline" onclick={refine} disabled={refining || !refineInstruction.trim()}>
+            <Sparkles class="size-4 mr-1" />{refining ? 'Refining…' : 'AI refine'}
+          </Button>
         </div>
         <Button onclick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
       {:else if kind === 'output'}
