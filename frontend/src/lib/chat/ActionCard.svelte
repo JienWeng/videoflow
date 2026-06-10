@@ -70,6 +70,7 @@
   let shots = $state<{ id: string; shot_order: number; prompt: string }[]>([]);
   let captionModels = $state<string[]>([]);
   let maxAssets = $state(4);
+  let autoAssets = $state(true);
 
   const labels: Record<string, string> = {
     generate_script: 'Generate script',
@@ -152,7 +153,7 @@
           toast.success('Scene expanded');
           break;
         case 'generate_shots':
-          result = await post(`/scenes/${sceneId}/shots/generate`);
+          result = await post(`/scenes/${sceneId}/shots/generate`, { auto_assets: autoAssets });
           focusId = sceneId;
           toast.success(`Shots generated (${Array.isArray(result) ? result.length : '?'})`);
           break;
@@ -262,6 +263,13 @@
             {/each}
           </select>
         </div>
+      {/if}
+
+      {#if intent.action === 'generate_shots'}
+        <label class="inline-flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+          <input type="checkbox" class="w-auto" bind:checked={autoAssets} />
+          auto props
+        </label>
       {/if}
 
       {#if intent.action === 'generate_assets'}

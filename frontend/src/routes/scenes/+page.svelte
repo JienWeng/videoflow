@@ -7,7 +7,7 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
   import { toast } from 'svelte-sonner';
-  import { Wand2, Save, Film, LayoutGrid, Video, Images, Trash2, Sparkles, ImagePlus, Lightbulb } from '@lucide/svelte';
+  import { Wand2, Save, Film, LayoutGrid, Video, Images, Trash2, Sparkles, ImagePlus, Lightbulb, VolumeX } from '@lucide/svelte';
 
   let scenes: any[] = $state([]);
   let characters: any[] = $state([]);
@@ -24,6 +24,7 @@
   let deleteTarget: any = $state(null);
   let sceneRefine: Record<string, string> = $state({});
   let shotRefine: Record<string, string> = $state({});
+  let autoProps: Record<string, boolean> = $state({});
   let assetInstr: Record<string, string> = $state({});
   let assetMax: Record<string, number> = $state({});
   let generatedAssets: Record<string, any[]> = $state({});
@@ -87,7 +88,9 @@
     );
 
   const generateShots = (s: any) =>
-    run(`shots-${s.id}`, () => post(`/scenes/${s.id}/shots/generate`));
+    run(`shots-${s.id}`, () =>
+      post(`/scenes/${s.id}/shots/generate`, { auto_assets: autoProps[s.id] ?? true })
+    );
 
   const generateStoryboard = (s: any) =>
     run(`sb-${s.id}`, () => post(`/scenes/${s.id}/storyboard`), 'Storyboard generated.');
@@ -352,9 +355,20 @@
           <Button variant="outline" size="sm" disabled={!!busy} onclick={() => expandScene(s)}>
             <Wand2 class="size-3 mr-1" />{busy === `expand-${s.id}` ? 'Expanding…' : '1. Expand scene (AI)'}
           </Button>
-          <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateShots(s)}>
-            <LayoutGrid class="size-3 mr-1" />{busy === `shots-${s.id}` ? 'Generating…' : '2. Generate shots (AI)'}
-          </Button>
+          <div class="inline-flex items-center gap-1.5">
+            <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateShots(s)}>
+              <LayoutGrid class="size-3 mr-1" />{busy === `shots-${s.id}` ? 'Generating…' : '2. Generate shots (AI)'}
+            </Button>
+            <label class="inline-flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
+              <input
+                type="checkbox"
+                class="w-auto"
+                checked={autoProps[s.id] ?? true}
+                onchange={(e) => (autoProps[s.id] = (e.currentTarget as HTMLInputElement).checked)}
+              />
+              auto props
+            </label>
+          </div>
           <Button variant="outline" size="sm" disabled={!!busy || !(shotsByScene[s.id]?.length)} onclick={() => generateStoryboard(s)}>
             <Images class="size-3 mr-1" />{busy === `sb-${s.id}` ? 'Generating…' : '3. Generate storyboard (ERNIE)'}
           </Button>
@@ -389,8 +403,16 @@
                   <TableRow>
                     <TableCell>{shot.shot_order + 1}</TableCell>
                     <TableCell>
-                      <textarea class="w-full rounded border border-input bg-background px-2 py-1 text-xs min-h-[46px] resize-y"
-                        bind:value={shot.prompt}></textarea>
+                      <div class="relative">
+                        <textarea class="w-full rounded border border-input bg-background px-2 py-1 text-xs min-h-[46px] resize-y"
+                          bind:value={shot.prompt}></textarea>
+                        {#if !/「[^」]+」/.test(shot.prompt ?? '')}
+                          <VolumeX
+                            class="absolute top-1 right-1 size-3.5 text-muted-foreground/60 pointer-events-none"
+                            title="No spoken line — every shot should speak"
+                          />
+                        {/if}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <input class="w-full rounded border border-input bg-background px-2 py-1 text-xs"
