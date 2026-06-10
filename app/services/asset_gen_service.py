@@ -18,13 +18,35 @@ from sqlmodel import Session
 
 from app.agents.asset_planner import plan_assets
 from app.config import get_settings
-from app.models import Asset, Shot
+from app.models import Asset, Character, Scene, Shot, StyleGuide
 from app.models.base import new_id, utcnow
 from app.providers.atlascloud_client import get_atlas_client
 from app.providers.atlascloud_image import AtlasCloudImageProvider
 from app.providers.polling import poll_until_terminal
+from app.providers.url_resolver import AtlasCloudUploadResolver
 from app.schemas import AssetPlan
-from app.services import media, scene_service
+from app.services import media, scene_service, style_service
+
+# Prefix for reference-guided asset generation (nano-banana edit model) so the
+# new asset matches the project's existing look.
+REFERENCE_STYLE_PREFIX = (
+    "Match the visual style of the attached reference images exactly. "
+)
+
+
+def collect_style_reference_ids(
+    session: Session, scene: Scene, style: StyleGuide | None
+) -> list[str]:
+    """Reference sheets that lock the project look for image generation: the
+    style guide's reference assets FIRST, then each cast member's first
+    reference sheet (same mechanism as the storyboard), de-duplicated."""
+    ids: list[str] = list((style.reference_asset_ids_json or []) if style else [])
+    for cid in scene.character_ids_json or []:
+        char = session.get(Character, cid)
+        if char:
+            ids.extend((char.reference_asset_ids_json or [])[:1])
+    seen: set[str] = set()
+    return [i for i in ids if not (i in seen or seen.add(i))]
 
 
 def tag_prompt(prompt: str, name: str) -> str:
@@ -71,6 +93,7 @@ async def plan_scene_assets(
         existing_assets=existing,
         instruction=instruction,
         shots=[{"shot_order": s.shot_order, "prompt": s.prompt} for s in shots],
+        style=style_service.style_context(style_service.get_style(session)),
     )
     return AssetPlan(assets=plan.assets[:max_assets], reasoning=plan.reasoning)
 
@@ -101,9 +124,28 @@ async def generate_scene_assets(
 
     shots_by_order = {s.shot_order: s for s in shots}
     provider = image_provider or AtlasCloudImageProvider(get_atlas_client())
+
+    # Style enforcement: the guide's text is appended to every prompt in code,
+    # and reference sheets (style guide refs first, then the cast's) steer the
+    # edit model so generated assets match the project look.
+    style = style_service.get_style(session)
+    reference_ids = collect_style_reference_ids(session, scene, style)
+    reference_urls: list[str] = []
+    if reference_ids:
+        resolver = AtlasCloudUploadResolver(session, get_atlas_client())
+        reference_urls = await resolver.resolve(reference_ids)
+
     created: list[Asset] = []
     for item in planned:
-        payload = await provider.build_payload(prompt=item.image_prompt)
+        styled_prompt = style_service.apply_style(item.image_prompt, style)
+        if reference_urls:
+            payload = await provider.build_reference_payload(
+                prompt=REFERENCE_STYLE_PREFIX + styled_prompt,
+                images=reference_urls,
+                aspect_ratio=scene.aspect_ratio or "1:1",
+            )
+        else:
+            payload = await provider.build_payload(prompt=styled_prompt)
         job_id = await provider.submit(payload)
         result = await poll_until_terminal(
             provider, job_id,
@@ -121,7 +163,7 @@ async def generate_scene_assets(
             metadata_json={
                 "scene_id": scene_id,
                 "generated": True,
-                "image_prompt": item.image_prompt,
+                "image_prompt": styled_prompt,
             },
         )
         session.add(asset)

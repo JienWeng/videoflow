@@ -11,6 +11,7 @@ from app.errors import NotFoundError
 from app.models import Asset, Character, Scene, Shot
 from app.models.base import new_id, utcnow
 from app.schemas import CharacterBible, SceneSpec, ScriptDraft
+from app.services import style_service
 
 
 def character_to_bible(char: Character) -> CharacterBible:
@@ -80,6 +81,7 @@ async def expand_scene(session: Session, scene_id: str, character_ids: list[str]
         summary=scene.summary,
         suggested_duration=scene.duration,
         character_bibles=bibles,
+        style=style_service.style_context(style_service.get_style(session)),
     )
     scene.title = spec.title
     scene.summary = spec.summary
@@ -114,7 +116,10 @@ async def create_shots(session: Session, scene_id: str) -> list[Shot]:
     """Run the shot agent and persist Shot rows for the scene."""
     scene = get_scene(session, scene_id)
     spec = _scene_to_spec(scene)
-    shot_list = await generate_shots(scene=spec)
+    shot_list = await generate_shots(
+        scene=spec,
+        style=style_service.style_context(style_service.get_style(session)),
+    )
 
     rows: list[Shot] = []
     for order, shot in enumerate(shot_list.shots):

@@ -134,6 +134,9 @@ PROMPTS: dict[str, str] = {
         "prompt), fill each asset's `shot_orders` with the shot_order values of "
         "the shots where that asset appears or is needed; leave it empty only "
         "if no shot uses the asset. "
+        "When a Style guide is provided in the context, every image_prompt must "
+        "match the project style guide (rendering style, palette, lighting, "
+        "audience). "
         "Plan at most 4 assets unless the instruction explicitly asks for more."
     ),
     "style_agent": (

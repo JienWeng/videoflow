@@ -12,7 +12,7 @@ from app.database import get_session
 from app.errors import NotFoundError
 from app.models import Asset, Character, Shot
 from app.schemas import RenderSpec, ShotSpec
-from app.services import render_service, scene_service
+from app.services import render_service, scene_service, style_service
 
 router = APIRouter(tags=["render"])
 
@@ -82,6 +82,7 @@ async def render_from_shot(
         character_bibles=bibles,
         asset_names=asset_names,
         video_asset_id=body.video_asset_id,
+        style=style_service.style_context(style_service.get_style(session)),
     )
     job = await render_service.start_render(session, spec)
     return _job_response(job)

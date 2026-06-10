@@ -369,10 +369,17 @@ def test_generate_scene_assets(ctx):
         assert a["metadata_json"]["generated"] is True
         assert a["metadata_json"]["image_prompt"]
 
-    # ERNIE got one text-to-image payload per planned asset, using the
-    # planner's standalone image_prompt verbatim.
+    # The cast (Grace) has a reference sheet, so each planned asset is rendered
+    # with the reference/edit model against her sheet for style consistency,
+    # keeping the planner's standalone image_prompt intact.
+    from app.config import get_settings
+
     prompts = [p["prompt"] for p in fake.image_payloads]
-    assert "a shiny red ceramic cup, warm daylight, 3D cartoon" in prompts
+    assert any("a shiny red ceramic cup, warm daylight, 3D cartoon" in p for p in prompts)
+    for payload in fake.image_payloads:
+        assert payload["model"] == get_settings().atlas_image_ref_model
+        assert payload["images"] == ["https://static.atlascloud.ai/up/char.png"]
+        assert payload["aspect_ratio"] == "9:16"
 
     # Scene now links the new assets (alongside the pre-existing background).
     scene = client.get("/scenes/scene_1").json()
@@ -493,6 +500,108 @@ def test_graph_nodes_carry_canvas_data(ctx):
     shot_node = nodes_by_id["shot_1"]
     assert "scene_id" in shot_node["data"]
     assert "prompt" in shot_node["data"]
+
+
+# ── style guide enforcement ──────────────────────────────────────────────────
+
+def _seed_style(client, **fields):
+    resp = client.patch("/style", json=fields)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_asset_generation_applies_style_suffix(ctx):
+    """Every generated asset's image prompt deterministically carries the
+    project style text (code-level enforcement, not just the planner prompt)."""
+    client, fake = ctx
+    _seed_style(client, style_prompt="3D cartoon, soft pastel")
+
+    resp = client.post("/scenes/scene_1/assets/generate", json={})
+    assert resp.status_code == 200, resp.text
+    assert fake.image_payloads
+    for payload in fake.image_payloads:
+        assert "3D cartoon, soft pastel" in payload["prompt"]
+        # Suffix appended exactly once (idempotent helper).
+        assert payload["prompt"].count("Style: 3D cartoon, soft pastel") == 1
+
+
+def test_storyboard_prompt_contains_style(ctx):
+    client, fake = ctx
+    _seed_style(client, style_prompt="3D cartoon, soft pastel", lighting="bright morning sun")
+
+    resp = client.post("/scenes/scene_1/storyboard")
+    assert resp.status_code == 200, resp.text
+    prompt = fake.image_payloads[0]["prompt"]
+    assert "3D cartoon, soft pastel" in prompt
+    assert "lighting: bright morning sun" in prompt
+
+
+def test_asset_generation_uses_style_reference_assets(ctx):
+    """With the style guide pointing at a reference asset, asset generation uses
+    the reference/edit model with the style refs FIRST in images[]."""
+    client, fake = ctx
+    from app.config import get_settings
+
+    _seed_style(client, style_prompt="3D cartoon, soft pastel",
+                reference_asset_ids=["asset_char"])
+
+    resp = client.post("/scenes/scene_1/assets/generate", json={})
+    assert resp.status_code == 200, resp.text
+    assert fake.image_payloads
+    for payload in fake.image_payloads:
+        assert payload["model"] == get_settings().atlas_image_ref_model
+        # Style ref first; cast ref (same asset) deduped.
+        assert payload["images"] == ["https://static.atlascloud.ai/up/char.png"]
+        assert payload["prompt"].startswith(
+            "Match the visual style of the attached reference images exactly. "
+        )
+        assert "3D cartoon, soft pastel" in payload["prompt"]
+
+
+def test_storyboard_prepends_style_reference_assets(ctx):
+    client, fake = ctx
+    import app.database as _db_mod
+    from app.models import Asset
+
+    style_img = Path(_db_mod.engine.url.database).parent / "style_ref.png"
+    style_img.write_bytes(b"img")
+    with Session(_db_mod.engine) as s:
+        s.add(Asset(id="asset_style", type="reference", name="Style Ref",
+                    file_path=str(style_img)))
+        s.commit()
+    _seed_style(client, reference_asset_ids=["asset_style"])
+
+    resp = client.post("/scenes/scene_1/storyboard")
+    assert resp.status_code == 200, resp.text
+    payload = fake.image_payloads[0]
+    # Style guide refs first, then the cast's sheet.
+    assert payload["images"] == [
+        "https://static.atlascloud.ai/up/style_ref.png",
+        "https://static.atlascloud.ai/up/char.png",
+    ]
+
+
+def test_asset_generation_without_refs_or_style_uses_plain_ernie(ctx):
+    """A scene with no cast and no style guide keeps the original ERNIE
+    text-to-image path with the planner prompt verbatim."""
+    client, fake = ctx
+    import app.database as _db_mod
+    from app.config import get_settings
+    from app.models import Scene
+
+    with Session(_db_mod.engine) as s:
+        s.add(Scene(id="scene_plain", title="p", summary="an empty room",
+                    duration=5, aspect_ratio="9:16"))
+        s.commit()
+
+    resp = client.post("/scenes/scene_plain/assets/generate", json={})
+    assert resp.status_code == 200, resp.text
+    assert fake.image_payloads
+    for payload in fake.image_payloads:
+        assert payload["model"] == get_settings().atlas_image_model
+        assert "images" not in payload
+    prompts = [p["prompt"] for p in fake.image_payloads]
+    assert "a shiny red ceramic cup, warm daylight, 3D cartoon" in prompts
 
 
 # ── /scripts/generate scene_count tests ──────────────────────────────────────

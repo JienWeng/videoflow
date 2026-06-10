@@ -13,12 +13,12 @@ from sqlmodel import Session, select
 
 from app.config import get_settings
 from app.errors import ValidationFailedError
-from app.models import Asset, Character
+from app.models import Asset, Character, StyleGuide
 from app.models.base import new_id
 from app.providers.atlascloud_client import get_atlas_client
 from app.providers.atlascloud_image import AtlasCloudImageProvider
 from app.providers.polling import poll_until_terminal
-from app.services import media
+from app.services import media, style_service
 
 MIN_GRID = 2
 MAX_GRID = 4
@@ -66,6 +66,7 @@ async def generate_storyboard(
     size: str = "1024x1024",
     reference_image_urls: list[str] | None = None,
     aspect_ratio: str = "1:1",
+    style: StyleGuide | None = None,
     image_provider: AtlasCloudImageProvider | None = None,
 ) -> Asset:
     """Generate the sheet, download it, and persist a 'storyboard' Asset.
@@ -79,6 +80,9 @@ async def generate_storyboard(
     prompt = build_storyboard_prompt(
         beats=beats, character_lines=character_lines, setting=setting, lighting=lighting
     )
+    # Deterministic style enforcement — the project style guide text is part
+    # of the prompt regardless of what the agents wrote.
+    prompt = style_service.apply_style(prompt, style)
 
     if reference_image_urls:
         prompt = (
@@ -133,8 +137,11 @@ async def generate_storyboard_for_scene(
 
     from app.providers.url_resolver import AtlasCloudUploadResolver
 
+    # Style guide reference assets come FIRST so they anchor the look, then the
+    # cast's reference sheets lock character appearance.
+    style = style_service.get_style(session)
     character_lines = []
-    reference_ids: list[str] = []
+    reference_ids: list[str] = list((style.reference_asset_ids_json or []) if style else [])
     for cid in scene.character_ids_json or []:
         char = session.get(Character, cid)
         if not char:
@@ -142,6 +149,8 @@ async def generate_storyboard_for_scene(
         if char.appearance:
             character_lines.append(f"{char.name}: {char.appearance}")
         reference_ids.extend((char.reference_asset_ids_json or [])[:1])
+    seen: set[str] = set()
+    reference_ids = [i for i in reference_ids if not (i in seen or seen.add(i))]
 
     resolver = AtlasCloudUploadResolver(session, get_atlas_client())
     reference_urls = await resolver.resolve(reference_ids) if reference_ids else []
@@ -156,6 +165,7 @@ async def generate_storyboard_for_scene(
         or "consistent lighting and mood matching the scene across all panels",
         reference_image_urls=reference_urls,
         aspect_ratio=scene.aspect_ratio or "1:1",
+        style=style,
         image_provider=image_provider,
     )
     asset.name = f"分镜图 {scene.title}"

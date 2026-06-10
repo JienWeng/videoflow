@@ -14,6 +14,39 @@ DERIVED_FIELDS = ("style_prompt", "palette", "lighting", "audience", "tone")
 _INGEST_ASSET_LIMIT = 10
 
 
+def style_suffix(style: StyleGuide | None) -> str:
+    """Combined style text appended to image prompts; '' when no guide."""
+    if style is None:
+        return ""
+    parts = [
+        style.style_prompt,
+        f"palette: {style.palette}" if style.palette else "",
+        f"lighting: {style.lighting}" if style.lighting else "",
+    ]
+    joined = "; ".join(p for p in parts if p)
+    return f". Style: {joined}" if joined else ""
+
+
+def apply_style(prompt: str, style: StyleGuide | None) -> str:
+    """Deterministically enforce the style guide on an image prompt.
+
+    Idempotent (the suffix is appended at most once) and a no-op when there is
+    no guide or the guide has no visual fields."""
+    suffix = style_suffix(style)
+    if not suffix or suffix in prompt:
+        return prompt
+    return prompt.rstrip().rstrip(".") + suffix
+
+
+def style_context(style: StyleGuide | None) -> dict | None:
+    """Non-empty descriptive fields as a dict for agent context blocks
+    (rendered as a "Project style guide" block); None when nothing to say."""
+    if style is None:
+        return None
+    ctx = {k: v for k in DERIVED_FIELDS if (v := getattr(style, k))}
+    return ctx or None
+
+
 def get_style(session: Session) -> StyleGuide | None:
     """Return the singleton StyleGuide row (latest by created_at if several)."""
     rows = session.exec(

@@ -47,7 +47,7 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
     """Deterministic whole-scene render: stored shots become the multi-shot
     storyboard (customize, indexed), and every linked reference — characters'
     images, scene/shot assets and the scene's 分镜图 — feeds Kling images[]."""
-    from app.services import scene_service, storyboard_service
+    from app.services import scene_service, storyboard_service, style_service
 
     scene = scene_service.get_scene(session, scene_id)
     shots = scene_service.list_shots(session, scene_id)
@@ -92,6 +92,8 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
         f"{NO_TEXT_NEGATIVE}, no watermark, no outfit changes, no extra "
         "characters, no distorted faces."
     )
+    # Deterministic style enforcement on the whole-scene video prompt.
+    prompt = style_service.apply_style(prompt, style_service.get_style(session))
     spec = RenderSpec(
         scene_id=scene.id,
         duration=total,
