@@ -6,6 +6,7 @@ from app.models.render_job import RenderJob, RenderStatus
 from app.models.render_output import RenderOutput
 from app.models.scene import Scene
 from app.models.shot import Shot
+from app.models.style_guide import StyleGuide
 
 __all__ = [
     "Asset",
@@ -15,4 +16,5 @@ __all__ = [
     "RenderOutput",
     "Scene",
     "Shot",
+    "StyleGuide",
 ]

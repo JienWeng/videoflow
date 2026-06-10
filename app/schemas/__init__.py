@@ -13,6 +13,7 @@ from app.schemas.refine import SceneRefinement, ShotRefinement
 from app.schemas.render_schema import ReferenceImage, RenderSpec, StoryboardShot
 from app.schemas.scene_schema import SceneSpec, ScriptDraft, ScriptScene, ShotSpec
 from app.schemas.shot_schema import ShotList
+from app.schemas.style import StyleSpec
 
 __all__ = [
     "AssetMetadata",
@@ -32,4 +33,5 @@ __all__ = [
     "ScriptScene",
     "ShotSpec",
     "ShotList",
+    "StyleSpec",
 ]

@@ -136,6 +136,14 @@ PROMPTS: dict[str, str] = {
         "if no shot uses the asset. "
         "Plan at most 4 assets unless the instruction explicitly asks for more."
     ),
+    "style_agent": (
+        "You are an art director. From the story's scenes, characters and assets, "
+        "derive ONE concise reusable style guide for ALL image and video "
+        "generation: a single style_prompt sentence (rendering style, medium, "
+        "level of detail — usable as a suffix on any image prompt), palette, "
+        "lighting, audience, tone. Consistent, concrete, no on-screen text "
+        "instructions."
+    ),
     "refine_agent": (
         "You are an editor for a video studio. Given an entity's current fields "
         "and the user's instruction, return ONLY the fields that should change "
