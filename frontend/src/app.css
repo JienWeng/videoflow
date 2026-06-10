@@ -6,17 +6,6 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Legacy theme vars (namespaced to avoid clashing with shadcn tokens) */
-  --bg: #0f1115;
-  --panel: #181b22;
-  --panel-2: #1f232d;
-  --vf-border: #2a2f3a;
-  --text: #e6e9ef;
-  --vf-muted: #8a91a0;
-  --vf-accent: #ffb454;
-  --accent-2: #59c2ff;
-  --ok: #7fd962;
-  --err: #f07178;
   font-family: ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
   /* shadcn-svelte tokens */
   --border: oklch(0.925 0.005 214.3);
@@ -52,17 +41,6 @@
   --sidebar-border: oklch(0.925 0.005 214.3);
   --sidebar-ring: oklch(0.723 0.014 214.4);
 }
-
-/* Legacy rules kept for graph/+page.svelte (removed next task) */
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--vf-border);
-  border-radius: 10px;
-  padding: 1rem;
-  margin-bottom: 1.2rem;
-}
-
-.error { color: var(--err); font-size: 0.85rem; margin-top: 0.5rem; white-space: pre-wrap; }
 
 .dark {
   --background: oklch(0.148 0.004 228.8);
