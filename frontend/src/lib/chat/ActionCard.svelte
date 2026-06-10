@@ -41,7 +41,7 @@
   }: {
     intent: Intent;
     options: Options;
-    onran?: (result: any) => void;
+    onran?: (result: any) => void | Promise<void>;
     onfocus?: (id: string) => void;
   } = $props();
 
@@ -168,7 +168,7 @@
           toast.success('Captions added');
           break;
       }
-      onran?.(result);
+      await onran?.(result); // let the canvas refresh before zooming to the new node
       if (focusId) onfocus?.(focusId);
     } catch (e) {
       toast.error((e as Error).message);

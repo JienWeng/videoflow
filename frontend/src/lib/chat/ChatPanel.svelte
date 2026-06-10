@@ -21,7 +21,7 @@
   let {
     onfocus,
     onmutate
-  }: { onfocus?: (id: string) => void; onmutate?: () => void } = $props();
+  }: { onfocus?: (id: string) => void; onmutate?: () => void | Promise<void> } = $props();
 
   let messages = $state<Msg[]>([
     {

@@ -30,6 +30,11 @@ def graph(session: Session = Depends(get_session)) -> dict:
         node(a.id, "asset", a.name or a.id, file_path=a.file_path, asset_type=a.type)
         if a.character_id:
             edge(a.character_id, a.id, "reference")
+        # Storyboards and registered render videos link to their scene only
+        # through metadata; without this they float as orphan canvas nodes.
+        meta_scene = (a.metadata_json or {}).get("scene_id")
+        if meta_scene:
+            edge(meta_scene, a.id, a.type)
     # Reference assets linked only via the character's id list.
     seen = {(e["source"], e["target"]) for e in edges}
     for c in characters:
