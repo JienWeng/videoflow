@@ -90,6 +90,7 @@ async def render_from_shot(
 class CaptionRequest(BaseModel):
     style: str = "kids"
     language: str | None = "zh"  # None -> auto-detect
+    model: str | None = None     # None -> settings.whisper_model
 
 
 @router.post("/outputs/{output_id}/caption")
@@ -101,7 +102,7 @@ async def caption_output(
     from app.services import caption_service
 
     return await caption_service.caption_output(
-        session, output_id, style=body.style, language=body.language
+        session, output_id, style=body.style, language=body.language, model=body.model
     )
 
 
@@ -110,6 +111,19 @@ def caption_styles():
     from app.services.caption_service import STYLES
 
     return list(STYLES)
+
+
+@router.get("/caption-config")
+def caption_config():
+    from app.config import get_settings
+    from app.services.caption_service import STYLES, WHISPER_MODELS
+
+    return {
+        "styles": list(STYLES),
+        "models": WHISPER_MODELS,
+        "default_model": get_settings().whisper_model,
+        "default_language": "zh",
+    }
 
 
 @router.get("/render-jobs")

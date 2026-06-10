@@ -92,25 +92,30 @@ def build_ass(
     return header + "\n".join(lines) + "\n"
 
 
-_whisper_model = None
+WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3"]
+
+_models: dict[str, "WhisperModel"] = {}  # type: ignore[name-defined]
 
 
-def _load_whisper():
-    global _whisper_model
-    if _whisper_model is None:
+def _get_model(size: str):
+    if size not in _models:
         from faster_whisper import WhisperModel
 
-        size = get_settings().whisper_model
         logger.info("loading faster-whisper '%s' (first run downloads it)", size)
-        _whisper_model = WhisperModel(size, device="cpu", compute_type="int8")
-    return _whisper_model
+        _models[size] = WhisperModel(size, device="cpu", compute_type="int8")
+    return _models[size]
 
 
-async def transcribe(video_path: Path, language: str | None = None) -> list[CaptionSegment]:
+async def transcribe(
+    video_path: Path,
+    language: str | None = None,
+    model_size: str | None = None,
+) -> list[CaptionSegment]:
     """Run faster-whisper on the video's audio track (blocking → thread)."""
+    size = model_size or get_settings().whisper_model
 
     def _run() -> list[CaptionSegment]:
-        model = _load_whisper()
+        model = _get_model(size)
         segments, _info = model.transcribe(
             str(video_path), language=language, vad_filter=True
         )
@@ -147,6 +152,7 @@ async def caption_output(
     *,
     style: str = "kids",
     language: str | None = "zh",
+    model: str | None = None,
 ) -> RenderOutput:
     """Transcribe an output's voice track and burn styled captions into a copy."""
     output = session.get(RenderOutput, output_id)
@@ -158,9 +164,13 @@ async def caption_output(
         raise ValidationFailedError(
             f"unknown caption style '{style}' (have: {', '.join(STYLES)})"
         )
+    if model is not None and model not in WHISPER_MODELS:
+        raise ValidationFailedError(
+            f"unknown whisper model '{model}' (have: {', '.join(WHISPER_MODELS)})"
+        )
 
     video_path = Path(output.video_path)
-    segments = await transcribe(video_path, language=language)
+    segments = await transcribe(video_path, language=language, model_size=model)
     if not segments:
         raise ValidationFailedError("no speech detected in the video")
 

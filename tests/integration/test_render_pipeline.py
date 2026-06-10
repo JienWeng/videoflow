@@ -95,7 +95,10 @@ def test_caption_output_endpoint(client, monkeypatch):
     file stored on the output row (ASR and FFmpeg mocked)."""
     from app.services import caption_service
 
-    async def fake_transcribe(video_path, language=None):
+    captured_kwargs: dict = {}
+
+    async def fake_transcribe(video_path, language=None, model_size=None):
+        captured_kwargs["model_size"] = model_size
         return [caption_service.CaptionSegment(start=0.0, end=2.0, text="我是乐乐")]
 
     async def fake_burn(video_path, ass_path, dest):
@@ -119,13 +122,29 @@ def test_caption_output_endpoint(client, monkeypatch):
         time.sleep(0.1)
     output_id = body["outputs"][0]["id"]
 
-    resp = client.post(f"/outputs/{output_id}/caption", json={"style": "kids"})
+    resp = client.post(f"/outputs/{output_id}/caption", json={"style": "kids", "model": "tiny"})
     assert resp.status_code == 200, resp.text
     out = resp.json()
     assert out["captioned_path"].endswith("_captioned.mp4")
     assert Path(out["captioned_path"]).exists()
     # The ASS subtitle file is kept alongside as an editable artifact.
     assert Path(out["captioned_path"].replace("_captioned.mp4", ".ass")).exists()
+    # transcribe was called with the requested model size
+    assert captured_kwargs.get("model_size") == "tiny"
+
+    # Posting an invalid model name must be rejected with a 4xx.
+    resp_bad = client.post(f"/outputs/{output_id}/caption", json={"style": "kids", "model": "bogus"})
+    assert resp_bad.status_code in (400, 422), resp_bad.text
+
+
+def test_caption_config_endpoint(client):
+    r = client.get("/caption-config")
+    assert r.status_code == 200
+    body = r.json()
+    assert "kids" in body["styles"]
+    assert "large-v3" in body["models"]
+    assert body["default_model"] == "small"
+    assert body["default_language"] == "zh"
 
 
 def test_caption_unknown_style_rejected(client):

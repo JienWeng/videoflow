@@ -52,3 +52,10 @@ class TestBuildAss:
     def test_text_newlines_become_ass_linebreaks(self):
         ass = build_ass([CaptionSegment(start=0, end=1, text="a\nb")], style="clean")
         assert ",,a\\Nb" in ass
+
+
+from app.services.caption_service import WHISPER_MODELS
+
+
+def test_whisper_model_registry():
+    assert WHISPER_MODELS == ["tiny", "base", "small", "medium", "large-v3"]
