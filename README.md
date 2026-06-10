@@ -122,6 +122,9 @@ character ─bible─▶ CharacterBible ─ERNIE─▶ reference sheets (assets)
 | `POST`/`DELETE /scenes/{id}/cast/{character_id}` | add / remove a character from a scene's cast |
 | `POST`/`DELETE /shots/{id}/assets/{asset_id}` | attach / detach a reference asset on a shot |
 | `GET /caption-config` | caption styles + whisper model sizes + defaults |
+| `DELETE /scenes/{id}`, `DELETE /shots/{id}` | delete a scene (cascades its shots; render history kept) or a shot |
+| `POST /scenes/{id}/refine`, `POST /shots/{id}/refine` | AI-assisted editing: `{instruction}` → agent returns only the fields to change |
+| `POST /scenes/{id}/assets/generate` | asset planner defines needed props/backgrounds and ERNIE generates + links them |
 
 ## Render example (named references + voice + multi-shot)
 
