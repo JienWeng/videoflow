@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { preventDefault } from 'svelte/legacy';
-
   import { onDestroy, onMount } from 'svelte';
   import { get, post } from '$lib/api';
   import VideoPreview from '$lib/components/VideoPreview.svelte';
+  import { Button } from '$lib/components/ui/button';
+  import { Badge } from '$lib/components/ui/badge';
+  import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
+  import { toast } from 'svelte-sonner';
+  import { Play, Captions } from '@lucide/svelte';
 
   let jobs: any[] = $state([]);
   let scenes: any[] = $state([]);
@@ -14,8 +17,15 @@
 
   let sceneId = $state('');
   let shotId = $state('');
+
+  // Caption config
   let captionStyles: string[] = $state([]);
+  let captionModels: string[] = $state([]);
+  let captionDefaultModel = $state('');
+  let captionDefaultLanguage = $state('zh');
   let captionStyle: Record<string, string> = $state({});
+  let captionModel: Record<string, string> = $state({});
+  let captionLanguage: Record<string, string> = $state({});
   let captioning = $state('');
 
   let timer: ReturnType<typeof setInterval>;
@@ -34,7 +44,17 @@
 
   onMount(() => {
     refresh().catch((e) => (error = e.message));
-    get('/caption-styles').then((s) => (captionStyles = s)).catch(() => {});
+    get('/caption-config')
+      .then((cfg: any) => {
+        captionStyles = cfg.styles ?? [];
+        captionModels = cfg.models ?? [];
+        captionDefaultModel = cfg.default_model ?? '';
+        captionDefaultLanguage = cfg.default_language ?? 'zh';
+      })
+      .catch(() => {
+        // Fallback to legacy endpoint
+        get('/caption-styles').then((s) => (captionStyles = s)).catch(() => {});
+      });
     timer = setInterval(() => refresh().catch(() => {}), 5000);
   });
   onDestroy(() => clearInterval(timer));
@@ -44,12 +64,14 @@
     error = '';
     try {
       const updated = await post(`/outputs/${out.id}/caption`, {
-        style: captionStyle[out.id] ?? 'kids'
+        style: captionStyle[out.id] ?? captionStyles[0] ?? 'kids',
+        model: captionModel[out.id] ?? (captionDefaultModel || undefined),
+        language: captionLanguage[out.id] ?? captionDefaultLanguage ?? 'zh'
       });
       outputs[jobId] = outputs[jobId].map((o) => (o.id === out.id ? updated : o));
       outputs = outputs;
     } catch (e: any) {
-      error = e.message;
+      toast.error(e.message);
     } finally {
       captioning = '';
     }
@@ -60,89 +82,131 @@
     shotId = '';
   }
 
-  async function renderFromShot() {
+  async function renderFromShot(e: Event) {
+    e.preventDefault();
     busy = true;
     error = '';
     try {
       await post('/render/from-shot', { scene_id: sceneId, shot_id: shotId });
       await refresh();
     } catch (e: any) {
-      error = e.message;
+      toast.error(e.message);
     } finally {
       busy = false;
     }
   }
+
+  function statusVariant(status: string): 'default' | 'destructive' | 'secondary' | 'outline' {
+    if (status === 'succeeded') return 'default';
+    if (status === 'failed') return 'destructive';
+    return 'secondary';
+  }
 </script>
 
-<h1>Render</h1>
+<div class="p-6">
+  <h1 class="text-lg font-semibold mb-4">Render</h1>
 
-<form class="panel" onsubmit={preventDefault(renderFromShot)}>
-  <div class="row">
-    <div>
-      <label for="scene">Scene</label>
-      <select id="scene" bind:value={sceneId} onchange={loadShots}>
-        <option value="">choose…</option>
-        {#each scenes as s}<option value={s.id}>{s.title}</option>{/each}
-      </select>
+  <form class="mb-4 rounded-lg border border-border bg-card p-4" onsubmit={renderFromShot}>
+    <div class="flex flex-wrap gap-4 items-end">
+      <div class="flex-1 min-w-[160px]">
+        <label class="block text-xs text-muted-foreground mb-1" for="scene">Scene</label>
+        <select id="scene" bind:value={sceneId} onchange={loadShots}
+          class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm">
+          <option value="">choose…</option>
+          {#each scenes as s}<option value={s.id}>{s.title}</option>{/each}
+        </select>
+      </div>
+      <div class="flex-1 min-w-[160px]">
+        <label class="block text-xs text-muted-foreground mb-1" for="shot">Shot (prompt-agent render)</label>
+        <select id="shot" bind:value={shotId} disabled={!shots.length}
+          class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm">
+          <option value="">choose…</option>
+          {#each shots as sh}<option value={sh.id}>#{sh.shot_order + 1} {sh.prompt.slice(0, 50)}</option>{/each}
+        </select>
+      </div>
+      <div>
+        <Button type="submit" disabled={busy || !shotId} size="sm">
+          <Play class="size-4 mr-1" />Render shot
+        </Button>
+      </div>
     </div>
-    <div>
-      <label for="shot">Shot (prompt-agent render)</label>
-      <select id="shot" bind:value={shotId} disabled={!shots.length}>
-        <option value="">choose…</option>
-        {#each shots as sh}<option value={sh.id}>#{sh.shot_order + 1} {sh.prompt.slice(0, 50)}</option>{/each}
-      </select>
-    </div>
-    <div>
-      <button disabled={busy || !shotId}>Render shot</button>
-    </div>
-  </div>
-  <div class="meta">Whole-scene multi-shot renders live on the Scenes page (step 4).</div>
-  {#if error}<div class="error">{error}</div>{/if}
-</form>
+    <div class="text-xs text-muted-foreground mt-2">Whole-scene multi-shot renders live on the Scenes page (step 4).</div>
+  </form>
 
-<table>
-  <thead>
-    <tr><th>job</th><th>scene / shot</th><th>model</th><th>status</th><th>error</th></tr>
-  </thead>
-  <tbody>
-    {#each jobs.slice().reverse() as j (j.id)}
-      <tr>
-        <td>{j.id}</td>
-        <td>{j.scene_id}{j.shot_id ? ` / ${j.shot_id}` : ''}</td>
-        <td>{j.model?.split('/').slice(-2).join('/')}</td>
-        <td><span class="status {j.status}">{j.status}</span></td>
-        <td class="meta">{j.error ?? ''}</td>
-      </tr>
-      {#if outputs[j.id]?.length}
-        <tr>
-          <td colspan="5">
-            <div class="row">
-              {#each outputs[j.id] as out (out.id)}
-                <div style="flex:0 0 auto">
-                  <VideoPreview path={out.captioned_path || out.video_path} />
-                  <div class="meta">
-                    QA: {out.score ?? '—'} {out.qa_json?.recommendation ?? ''}
-                    {#if out.captioned_path}· <span class="status succeeded">captioned</span>{/if}
+  <Table>
+    <TableHeader>
+      <TableRow>
+        <TableHead>job</TableHead>
+        <TableHead>scene / shot</TableHead>
+        <TableHead>model</TableHead>
+        <TableHead>status</TableHead>
+        <TableHead>error</TableHead>
+      </TableRow>
+    </TableHeader>
+    <TableBody>
+      {#each jobs.slice().reverse() as j (j.id)}
+        <TableRow>
+          <TableCell class="text-xs font-mono">{j.id}</TableCell>
+          <TableCell class="text-xs">{j.scene_id}{j.shot_id ? ` / ${j.shot_id}` : ''}</TableCell>
+          <TableCell class="text-xs">{j.model?.split('/').slice(-2).join('/')}</TableCell>
+          <TableCell>
+            <Badge variant={statusVariant(j.status)}>{j.status}</Badge>
+          </TableCell>
+          <TableCell class="text-xs text-muted-foreground">{j.error ?? ''}</TableCell>
+        </TableRow>
+        {#if outputs[j.id]?.length}
+          <TableRow>
+            <TableCell colspan={5}>
+              <div class="flex flex-wrap gap-4 py-1">
+                {#each outputs[j.id] as out (out.id)}
+                  <div class="flex-none">
+                    <VideoPreview path={out.captioned_path || out.video_path} />
+                    <div class="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                      QA: {out.score ?? '—'} {out.qa_json?.recommendation ?? ''}
+                      {#if out.captioned_path}<Badge class="ml-1">captioned</Badge>{/if}
+                    </div>
+                    <div class="flex flex-wrap items-center gap-1 mt-1">
+                      {#if captionStyles.length}
+                        <select
+                          bind:value={captionStyle[out.id]}
+                          class="rounded border border-input bg-background px-1.5 py-1 text-xs"
+                        >
+                          {#each captionStyles as st}<option value={st}>{st}</option>{/each}
+                        </select>
+                      {/if}
+                      {#if captionModels.length}
+                        <select
+                          bind:value={captionModel[out.id]}
+                          class="rounded border border-input bg-background px-1.5 py-1 text-xs"
+                        >
+                          {#each captionModels as m}<option value={m}>{m}</option>{/each}
+                        </select>
+                      {/if}
+                      <select
+                        bind:value={captionLanguage[out.id]}
+                        class="rounded border border-input bg-background px-1.5 py-1 text-xs w-16"
+                      >
+                        <option value="zh">zh</option>
+                        <option value="en">en</option>
+                        <option value="auto">auto</option>
+                      </select>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!!captioning}
+                        onclick={() => addCaptions(j.id, out)}
+                      >
+                        <Captions class="size-3 mr-1" />
+                        {captioning === out.id ? 'transcribing…' : out.captioned_path ? 'Re-caption' : 'Auto captions'}
+                      </Button>
+                    </div>
                   </div>
-                  <div class="row" style="align-items:center;gap:0.4rem">
-                    <select style="flex:0 0 110px;min-width:110px" bind:value={captionStyle[out.id]}>
-                      {#each captionStyles as st}<option value={st}>{st}</option>{/each}
-                    </select>
-                    <button
-                      class="small secondary"
-                      style="flex:0 0 auto;min-width:auto"
-                      disabled={!!captioning}
-                      onclick={() => addCaptions(j.id, out)}
-                    >
-                      {captioning === out.id ? 'transcribing…' : out.captioned_path ? 'Re-caption' : 'Auto captions'}
-                    </button>
-                  </div>
-                </div>
-              {/each}
-            </div>
-          </td>
-        </tr>
-      {/if}
-    {/each}
-  </tbody>
-</table>
+                {/each}
+              </div>
+            </TableCell>
+          </TableRow>
+        {/if}
+      {/each}
+    </TableBody>
+  </Table>
+</div>
