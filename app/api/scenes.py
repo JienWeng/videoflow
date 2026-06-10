@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.database import get_session
-from app.services import render_service, scene_service, storyboard_service
+from app.services import asset_gen_service, render_service, scene_service, storyboard_service
 
 router = APIRouter(tags=["scenes"])
 
@@ -125,6 +125,21 @@ def delete_shot(shot_id: str, session: Session = Depends(get_session)):
 async def generate_storyboard(scene_id: str, session: Session = Depends(get_session)):
     """Generate the scene's 分镜图 (ERNIE NxN contact sheet) from its shots."""
     return await storyboard_service.generate_storyboard_for_scene(session, scene_id)
+
+
+class AssetGenRequest(BaseModel):
+    instruction: str = ""
+    max_assets: int = 4
+
+
+@router.post("/scenes/{scene_id}/assets/generate")
+async def generate_scene_assets(
+    scene_id: str, body: AssetGenRequest, session: Session = Depends(get_session)
+):
+    """Plan + generate the scene's missing props/assets (ERNIE images)."""
+    return await asset_gen_service.generate_scene_assets(
+        session, scene_id, instruction=body.instruction, max_assets=body.max_assets
+    )
 
 
 @router.post("/scenes/{scene_id}/render")

@@ -73,6 +73,18 @@ def test_chat_discards_hallucinated_ids_and_low_confidence(monkeypatch, tmp_path
     assert body["intent"]["action"] == "unknown"        # confidence < 0.5
 
 
+def test_chat_generate_assets_intent(monkeypatch, tmp_path):
+    intent = Intent(action=IntentAction.generate_assets, scene_id="scene_1",
+                    idea="red cup", confidence=0.9, reply="好的，为场景生成道具")
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        r = client.post("/chat", json={"message": "the cup looks wrong, make a red one"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["intent"]["action"] == "generate_assets"
+    assert body["intent"]["scene_id"] == "scene_1"
+    assert body["intent"]["idea"] == "red cup"
+
+
 def test_chat_llm_failure_degrades_to_unknown(monkeypatch, tmp_path):
     class Boom:
         async def generate(self, **kw):

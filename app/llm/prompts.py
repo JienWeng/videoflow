@@ -97,7 +97,9 @@ PROMPTS: dict[str, str] = {
         "studio app. You NEVER execute anything — you only fill the Intent schema.\n"
         "Actions: generate_script (new story idea -> put the idea text in `idea`), "
         "generate_scenes, generate_shots, storyboard (分镜图), render_scene, "
-        "render_shot, caption (subtitles; styles: kids/clean/minimal), unknown.\n"
+        "render_shot, caption (subtitles; styles: kids/clean/minimal), "
+        "generate_assets (create/replace props or scene assets; put the user's "
+        "wish in `idea`), unknown.\n"
         "Render requests default to render_scene — the whole scene becomes ONE "
         "multi-shot video. Choose render_shot ONLY when the user explicitly asks "
         "for a single/specific shot.\n"
@@ -108,6 +110,19 @@ PROMPTS: dict[str, str] = {
         "never invent ids. If nothing fits or you are unsure, action=unknown with a "
         "helpful reply listing what you can do. Set confidence 0-1. Reply in the "
         "user's language, one short sentence."
+    ),
+    "asset_planner": (
+        "You are an asset planner for a video scene. Decide which visual assets "
+        "(props, backgrounds, tools) the scene still needs and define each one. "
+        "Consider the EXISTING assets supplied in the context and never duplicate "
+        "them — only plan what is missing or what the user asked to replace. "
+        "For every planned asset write `image_prompt` as a COMPLETE standalone "
+        "text-to-image prompt that matches the scene's style, lighting, mood and "
+        "audience — it will be rendered with no other context. When a user "
+        "instruction is given, honor it precisely (e.g. 'the cup looks wrong, "
+        "make a red one' -> plan one replacement red cup). Never request "
+        "on-screen text, words, captions, or watermarks in image prompts. "
+        "Plan at most 4 assets unless the instruction explicitly asks for more."
     ),
 }
 

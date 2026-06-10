@@ -10,11 +10,29 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import app.models  # noqa: F401
 from app.database import get_session
-from app.schemas import QAResult
+from app.schemas import AssetPlan, PlannedAsset, QAResult
 
 
 class FakeLLM:
     async def generate(self, *, response_model, **kw):
+        if response_model is AssetPlan:
+            return AssetPlan(
+                assets=[
+                    PlannedAsset(
+                        name="Red Cup",
+                        asset_type="prop",
+                        description="a shiny red cup",
+                        image_prompt="a shiny red ceramic cup, warm daylight, 3D cartoon",
+                    ),
+                    PlannedAsset(
+                        name="Picnic Blanket",
+                        asset_type="prop",
+                        description="a checkered blanket",
+                        image_prompt="a checkered picnic blanket on grass, warm daylight",
+                    ),
+                ],
+                reasoning="scene needs props",
+            )
         assert response_model is QAResult
         return QAResult(score=8, passed=True, issues=[], recommendation="accept")
 
@@ -59,6 +77,7 @@ def ctx(monkeypatch, tmp_path):
         "app.providers.atlascloud_video.get_atlas_client",
         "app.providers.atlascloud_image.get_atlas_client",
         "app.services.storyboard_service.get_atlas_client",
+        "app.services.asset_gen_service.get_atlas_client",
     ):
         monkeypatch.setattr(target, lambda: fake)
     monkeypatch.setattr("app.agents.base.get_llm_client", lambda: FakeLLM())
@@ -304,6 +323,59 @@ def test_delete_shot_and_scene(ctx):
     g = client.get("/graph").json()
     ids = {n["id"] for n in g["nodes"]}
     assert all(e["source"] in ids and e["target"] in ids for e in g["edges"])
+
+
+def test_generate_scene_assets(ctx):
+    client, fake = ctx
+    resp = client.post(
+        "/scenes/scene_1/assets/generate", json={"instruction": "need a red cup"}
+    )
+    assert resp.status_code == 200, resp.text
+    assets = resp.json()
+    assert len(assets) == 2
+    names = {a["name"] for a in assets}
+    assert names == {"Red Cup", "Picnic Blanket"}
+    for a in assets:
+        assert a["file_path"]  # image downloaded locally
+        assert a["metadata_json"]["scene_id"] == "scene_1"
+        assert a["metadata_json"]["generated"] is True
+        assert a["metadata_json"]["image_prompt"]
+
+    # ERNIE got one text-to-image payload per planned asset, using the
+    # planner's standalone image_prompt verbatim.
+    prompts = [p["prompt"] for p in fake.image_payloads]
+    assert "a shiny red ceramic cup, warm daylight, 3D cartoon" in prompts
+
+    # Scene now links the new assets (alongside the pre-existing background).
+    scene = client.get("/scenes/scene_1").json()
+    for a in assets:
+        assert a["id"] in scene["asset_ids_json"]
+    assert "asset_bg" in scene["asset_ids_json"]
+
+    # Graph shows the new assets linked to the scene (both the asset_ids_json
+    # 'uses' edge and the metadata scene edge resolve to scene_1 → asset).
+    g = client.get("/graph").json()
+    ids = {n["id"] for n in g["nodes"]}
+    pairs = {(e["source"], e["target"]) for e in g["edges"]}
+    for a in assets:
+        assert a["id"] in ids
+        assert ("scene_1", a["id"]) in pairs
+
+
+def test_generate_scene_assets_unknown_scene_404(ctx):
+    client, fake = ctx
+    resp = client.post("/scenes/no_such_scene/assets/generate", json={})
+    assert resp.status_code == 404
+
+
+def test_generate_scene_assets_respects_max_assets(ctx):
+    client, fake = ctx
+    resp = client.post(
+        "/scenes/scene_1/assets/generate", json={"max_assets": 1}
+    )
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()) == 1
+    assert len(fake.image_payloads) == 1
 
 
 def test_graph_nodes_carry_canvas_data(ctx):

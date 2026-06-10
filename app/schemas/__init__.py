@@ -4,6 +4,7 @@ These are deliberately separate from the SQLModel tables in `app.models`:
 agent output shape must not be coupled to DB shape (the `*_json` columns).
 """
 
+from app.schemas.asset_plan import AssetPlan, PlannedAsset
 from app.schemas.asset_schema import AssetMetadata
 from app.schemas.character_schema import CharacterBible
 from app.schemas.intent import Intent, IntentAction
@@ -14,6 +15,8 @@ from app.schemas.shot_schema import ShotList
 
 __all__ = [
     "AssetMetadata",
+    "AssetPlan",
+    "PlannedAsset",
     "CharacterBible",
     "Intent",
     "IntentAction",
