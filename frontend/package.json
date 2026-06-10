@@ -35,6 +35,10 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
-    "@xyflow/svelte": "^1.6.0"
+    "@shikijs/themes": "^4.2.0",
+    "@xyflow/svelte": "^1.6.0",
+    "ai": "^6.0.199",
+    "runed": "^0.37.1",
+    "streamdown-svelte": "^3.0.6"
   }
 }
