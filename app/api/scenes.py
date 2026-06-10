@@ -109,6 +109,18 @@ def detach_asset(shot_id: str, asset_id: str, session: Session = Depends(get_ses
     return scene_service.detach_shot_asset(session, shot_id, asset_id)
 
 
+@router.delete("/scenes/{scene_id}")
+def delete_scene(scene_id: str, session: Session = Depends(get_session)):
+    count = scene_service.delete_scene(session, scene_id)
+    return {"deleted": scene_id, "shots_deleted": count}
+
+
+@router.delete("/shots/{shot_id}")
+def delete_shot(shot_id: str, session: Session = Depends(get_session)):
+    scene_service.delete_shot(session, shot_id)
+    return {"deleted": shot_id}
+
+
 @router.post("/scenes/{scene_id}/storyboard")
 async def generate_storyboard(scene_id: str, session: Session = Depends(get_session)):
     """Generate the scene's 分镜图 (ERNIE NxN contact sheet) from its shots."""

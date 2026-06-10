@@ -124,6 +124,25 @@ async def create_shots(session: Session, scene_id: str) -> list[Shot]:
     return rows
 
 
+def delete_shot(session: Session, shot_id: str) -> None:
+    shot = session.get(Shot, shot_id)
+    if shot is None:
+        raise NotFoundError(f"shot {shot_id} not found")
+    session.delete(shot)
+    session.commit()
+
+
+def delete_scene(session: Session, scene_id: str) -> int:
+    """Delete a scene and its shots; render history is kept. Returns shots deleted."""
+    scene = get_scene(session, scene_id)
+    shots = session.exec(select(Shot).where(Shot.scene_id == scene_id)).all()
+    for shot in shots:
+        session.delete(shot)
+    session.delete(scene)
+    session.commit()
+    return len(shots)
+
+
 def list_shots(session: Session, scene_id: str) -> list[Shot]:
     return list(
         session.exec(select(Shot).where(Shot.scene_id == scene_id).order_by(Shot.shot_order)).all()

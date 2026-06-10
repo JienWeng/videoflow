@@ -69,4 +69,7 @@ def graph(session: Session = Depends(get_session)) -> dict:
              captioned_path=o.captioned_path)
         edge(o.render_job_id, o.id, "output")
 
+    known = {n["id"] for n in nodes}
+    edges = [e for e in edges if e["source"] in known and e["target"] in known]
+
     return {"nodes": nodes, "edges": edges}

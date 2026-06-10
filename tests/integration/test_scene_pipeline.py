@@ -264,6 +264,48 @@ def test_shot_reorder_via_patch(ctx):
     assert resp.json()["shot_order"] == 5
 
 
+def test_delete_shot_and_scene(ctx):
+    client, fake = ctx
+    from app.models import RenderJob, RenderStatus, Shot
+    from sqlmodel import Session
+
+    # ----- shot deletion -----
+    r = client.delete("/shots/shot_1")
+    assert r.status_code == 200, r.text
+    assert r.json()["deleted"] == "shot_1"
+
+    # second delete → 404
+    assert client.delete("/shots/shot_1").status_code == 404
+
+    # ----- seed a fresh shot on scene_1 + a RenderJob tied to scene_1 -----
+    from app.database import engine as _engine_import  # resolved via monkeypatch
+
+    import app.database as _db_mod
+
+    with Session(_db_mod.engine) as s:
+        s.add(Shot(id="shot_3", scene_id="scene_1", shot_order=2, duration=2,
+                   prompt="Grace runs away", camera="wide", movement="pan"))
+        # RenderJob whose scene_id → scene_1 (no shot) — tests dangling-edge guard
+        s.add(RenderJob(id="job_dangling", scene_id="scene_1", shot_id=None,
+                        model="atlas/test", status=RenderStatus.succeeded))
+        s.commit()
+
+    # ----- scene deletion -----
+    r = client.delete("/scenes/scene_1")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["deleted"] == "scene_1"
+    assert body["shots_deleted"] >= 1   # shot_2 + shot_3 still exist (shot_1 already gone)
+
+    # idempotence: second delete → 404
+    assert client.delete("/scenes/scene_1").status_code == 404
+
+    # ----- graph has no dangling edges -----
+    g = client.get("/graph").json()
+    ids = {n["id"] for n in g["nodes"]}
+    assert all(e["source"] in ids and e["target"] in ids for e in g["edges"])
+
+
 def test_graph_nodes_carry_canvas_data(ctx):
     client, fake = ctx
     body = client.get("/graph").json()
