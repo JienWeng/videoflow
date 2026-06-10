@@ -6,11 +6,28 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.models  # noqa: F401
 from app.database import get_session
 from app.schemas import AssetPlan, PlannedAsset, QAResult, SceneRefinement, ShotRefinement
+from app.schemas.scene_schema import ScriptDraft, ScriptScene
+
+
+def _make_draft(n: int) -> ScriptDraft:
+    return ScriptDraft(
+        title="Test Video",
+        summary="A multi-scene story",
+        scenes=[
+            ScriptScene(
+                scene_id=f"draft_s{i}",
+                title=f"Scene {i}",
+                summary=f"Summary of scene {i}",
+                suggested_duration=5,
+            )
+            for i in range(1, n + 1)
+        ],
+    )
 
 
 class FakeLLM:
@@ -40,6 +57,8 @@ class FakeLLM:
                 ],
                 reasoning="scene needs props",
             )
+        if response_model is ScriptDraft:
+            return _make_draft(3)
         assert response_model is QAResult
         return QAResult(score=8, passed=True, issues=[], recommendation="accept")
 
@@ -438,3 +457,75 @@ def test_graph_nodes_carry_canvas_data(ctx):
     shot_node = nodes_by_id["shot_1"]
     assert "scene_id" in shot_node["data"]
     assert "prompt" in shot_node["data"]
+
+
+# ── /scripts/generate scene_count tests ──────────────────────────────────────
+
+@pytest.fixture
+def script_ctx(monkeypatch, tmp_path):
+    """Minimal fixture for POST /scripts/generate — no pre-seeded scenes needed."""
+    engine = create_engine(
+        f"sqlite:///{tmp_path/'s.db'}", connect_args={"check_same_thread": False}
+    )
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr("app.database.engine", engine)
+    monkeypatch.setattr("app.services.poll_service.engine", engine)
+    monkeypatch.setattr("app.jobs.worker.reconcile_pending", lambda: 0)
+    monkeypatch.setattr("app.agents.base.get_llm_client", lambda: FakeLLM())
+
+    from app.main import create_app
+
+    app = create_app()
+
+    def _session():
+        with Session(engine) as s:
+            yield s
+
+    app.dependency_overrides[get_session] = _session
+    with TestClient(app) as c:
+        yield c, engine
+
+
+def test_generate_script_without_scene_count_persists_all(script_ctx):
+    """Without scene_count, all 3 LLM scenes are persisted."""
+    client, engine = script_ctx
+    from app.models import Scene
+
+    scenes_before = len(list(Session(engine).exec(select(Scene)).all()))
+    resp = client.post("/scripts/generate", json={"idea": "a cat story"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    scenes_after = len(list(Session(engine).exec(select(Scene)).all()))
+    new_scenes = scenes_after - scenes_before
+    assert new_scenes == 3
+    assert len(body["draft"]["scenes"]) == 3
+
+
+def test_generate_script_with_scene_count_1_truncates_to_1(script_ctx):
+    """With scene_count=1, only 1 scene is persisted and draft reflects it."""
+    client, engine = script_ctx
+    from app.models import Scene
+
+    scenes_before = len(list(Session(engine).exec(select(Scene)).all()))
+    resp = client.post("/scripts/generate", json={"idea": "a single video", "scene_count": 1})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    scenes_after = len(list(Session(engine).exec(select(Scene)).all()))
+    new_scenes = scenes_after - scenes_before
+    assert new_scenes == 1
+    assert len(body["draft"]["scenes"]) == 1
+
+
+def test_generate_script_scene_count_respects_cap(script_ctx):
+    """scene_count=2 caps at 2 even when LLM returns 3."""
+    client, engine = script_ctx
+    from app.models import Scene
+
+    scenes_before = len(list(Session(engine).exec(select(Scene)).all()))
+    resp = client.post("/scripts/generate", json={"idea": "a two-part story", "scene_count": 2})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    scenes_after = len(list(Session(engine).exec(select(Scene)).all()))
+    new_scenes = scenes_after - scenes_before
+    assert new_scenes == 2
+    assert len(body["draft"]["scenes"]) == 2

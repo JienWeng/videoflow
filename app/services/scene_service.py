@@ -25,9 +25,21 @@ def character_to_bible(char: Character) -> CharacterBible:
     )
 
 
-async def create_script(session: Session, *, idea: str, target_duration: int | None = None) -> ScriptDraft:
-    """Generate a script and persist each scene stub as a Scene row."""
-    draft = await generate_script(idea=idea, target_duration=target_duration)
+async def create_script(
+    session: Session,
+    *,
+    idea: str,
+    target_duration: int | None = None,
+    scene_count: int | None = None,
+) -> ScriptDraft:
+    """Generate a script and persist each scene stub as a Scene row.
+
+    When scene_count is set, the draft is truncated to at most that many
+    scenes BEFORE persisting — this is the deterministic enforcement cap.
+    """
+    draft = await generate_script(idea=idea, target_duration=target_duration, scene_count=scene_count)
+    if scene_count is not None and len(draft.scenes) > scene_count:
+        draft = draft.model_copy(update={"scenes": draft.scenes[:scene_count]})
     for s in draft.scenes:
         scene = Scene(
             id=new_id("scene"),

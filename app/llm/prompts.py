@@ -31,7 +31,10 @@ PROMPTS: dict[str, str] = {
         "suggested duration in seconds. Keep it filmable and concrete. Never "
         "request on-screen text, subtitles, captions, lyrics, or titles — "
         "captions are added in post-production. Write any spoken dialogue "
-        "inside 「」 quotes verbatim."
+        "inside 「」 quotes verbatim. "
+        "When a scene count is specified, produce exactly that many scenes — "
+        "one scene becomes one video; when asked for a single video, write ONE "
+        "scene whose beats become shots, not multiple scenes."
     ),
     "scene_agent": (
         "You are a scene director. Expand the given scene into a complete scene "
@@ -103,6 +106,11 @@ PROMPTS: dict[str, str] = {
         "Render requests default to render_scene — the whole scene becomes ONE "
         "multi-shot video. Choose render_shot ONLY when the user explicitly asks "
         "for a single/specific shot.\n"
+        "For generate_script: detect how many scenes/videos the user wants and set "
+        "`scene_count`. ONE SCENE = ONE VIDEO. "
+        "\"one video\" / \"一个视频\" / \"只要一个场景\" / \"一个\" → scene_count=1. "
+        "Explicit numbers (\"three videos\", \"3个\") → that number. "
+        "Unspecified → leave scene_count null.\n"
         "You are given catalogs of existing scenes, characters and outputs with ids. "
         "Match names/titles mentioned in the message (Chinese or English, fuzzy is "
         "fine) and return the matching ids. If the message names a character, pick "

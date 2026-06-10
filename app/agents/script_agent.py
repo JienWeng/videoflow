@@ -10,15 +10,17 @@ async def generate_script(
     *,
     idea: str,
     target_duration: int | None = None,
+    scene_count: int | None = None,
     client=None,
 ) -> ScriptDraft:
-    prompt = "\n\n".join(
-        [
-            as_block("Story idea", idea),
-            as_block("Target total duration (s)", target_duration or "unspecified"),
-            "Produce a ScriptDraft with an ordered list of scenes.",
-        ]
-    )
+    parts = [
+        as_block("Story idea", idea),
+        as_block("Target total duration (s)", target_duration or "unspecified"),
+    ]
+    if scene_count is not None:
+        parts.append(f"Produce EXACTLY {scene_count} scene(s).")
+    parts.append("Produce a ScriptDraft with an ordered list of scenes.")
+    prompt = "\n\n".join(parts)
     return await run_agent(
         agent="script_agent",
         response_model=ScriptDraft,

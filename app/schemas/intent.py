@@ -28,5 +28,6 @@ class Intent(BaseModel):
     style: str | None = None       # caption style
     language: str | None = None    # caption language
     idea: str | None = None        # generate_script: the story idea text
+    scene_count: int | None = Field(default=None, ge=1, le=20)  # how many scenes/videos requested
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     reply: str = ""                # one-line natural-language reply to show in chat

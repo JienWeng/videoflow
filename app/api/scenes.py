@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from app.database import get_session
@@ -22,6 +22,7 @@ router = APIRouter(tags=["scenes"])
 class ScriptRequest(BaseModel):
     idea: str
     target_duration: int | None = None
+    scene_count: int | None = Field(default=None, ge=1, le=20)
 
 
 class SceneExpandRequest(BaseModel):
@@ -53,7 +54,10 @@ class ShotEdit(BaseModel):
 @router.post("/scripts/generate")
 async def generate_script(body: ScriptRequest, session: Session = Depends(get_session)):
     draft = await scene_service.create_script(
-        session, idea=body.idea, target_duration=body.target_duration
+        session,
+        idea=body.idea,
+        target_duration=body.target_duration,
+        scene_count=body.scene_count,
     )
     return {"draft": draft, "scenes": scene_service.list_scenes(session)}
 

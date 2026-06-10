@@ -85,6 +85,23 @@ def test_chat_generate_assets_intent(monkeypatch, tmp_path):
     assert body["intent"]["idea"] == "red cup"
 
 
+def test_chat_scene_count_passes_through(monkeypatch, tmp_path):
+    """Intent.scene_count is preserved end-to-end through the chat endpoint."""
+    intent = Intent(
+        action=IntentAction.generate_script,
+        idea="一个关于小猫的视频",
+        scene_count=1,
+        confidence=0.9,
+        reply="好的，为您生成一个场景的脚本",
+    )
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        r = client.post("/chat", json={"message": "帮我做一个视频，只要一个场景"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["intent"]["action"] == "generate_script"
+    assert body["intent"]["scene_count"] == 1
+
+
 def test_chat_llm_failure_degrades_to_unknown(monkeypatch, tmp_path):
     class Boom:
         async def generate(self, **kw):
