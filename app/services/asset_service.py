@@ -10,8 +10,9 @@ from sqlmodel import Session, select
 from app.agents.asset_recogniser import recognise_asset
 from app.config import get_settings
 from app.errors import NotFoundError
-from app.models import Asset, Character
-from app.models.base import new_id
+from app.models import Asset, Character, Scene, Shot
+from app.models.base import new_id, utcnow
+from app.models.style_guide import StyleGuide
 
 
 def save_upload(
@@ -78,6 +79,59 @@ def get_asset(session: Session, asset_id: str) -> Asset:
 
 def list_assets(session: Session) -> list[Asset]:
     return list(session.exec(select(Asset)).all())
+
+
+def delete_asset(session: Session, asset_id: str) -> int:
+    """Delete an Asset row and detach its id from all referencing rows.
+
+    Returns the count of rows (scenes, shots, characters, style guides) that
+    were updated due to the detach. The file on disk is intentionally kept.
+    """
+    asset = session.get(Asset, asset_id)
+    if asset is None:
+        raise NotFoundError(f"asset {asset_id} not found")
+
+    detached = 0
+
+    # Detach from Scene.asset_ids_json
+    for scene in session.exec(select(Scene)).all():
+        ids = list(scene.asset_ids_json or [])
+        if asset_id in ids:
+            scene.asset_ids_json = [i for i in ids if i != asset_id]
+            scene.updated_at = utcnow()
+            session.add(scene)
+            detached += 1
+
+    # Detach from Shot.asset_ids_json
+    for shot in session.exec(select(Shot)).all():
+        ids = list(shot.asset_ids_json or [])
+        if asset_id in ids:
+            shot.asset_ids_json = [i for i in ids if i != asset_id]
+            shot.updated_at = utcnow()
+            session.add(shot)
+            detached += 1
+
+    # Detach from Character.reference_asset_ids_json
+    for char in session.exec(select(Character)).all():
+        ids = list(char.reference_asset_ids_json or [])
+        if asset_id in ids:
+            char.reference_asset_ids_json = [i for i in ids if i != asset_id]
+            char.updated_at = utcnow()
+            session.add(char)
+            detached += 1
+
+    # Detach from StyleGuide.reference_asset_ids_json
+    for style in session.exec(select(StyleGuide)).all():
+        ids = list(style.reference_asset_ids_json or [])
+        if asset_id in ids:
+            style.reference_asset_ids_json = [i for i in ids if i != asset_id]
+            style.updated_at = utcnow()
+            session.add(style)
+            detached += 1
+
+    session.delete(asset)
+    session.commit()
+    return detached
 
 
 async def recognise(session: Session, asset_id: str, description: str) -> Asset:

@@ -674,3 +674,59 @@ def test_generate_script_scene_count_respects_cap(script_ctx):
     new_scenes = scenes_after - scenes_before
     assert new_scenes == 2
     assert len(body["draft"]["scenes"]) == 2
+
+
+def test_delete_asset_detaches_references(ctx):
+    """DELETE /assets/{id} removes the row and detaches the id from all
+    Scene.asset_ids_json, Shot.asset_ids_json, Character.reference_asset_ids_json,
+    and StyleGuide.reference_asset_ids_json that reference it."""
+    client, fake = ctx
+
+    # Setup: attach asset_bg to shot_1 (scene_1 already has it in asset_ids_json).
+    resp = client.post("/shots/shot_1/assets/asset_bg")
+    assert resp.status_code == 200, resp.text
+    assert "asset_bg" in resp.json()["asset_ids_json"]
+
+    # Also set asset_bg as a style guide reference asset via PATCH /style.
+    resp = client.patch("/style", json={"reference_asset_ids": ["asset_bg"]})
+    assert resp.status_code == 200, resp.text
+    assert "asset_bg" in resp.json()["reference_asset_ids_json"]
+
+    # Confirm scene_1 already has asset_bg in its asset list (seeded by fixture).
+    scene = client.get("/scenes/scene_1").json()
+    assert "asset_bg" in scene["asset_ids_json"]
+
+    # DELETE asset_bg — should detach from scene_1, shot_1, and the style guide.
+    resp = client.delete("/assets/asset_bg")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["deleted"] == "asset_bg"
+    assert body["detached_from"] >= 3  # scene_1 + shot_1 + style guide
+
+    # Verify scene_1 no longer contains asset_bg.
+    scene = client.get("/scenes/scene_1").json()
+    assert "asset_bg" not in scene["asset_ids_json"]
+
+    # Verify shot_1 no longer contains asset_bg.
+    shot = client.get("/scenes/scene_1/shots").json()[0]
+    assert shot["id"] == "shot_1"
+    assert "asset_bg" not in (shot["asset_ids_json"] or [])
+
+    # Verify style guide reference list is cleaned.
+    style = client.get("/style").json()
+    assert "asset_bg" not in style["reference_asset_ids_json"]
+
+    # Also verify asset_char is still referenced by char_grace (unaffected).
+    resp = client.delete("/assets/asset_char")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["deleted"] == "asset_char"
+    assert body["detached_from"] >= 1  # char_grace.reference_asset_ids_json
+
+    # Second delete of asset_bg → 404.
+    assert client.delete("/assets/asset_bg").status_code == 404
+
+    # Graph has no dangling edges after deletions.
+    g = client.get("/graph").json()
+    ids = {n["id"] for n in g["nodes"]}
+    assert all(e["source"] in ids and e["target"] in ids for e in g["edges"])
