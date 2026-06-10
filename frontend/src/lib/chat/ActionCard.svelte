@@ -1,8 +1,10 @@
 <script lang="ts">
   import { get, post } from '$lib/api';
+  import { Suggestion, Suggestions } from '$lib/components/ai-elements/suggestion';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
   import { Textarea } from '$lib/components/ui/textarea';
+  import LoaderCircle from '@lucide/svelte/icons/loader-circle';
   import Play from '@lucide/svelte/icons/play';
   import { toast } from 'svelte-sonner';
 
@@ -37,12 +39,14 @@
     intent,
     options,
     onran,
-    onfocus
+    onfocus,
+    onsuggest
   }: {
     intent: Intent;
     options: Options;
     onran?: (result: any) => void | Promise<void>;
     onfocus?: (id: string) => void;
+    onsuggest?: (text: string) => void;
   } = $props();
 
   // Each card gets one fixed intent, so plain init from props is fine.
@@ -195,6 +199,11 @@
           <li>add captions to a rendered video</li>
         </ul>
       </div>
+      <Suggestions>
+        {#each ['生成分镜图', 'Render scene', 'Add captions', 'Generate a script'] as s (s)}
+          <Suggestion suggestion={s} onclick={(text) => onsuggest?.(text)} />
+        {/each}
+      </Suggestions>
     {:else}
       {#if intent.action === 'generate_script'}
         <div>
@@ -262,10 +271,16 @@
         </div>
       {/if}
 
-      <Button size="sm" disabled={busy || !ready} onclick={run}>
-        <Play class="size-4 mr-1" />
-        {busy ? 'Running…' : (labels[intent.action] ?? 'Run')}
-      </Button>
+      <div class="flex items-center gap-1.5 pt-1">
+        <Button size="sm" class="rounded-full px-4" disabled={busy || !ready} onclick={run}>
+          {#if busy}
+            <LoaderCircle class="size-4 mr-1 animate-spin" />
+          {:else}
+            <Play class="size-4 mr-1" />
+          {/if}
+          {busy ? 'Running…' : (labels[intent.action] ?? 'Run')}
+        </Button>
+      </div>
     {/if}
   </Card.Content>
 </Card.Root>
