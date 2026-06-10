@@ -80,7 +80,14 @@
     await refresh();
   }
 
-  async function handleDelete({ edges: deleted }: { nodes: Node[]; edges: Edge[] }) {
+  async function handleDelete({ nodes: deletedNodes, edges: deleted }: { nodes: Node[]; edges: Edge[] }) {
+    if (deletedNodes.length) {
+      // Entities can't be deleted from the canvas; restore and bail before the
+      // node's connected edges get misread as intentional detaches.
+      toast.error('Delete relationships (edges), not entities');
+      await refresh();
+      return;
+    }
     let changed = false;
     for (const edge of deleted) {
       const sk = kindOf(edge.source);
