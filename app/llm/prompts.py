@@ -61,7 +61,7 @@ PROMPTS: dict[str, str] = {
         "captions are added in post-production. Write any spoken dialogue "
         "inside 「」 quotes verbatim. "
         "EVERY shot MUST include exactly one short spoken line in 「」 quotes "
-        "(10 words / 15 characters max) — someone speaks in every shot. Keep "
+        "(at most 10 English words or 15 Chinese characters) — someone speaks in every shot. Keep "
         "lines simple and natural. "
         "Reference every character and important prop inline as @Name using "
         "EXACT names from the cast/linked-asset lists — these @mentions are "

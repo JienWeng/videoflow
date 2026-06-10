@@ -20,8 +20,9 @@ from app.services.dialogue import has_dialogue
 logger = logging.getLogger(__name__)
 
 DIALOGUE_FIX_INSTRUCTION = (
-    "Add exactly one short spoken line in 「」 quotes (max 10 words) "
-    "for a character in this shot; change nothing else."
+    "Ensure this shot has exactly ONE short spoken line in 「」 quotes "
+    "(at most 10 English words or 15 Chinese characters) — add one, or "
+    "shorten/replace an existing overlong line; change nothing else."
 )
 
 
