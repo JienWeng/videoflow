@@ -7,8 +7,8 @@
   import { Textarea } from '$lib/components/ui/textarea';
   import { Badge } from '$lib/components/ui/badge';
   import { toast } from 'svelte-sonner';
-  import { Sparkles, Trash2 } from '@lucide/svelte';
-  import { patch, post, del, mediaUrl, isImage } from '$lib/api';
+  import { History, Sparkles, Trash2 } from '@lucide/svelte';
+  import { get, patch, post, del, mediaUrl, isImage } from '$lib/api';
 
   let {
     node,
@@ -27,11 +27,16 @@
   let confirmingDelete = $state(false);
   let deleting = $state(false);
   let confirmTimer: ReturnType<typeof setTimeout> | undefined;
+  let showHistory = $state(false);
+  let revisions = $state<any[]>([]);
+  let reverting = $state('');
 
   $effect(() => {
     const d = (node?.data ?? {}) as Record<string, any>;
     refineInstruction = '';
     confirmingDelete = false;
+    showHistory = false;
+    revisions = [];
     if (node && String(d.kind) === 'scene') {
       form = {
         title: d.label ?? '',
@@ -111,6 +116,52 @@
       toast.error(err.message);
     } finally {
       refining = false;
+    }
+  }
+
+  function seedForm(e: Record<string, any>) {
+    if (kind === 'scene') {
+      form = {
+        title: e.title ?? '',
+        summary: e.summary ?? '',
+        duration: e.duration ?? 0,
+        aspect_ratio: e.aspect_ratio ?? ''
+      };
+    } else if (kind === 'shot') {
+      form = {
+        prompt: e.prompt ?? '',
+        duration: e.duration ?? 0,
+        camera: e.camera ?? '',
+        movement: e.movement ?? '',
+        shot_order: e.shot_order ?? 0
+      };
+    }
+  }
+
+  async function toggleHistory() {
+    if (!node) return;
+    showHistory = !showHistory;
+    if (!showHistory) return;
+    try {
+      revisions = await get(`/${kind}s/${node.id}/revisions`);
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  }
+
+  async function revert(revisionId: string) {
+    if (!node) return;
+    reverting = revisionId;
+    try {
+      const entity = await post(`/revisions/${revisionId}/revert`);
+      seedForm(entity);
+      revisions = await get(`/${kind}s/${node.id}/revisions`);
+      toast.success('Reverted');
+      onsaved();
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      reverting = '';
     }
   }
 
@@ -251,6 +302,39 @@
         </div>
       {:else if kind === 'character'}
         <p class="text-sm">{data.label}</p>
+      {/if}
+
+      {#if kind === 'scene' || kind === 'shot'}
+        <div class="grid gap-2 border-t border-border pt-3">
+          <Button variant="ghost" size="sm" class="justify-start" onclick={toggleHistory}>
+            <History class="size-4 mr-1" />
+            {showHistory ? 'Hide history' : 'History'}
+          </Button>
+          {#if showHistory}
+            {#if revisions.length === 0}
+              <p class="px-2 text-xs text-muted-foreground">No edits recorded yet.</p>
+            {:else}
+              {#each revisions as rev (rev.id)}
+                <div class="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5">
+                  <div class="min-w-0 text-xs">
+                    <p class="truncate font-medium">{Object.keys(rev.fields_json).join(', ')}</p>
+                    <p class="text-muted-foreground">
+                      {new Date(rev.created_at).toLocaleString()} · {rev.source}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onclick={() => revert(rev.id)}
+                    disabled={reverting !== ''}
+                  >
+                    {reverting === rev.id ? 'Reverting…' : 'Revert'}
+                  </Button>
+                </div>
+              {/each}
+            {/if}
+          {/if}
+        </div>
       {/if}
     </div>
   </Sheet.Content>

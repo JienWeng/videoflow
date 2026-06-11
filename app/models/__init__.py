@@ -5,6 +5,7 @@ from app.models.character import Character
 from app.models.op import Op
 from app.models.render_job import RenderJob, RenderStatus
 from app.models.render_output import RenderOutput
+from app.models.revision import Revision
 from app.models.scene import Scene
 from app.models.script import Script
 from app.models.shot import Shot
@@ -17,6 +18,7 @@ __all__ = [
     "RenderJob",
     "RenderStatus",
     "RenderOutput",
+    "Revision",
     "Scene",
     "Script",
     "Shot",

@@ -43,7 +43,7 @@ async def refine_scene(session: Session, scene_id: str, instruction: str) -> dic
     changes = refinement.model_dump(exclude_none=True)
     changes.pop("note", None)
     if changes:
-        scene = scene_service.update_scene(session, scene_id, **changes)
+        scene = scene_service.update_scene(session, scene_id, source="refine", **changes)
     # update_scene already auto-links; this also covers the no-change path.
     linking_service.auto_link_scene(session, scene_id)
     session.refresh(scene)
@@ -75,7 +75,7 @@ async def refine_shot(session: Session, shot_id: str, instruction: str) -> dict:
     if "prompt" in changes:
         changes["prompt"] = _preserve_dialogue(shot.prompt, changes["prompt"])
     if changes:
-        shot = scene_service.update_shot(session, shot_id, **changes)
+        shot = scene_service.update_shot(session, shot_id, source="refine", **changes)
     if shot.scene_id:
         # update_shot already auto-links; this also covers the no-change path.
         linking_service.auto_link_scene(session, shot.scene_id)

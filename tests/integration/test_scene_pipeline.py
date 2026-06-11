@@ -1352,3 +1352,107 @@ def test_scene_to_spec_falls_back_to_scene_json_when_no_rows(tmp_path):
         spec = _scene_to_spec(scene, s)
         assert len(spec.shots) == 1
         assert spec.shots[0].prompt == fallback_prompt
+
+
+# ── edit history + revert ─────────────────────────────────────────────────────
+
+def test_shot_revisions_recorded_newest_first(ctx):
+    client, fake = ctx
+    assert client.patch("/shots/shot_1", json={"prompt": "v2 prompt"}).status_code == 200
+    assert client.patch(
+        "/shots/shot_1", json={"prompt": "v3 prompt", "camera": "wide"}
+    ).status_code == 200
+
+    revs = client.get("/shots/shot_1/revisions").json()
+    assert len(revs) == 2
+    # Newest first: the second edit's revision stores the v2 state.
+    assert revs[0]["fields_json"] == {"prompt": "v2 prompt", "camera": "mid"}
+    assert revs[1]["fields_json"] == {"prompt": "Grace waves at camera"}
+    assert all(r["source"] == "edit" for r in revs)
+    assert all(r["entity_type"] == "shot" for r in revs)
+    assert all(r["entity_id"] == "shot_1" for r in revs)
+
+
+def test_scene_revisions_recorded(ctx):
+    client, fake = ctx
+    assert client.patch(
+        "/scenes/scene_1", json={"summary": "edited summary"}
+    ).status_code == 200
+    revs = client.get("/scenes/scene_1/revisions").json()
+    assert len(revs) == 1
+    assert revs[0]["fields_json"] == {"summary": "a sunny meadow lesson"}
+    assert revs[0]["source"] == "edit"
+    assert revs[0]["entity_type"] == "scene"
+
+
+def test_noop_patch_writes_no_revision(ctx):
+    client, fake = ctx
+    assert client.patch(
+        "/shots/shot_1", json={"prompt": "Grace waves at camera"}
+    ).status_code == 200
+    assert client.get("/shots/shot_1/revisions").json() == []
+
+
+def test_refine_records_revision_with_refine_source(ctx):
+    client, fake = ctx
+    resp = client.post("/shots/shot_1/refine", json={"instruction": "warmer lighting"})
+    assert resp.status_code == 200, resp.text
+    revs = client.get("/shots/shot_1/revisions").json()
+    assert len(revs) == 1
+    assert revs[0]["source"] == "refine"
+    assert revs[0]["fields_json"]["prompt"] == "Grace waves at camera"
+
+
+def test_revert_restores_old_values_and_records_revision(ctx):
+    client, fake = ctx
+    assert client.patch("/shots/shot_1", json={"prompt": "v2 prompt"}).status_code == 200
+    revs = client.get("/shots/shot_1/revisions").json()
+    assert len(revs) == 1
+
+    resp = client.post(f"/revisions/{revs[0]['id']}/revert")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["prompt"] == "Grace waves at camera"
+
+    # The shot really is restored.
+    shots = client.get("/scenes/scene_1/shots").json()
+    assert shots[0]["prompt"] == "Grace waves at camera"
+
+    # The revert itself recorded a new revision (pre-revert state, source "revert").
+    revs2 = client.get("/shots/shot_1/revisions").json()
+    assert len(revs2) == 2
+    assert revs2[0]["source"] == "revert"
+    assert revs2[0]["fields_json"] == {"prompt": "v2 prompt"}
+
+
+def test_revert_scene_revision(ctx):
+    client, fake = ctx
+    assert client.patch("/scenes/scene_1", json={"title": "new title"}).status_code == 200
+    rev = client.get("/scenes/scene_1/revisions").json()[0]
+    resp = client.post(f"/revisions/{rev['id']}/revert")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["title"] == "t"
+
+
+def test_revert_unknown_revision_404(ctx):
+    client, fake = ctx
+    assert client.post("/revisions/rev_nope/revert").status_code == 404
+
+
+def test_revert_after_entity_deleted_404(ctx):
+    client, fake = ctx
+    assert client.patch("/shots/shot_1", json={"prompt": "v2"}).status_code == 200
+    rev = client.get("/shots/shot_1/revisions").json()[0]
+    assert client.delete("/shots/shot_1").status_code == 200
+    assert client.post(f"/revisions/{rev['id']}/revert").status_code == 404
+
+
+def test_revisions_pruned_to_20(ctx):
+    client, fake = ctx
+    for i in range(25):
+        assert client.patch(
+            "/shots/shot_1", json={"prompt": f"prompt v{i}"}
+        ).status_code == 200
+    revs = client.get("/shots/shot_1/revisions").json()
+    assert len(revs) <= 20
+    # The newest revision survives pruning.
+    assert revs[0]["fields_json"] == {"prompt": "prompt v23"}

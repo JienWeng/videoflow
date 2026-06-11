@@ -118,6 +118,24 @@ def edit_shot(shot_id: str, body: ShotEdit, session: Session = Depends(get_sessi
     return scene_service.update_shot(session, shot_id, **body.model_dump(exclude_none=True))
 
 
+@router.get("/scenes/{scene_id}/revisions")
+def scene_revisions(scene_id: str, session: Session = Depends(get_session)):
+    """The scene's edit history, newest first (up to 20)."""
+    return scene_service.list_revisions(session, "scene", scene_id)
+
+
+@router.get("/shots/{shot_id}/revisions")
+def shot_revisions(shot_id: str, session: Session = Depends(get_session)):
+    """The shot's edit history, newest first (up to 20)."""
+    return scene_service.list_revisions(session, "shot", shot_id)
+
+
+@router.post("/revisions/{revision_id}/revert")
+def revert_revision(revision_id: str, session: Session = Depends(get_session)):
+    """Apply the revision's stored old values back onto its scene/shot."""
+    return scene_service.revert_revision(session, revision_id)
+
+
 @router.post("/scenes/{scene_id}/cast/{character_id}")
 def add_cast(scene_id: str, character_id: str, session: Session = Depends(get_session)):
     return scene_service.add_cast_member(session, scene_id, character_id)

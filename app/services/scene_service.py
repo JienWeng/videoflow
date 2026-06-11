@@ -11,7 +11,7 @@ from app.agents.scene_agent import generate_scene
 from app.agents.script_agent import generate_script
 from app.agents.shot_agent import generate_shots
 from app.errors import NotFoundError
-from app.models import Asset, Character, Scene, Script, Shot
+from app.models import Asset, Character, Revision, Scene, Script, Shot
 from app.models.base import new_id, utcnow
 from app.schemas import CharacterBible, SceneSpec, ScriptDraft, ShotSpec
 from app.services import style_service
@@ -372,6 +372,46 @@ def list_shots(session: Session, scene_id: str) -> list[Shot]:
     )
 
 
+def diff_fields(current: dict, incoming: dict) -> dict:
+    """Subset of *current* whose keys appear in *incoming* with a DIFFERENT,
+    non-None value — i.e. the old values an update is about to overwrite."""
+    return {
+        k: current[k]
+        for k, v in incoming.items()
+        if v is not None and k in current and current[k] != v
+    }
+
+
+REVISION_KEEP = 20
+
+
+def _record_revision(
+    session: Session, entity_type: str, entity_id: str, changed: dict, source: str
+) -> None:
+    """Persist one revision row holding the pre-update values, then prune the
+    entity's history beyond the most recent REVISION_KEEP rows.
+
+    Adds to the session without committing — the caller's update commit
+    persists the revision atomically with the change itself."""
+    session.add(
+        Revision(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            fields_json=changed,
+            source=source,
+        )
+    )
+    session.flush()  # make the new row visible to the pruning query below
+    stale = session.exec(
+        select(Revision)
+        .where(Revision.entity_type == entity_type, Revision.entity_id == entity_id)
+        .order_by(Revision.created_at.desc(), Revision.id.desc())  # type: ignore[attr-defined]
+        .offset(REVISION_KEEP)
+    ).all()
+    for row in stale:
+        session.delete(row)
+
+
 def update_scene(
     session: Session,
     scene_id: str,
@@ -382,8 +422,29 @@ def update_scene(
     aspect_ratio: str | None = None,
     character_ids: list[str] | None = None,
     asset_ids: list[str] | None = None,
+    source: str = "edit",
 ) -> Scene:
     scene = get_scene(session, scene_id)
+    changed = diff_fields(
+        {
+            "title": scene.title,
+            "summary": scene.summary,
+            "duration": scene.duration,
+            "aspect_ratio": scene.aspect_ratio,
+            "character_ids": list(scene.character_ids_json or []),
+            "asset_ids": list(scene.asset_ids_json or []),
+        },
+        {
+            "title": title,
+            "summary": summary,
+            "duration": duration,
+            "aspect_ratio": aspect_ratio,
+            "character_ids": character_ids,
+            "asset_ids": asset_ids,
+        },
+    )
+    if changed:
+        _record_revision(session, "scene", scene.id, changed, source)
     if title is not None:
         scene.title = title
     if summary is not None:
@@ -414,10 +475,31 @@ def update_shot(
     movement: str | None = None,
     asset_ids: list[str] | None = None,
     shot_order: int | None = None,
+    source: str = "edit",
 ) -> Shot:
     shot = session.get(Shot, shot_id)
     if shot is None:
         raise NotFoundError(f"shot {shot_id} not found")
+    changed = diff_fields(
+        {
+            "prompt": shot.prompt,
+            "duration": shot.duration,
+            "camera": shot.camera,
+            "movement": shot.movement,
+            "asset_ids": list(shot.asset_ids_json or []),
+            "shot_order": shot.shot_order,
+        },
+        {
+            "prompt": prompt,
+            "duration": duration,
+            "camera": camera,
+            "movement": movement,
+            "asset_ids": asset_ids,
+            "shot_order": shot_order,
+        },
+    )
+    if changed:
+        _record_revision(session, "shot", shot.id, changed, source)
     if prompt is not None:
         shot.prompt = prompt
     if duration is not None:
@@ -436,6 +518,37 @@ def update_shot(
     _auto_link(session, shot.scene_id)
     session.refresh(shot)
     return shot
+
+
+def list_revisions(
+    session: Session, entity_type: str, entity_id: str, limit: int = 20
+) -> list[Revision]:
+    """The entity's revision trail, newest first."""
+    return list(
+        session.exec(
+            select(Revision)
+            .where(Revision.entity_type == entity_type, Revision.entity_id == entity_id)
+            .order_by(Revision.created_at.desc(), Revision.id.desc())  # type: ignore[attr-defined]
+            .limit(limit)
+        ).all()
+    )
+
+
+def revert_revision(session: Session, revision_id: str) -> Scene | Shot:
+    """Apply a revision's stored old values back onto its entity.
+
+    Goes through update_scene/update_shot, so the pre-revert state is itself
+    recorded as a new revision (source "revert") — reverts are undoable."""
+    revision = session.get(Revision, revision_id)
+    if revision is None:
+        raise NotFoundError(f"revision {revision_id} not found")
+    if revision.entity_type == "scene":
+        return update_scene(
+            session, revision.entity_id, source="revert", **revision.fields_json
+        )
+    return update_shot(
+        session, revision.entity_id, source="revert", **revision.fields_json
+    )
 
 
 def add_cast_member(session: Session, scene_id: str, character_id: str) -> Scene:
