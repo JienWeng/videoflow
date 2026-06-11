@@ -263,13 +263,61 @@ def test_edit_shot(ctx):
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["prompt"] == "Grace jumps with joy"
+    # Bare "Grace" is auto-tagged to @Grace on save (enforced tagging).
+    assert body["prompt"] == "@Grace jumps with joy"
     assert body["duration"] == 4
     assert body["camera"] == "close-up"
     assert body["movement"] == "static"  # untouched fields preserved
     # The edit is what the next render uses.
     shots = client.get("/scenes/scene_1/shots").json()
-    assert shots[0]["prompt"] == "Grace jumps with joy"
+    assert shots[0]["prompt"] == "@Grace jumps with joy"
+
+
+def test_edit_shot_bare_names_tagged_and_linked_dialogue_untouched(ctx):
+    """Enforced bare-name tagging: a PATCHed prompt with bare character/asset
+    names is stored @-tagged (outside 「」 dialogue) and the relationships are
+    created — cast gains the character, the shot gains the asset. A name
+    spoken inside 「」 stays verbatim (captions/voice extract it)."""
+    client, fake = ctx
+    _seed_global_red_cup()  # "Red Cup" asset, not yet linked anywhere
+    # Drop Grace from the cast so the bare mention has to re-add her.
+    assert client.delete("/scenes/scene_1/cast/char_grace").status_code == 200
+
+    resp = client.patch(
+        "/shots/shot_1",
+        json={"prompt": "Grace lifts the Red Cup and says 「Grace 真棒」"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["prompt"] == "@Grace lifts the @Red Cup and says 「Grace 真棒」"
+    # Asset linked to the shot.
+    assert "asset_redcup" in body["asset_ids_json"]
+    # Character linked to the scene cast.
+    scene = client.get("/scenes/scene_1").json()
+    assert "char_grace" in scene["character_ids_json"]
+    # Persisted prompt matches (and stays stable on a follow-up read).
+    shots = client.get("/scenes/scene_1/shots").json()
+    assert shots[0]["prompt"] == "@Grace lifts the @Red Cup and says 「Grace 真棒」"
+
+
+def test_edit_scene_summary_links_bare_names_without_rewriting(ctx):
+    """Scene summaries are narrative prose: bare names are DETECTED and linked
+    (cast + scene assets) but the summary text is never rewritten to @Name."""
+    client, fake = ctx
+    _seed_global_red_cup()
+    assert client.delete("/scenes/scene_1/cast/char_grace").status_code == 200
+
+    resp = client.patch(
+        "/scenes/scene_1",
+        json={"summary": "Grace shares the Red Cup with everyone"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Text untouched — no @ rewriting in summaries.
+    assert body["summary"] == "Grace shares the Red Cup with everyone"
+    # ...but the relationships exist.
+    assert "char_grace" in body["character_ids_json"]
+    assert "asset_redcup" in body["asset_ids_json"]
 
 
 def test_edit_scene(ctx):
@@ -577,11 +625,12 @@ def test_refine_shot(ctx):
     resp = client.post("/shots/shot_1/refine", json={"instruction": "warmer lighting"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["shot"]["prompt"] == FakeLLM.refinement_prompt
+    # Refined prompt persisted, with bare "Grace" auto-tagged on save.
+    assert body["shot"]["prompt"] == "@" + FakeLLM.refinement_prompt
     assert body["shot"]["camera"] == "mid"  # untouched fields preserved
     assert body["note"]
     shots = client.get("/scenes/scene_1/shots").json()
-    assert shots[0]["prompt"] == FakeLLM.refinement_prompt
+    assert shots[0]["prompt"] == "@" + FakeLLM.refinement_prompt
 
 
 def test_refine_unknown_ids_404(ctx):
@@ -607,7 +656,7 @@ def test_refine_shot_preserves_original_dialogue(ctx, monkeypatch):
     resp = client.post("/shots/shot_1/refine", json={"instruction": "warmer lighting"})
     assert resp.status_code == 200, resp.text
     prompt = resp.json()["shot"]["prompt"]
-    assert prompt == "Grace waves at camera under warm dusk light 「Hello!」"
+    assert prompt == "@Grace waves at camera under warm dusk light 「Hello!」"
     # Persisted too.
     shots = client.get("/scenes/scene_1/shots").json()
     assert shots[0]["prompt"] == prompt
@@ -624,8 +673,9 @@ def test_refine_shot_with_own_dialogue_unchanged(ctx):
 
     resp = client.post("/shots/shot_1/refine", json={"instruction": "warmer lighting"})
     assert resp.status_code == 200, resp.text
-    # FakeLLM's default refinement already speaks — applied as-is.
-    assert resp.json()["shot"]["prompt"] == FakeLLM.refinement_prompt
+    # FakeLLM's default refinement already speaks — applied as-is (then bare
+    # "Grace" is auto-tagged on save).
+    assert resp.json()["shot"]["prompt"] == "@" + FakeLLM.refinement_prompt
     assert "「Hello!」" not in resp.json()["shot"]["prompt"]
 
 
@@ -841,8 +891,9 @@ def test_shots_generate_enforces_dialogue(ctx):
     assert len(shots) == 2
     # gen_sh1 already had dialogue and is untouched.
     assert shots[0]["prompt"] == "@Grace lifts the Red Cup and says, 「Cheers!」"
-    # gen_sh2 lacked dialogue → replaced with the refine agent's spoken version.
-    assert shots[1]["prompt"] == FakeLLM.refinement_prompt
+    # gen_sh2 lacked dialogue → replaced with the refine agent's spoken version
+    # (bare "Grace" auto-tagged on save).
+    assert shots[1]["prompt"] == "@" + FakeLLM.refinement_prompt
     for s in shots:
         assert "「" in s["prompt"] and "」" in s["prompt"]
 
@@ -1411,11 +1462,12 @@ def test_revert_restores_old_values_and_records_revision(ctx):
 
     resp = client.post(f"/revisions/{revs[0]['id']}/revert")
     assert resp.status_code == 200, resp.text
-    assert resp.json()["prompt"] == "Grace waves at camera"
+    # Restored prompt is re-normalized: bare "Grace" auto-tagged on save.
+    assert resp.json()["prompt"] == "@Grace waves at camera"
 
     # The shot really is restored.
     shots = client.get("/scenes/scene_1/shots").json()
-    assert shots[0]["prompt"] == "Grace waves at camera"
+    assert shots[0]["prompt"] == "@Grace waves at camera"
 
     # The revert itself recorded a new revision (pre-revert state, source "revert").
     revs2 = client.get("/shots/shot_1/revisions").json()
