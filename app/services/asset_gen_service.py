@@ -8,6 +8,10 @@ to the scene's asset_ids_json so the next render picks it up as a reference.
 The planner also tags each asset with the shot_orders that use it, so generated
 assets are auto-attached to those shots and @-mentioned in their prompts —
 which the render pipeline turns into Kling named references.
+
+Cross-scene reuse: the planner also sees a compact GLOBAL asset library, and a
+planned asset whose name matches a library asset is LINKED (scene + shots)
+instead of regenerated — no provider spend, consistent look across scenes.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from __future__ import annotations
 import logging
 import re
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.agents.asset_planner import plan_assets
 from app.config import get_settings
@@ -35,6 +39,12 @@ logger = logging.getLogger("videoflow.assets")
 REFERENCE_STYLE_PREFIX = (
     "Match the visual style of the attached reference images exactly. "
 )
+
+# Global library shown to the planner for cross-scene reuse: asset types that
+# can't serve as image references for new scenes are excluded, and the catalog
+# is capped to keep the prompt compact.
+LIBRARY_EXCLUDED_TYPES = frozenset({"video", "storyboard", "character_reference"})
+LIBRARY_CAP = 30
 
 
 def collect_style_reference_ids(
@@ -72,6 +82,38 @@ def dedup_planned(
         else:
             kept.append(asset)
     return kept
+
+
+def split_reuse(
+    planned: list[PlannedAsset], library_by_name: dict
+) -> tuple[list[tuple[PlannedAsset, object]], list[PlannedAsset]]:
+    """Route planned assets: name-matches a global library asset (same
+    case/whitespace normalization as dedup_planned) -> reuse (paired with the
+    library value); novel -> generate. Order preserved in both lists."""
+    index = {_norm_name(k): v for k, v in library_by_name.items()}
+    to_reuse: list[tuple[PlannedAsset, object]] = []
+    to_generate: list[PlannedAsset] = []
+    for item in planned:
+        match = index.get(_norm_name(item.name))
+        if match is not None:
+            to_reuse.append((item, match))
+        else:
+            to_generate.append(item)
+    return to_reuse, to_generate
+
+
+def gather_library(session: Session, exclude_ids: set[str]) -> list[Asset]:
+    """Compact global asset catalog for cross-scene reuse: every asset NOT
+    already linked to the scene (exclude_ids), excluding non-reusable types,
+    capped at LIBRARY_CAP."""
+    out: list[Asset] = []
+    for asset in session.exec(select(Asset)):
+        if asset.id in exclude_ids or asset.type in LIBRARY_EXCLUDED_TYPES:
+            continue
+        out.append(asset)
+        if len(out) >= LIBRARY_CAP:
+            break
+    return out
 
 
 def tag_prompt(prompt: str, name: str) -> str:
@@ -130,10 +172,19 @@ async def plan_scene_assets(
         if (c := session.get(Character, cid))
     ]
 
+    # Global library (everything NOT already in the scene): the planner reuses
+    # these by exact name instead of proposing near-duplicates.
+    library_assets = gather_library(session, exclude_ids=seen_ids)
+
     plan = await plan_assets(
         scene_summary=scene.summary,
         scene_json=scene.scene_json or {},
         existing_assets=existing,
+        library=[
+            {"name": a.name, "type": a.type, "description": a.description}
+            for a in library_assets
+        ]
+        or None,
         instruction=instruction,
         shots=[{"shot_order": s.shot_order, "prompt": s.prompt} for s in shots],
         style=style_service.style_context(style_service.get_style(session)),
@@ -142,9 +193,20 @@ async def plan_scene_assets(
     )
     # Dedup FIRST, then truncate — dropped duplicates must not consume
     # max_assets slots. Shared path, so /assets/plan and /assets/generate
-    # both get the deduped view.
+    # both get the deduped view. Library matches are marked reuse=True (the
+    # frontend shows "reuses existing"; generation links instead of rendering)
+    # and don't consume max_assets slots — reuse is free.
     deduped = dedup_planned(plan.assets, [e["name"] for e in existing])
-    return AssetPlan(assets=deduped[:max_assets], reasoning=plan.reasoning)
+    library_names = {_norm_name(a.name) for a in library_assets}
+    kept: list[PlannedAsset] = []
+    gen_count = 0
+    for asset in deduped:
+        if _norm_name(asset.name) in library_names:
+            kept.append(asset.model_copy(update={"reuse": True}))
+        elif gen_count < max_assets:
+            kept.append(asset)
+            gen_count += 1
+    return AssetPlan(assets=kept, reasoning=plan.reasoning)
 
 
 async def generate_scene_assets(
@@ -155,10 +217,12 @@ async def generate_scene_assets(
     *,
     image_provider: AtlasCloudImageProvider | None = None,
 ) -> list[Asset]:
-    """Plan the scene's missing assets, generate each as an image, register and
-    link them — to the scene and to the shots the planner tagged (asset_ids_json
-    plus an @Name mention in the shot prompt). Returns the created Asset rows
-    ([] when the plan is empty)."""
+    """Plan the scene's missing assets; planned names that match an existing
+    GLOBAL library asset are REUSED (the existing asset is linked, no image
+    rendered), the rest are generated as images and registered. Both are linked
+    to the scene and to the shots the planner tagged (asset_ids_json plus an
+    @Name mention in the shot prompt). Returns the now-linked Asset rows —
+    reused first, then newly created ([] when the plan is empty)."""
     settings = get_settings()
     settings.ensure_dirs()
     scene = scene_service.get_scene(session, scene_id)  # 404 via NotFoundError
@@ -172,6 +236,35 @@ async def generate_scene_assets(
         return []
 
     shots_by_order = {s.shot_order: s for s in shots}
+
+    # Cross-scene reuse: planned names matching a global library asset link the
+    # EXISTING asset instead of regenerating a near-duplicate (same exclusion
+    # set as planning, so the split mirrors what the planner saw).
+    scene_linked: set[str] = set(scene.asset_ids_json or [])
+    for shot in shots:
+        scene_linked.update(shot.asset_ids_json or [])
+    library_assets = gather_library(session, exclude_ids=scene_linked)
+    to_reuse, to_generate = split_reuse(planned, {a.name: a for a in library_assets})
+
+    reused: list[Asset] = []
+    for item, existing_asset in to_reuse:
+        logger.info(
+            "asset reuse: linking existing %r (%s) for planned %r — no generation",
+            existing_asset.name, existing_asset.id, item.name,
+        )
+        reused.append(existing_asset)
+        # Attach to the planned shots under the EXISTING asset's canonical name.
+        for order in item.shot_orders:
+            shot = shots_by_order.get(order)
+            if shot is None:
+                continue
+            ids = list(shot.asset_ids_json or [])
+            if existing_asset.id not in ids:
+                shot.asset_ids_json = [*ids, existing_asset.id]
+            shot.prompt = tag_prompt(shot.prompt, existing_asset.name)
+            shot.updated_at = utcnow()
+            session.add(shot)
+
     provider = image_provider or AtlasCloudImageProvider(get_atlas_client())
 
     # Style enforcement: the guide's text is appended to every prompt in code,
@@ -180,12 +273,12 @@ async def generate_scene_assets(
     style = style_service.get_style(session)
     reference_ids = collect_style_reference_ids(session, scene, style)
     reference_urls: list[str] = []
-    if reference_ids:
+    if reference_ids and to_generate:
         resolver = AtlasCloudUploadResolver(session, get_atlas_client())
         reference_urls = await resolver.resolve(reference_ids)
 
     created: list[Asset] = []
-    for item in planned:
+    for item in to_generate:
         styled_prompt = style_service.apply_style(item.image_prompt, style)
         if reference_urls:
             payload = await provider.build_reference_payload(
@@ -232,10 +325,16 @@ async def generate_scene_assets(
             session.add(shot)
 
     # Reassign (never mutate in place) — JSON column change detection.
-    scene.asset_ids_json = [*(scene.asset_ids_json or []), *[a.id for a in created]]
+    # Idempotent: a reused asset already linked elsewhere is appended once.
+    linked = [*reused, *created]
+    scene_ids = list(scene.asset_ids_json or [])
+    scene.asset_ids_json = [
+        *scene_ids,
+        *[a.id for a in linked if a.id not in scene_ids],
+    ]
     scene.updated_at = utcnow()
     session.add(scene)
     session.commit()
-    for asset in created:
+    for asset in linked:
         session.refresh(asset)
-    return created
+    return linked

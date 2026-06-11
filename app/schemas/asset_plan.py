@@ -16,6 +16,9 @@ class PlannedAsset(BaseModel):
     description: str = ""
     image_prompt: str  # full text-to-image prompt, consistent with scene style/lighting
     shot_orders: list[int] = []  # shot_order values of the shots that should use this asset
+    # Set by the planning service (not the LLM): True when the name matches an
+    # existing library asset, so generation will LINK it instead of rendering.
+    reuse: bool = False
 
 
 class AssetPlan(BaseModel):

@@ -13,6 +13,7 @@ async def plan_assets(
     scene_summary: str,
     scene_json: dict | None = None,
     existing_assets: list[dict] | None = None,
+    library: list[dict] | None = None,
     instruction: str = "",
     shots: list[dict] | None = None,
     style: dict | None = None,
@@ -25,6 +26,14 @@ async def plan_assets(
         as_block("Scene spec", scene_json or {}),
         as_block("Existing assets (do NOT duplicate)", existing_assets or []),
     ]
+    if library:
+        parts.append(
+            as_block(
+                "Asset library (REUSE these by exact name instead of proposing "
+                "similar new ones)",
+                library,
+            )
+        )
     if characters:
         parts.append(as_block("Cast (props must fit these characters)", characters))
     if story:

@@ -139,6 +139,92 @@ def test_planned_asset_shot_orders_defaults_empty():
     assert PlannedAsset(name="Cup", image_prompt="a cup").shot_orders == []
 
 
+def test_planned_asset_reuse_defaults_false():
+    assert PlannedAsset(name="Cup", image_prompt="a cup").reuse is False
+
+
+async def test_plan_assets_library_block_reaches_prompt():
+    from app.agents.asset_planner import plan_assets
+
+    llm = FakeLLM(AssetPlan())
+    await plan_assets(
+        scene_summary="s",
+        scene_json={},
+        existing_assets=[],
+        library=[{"name": "Red Cup", "type": "prop", "description": "a red cup"}],
+        client=llm,
+    )
+    assert "Asset library" in llm.user_prompt
+    assert "REUSE" in llm.user_prompt
+    assert "Red Cup" in llm.user_prompt
+
+
+async def test_plan_assets_without_library_omits_library_block():
+    from app.agents.asset_planner import plan_assets
+
+    llm = FakeLLM(AssetPlan())
+    await plan_assets(scene_summary="s", scene_json={}, existing_assets=[], client=llm)
+    assert "Asset library" not in llm.user_prompt
+
+
+def test_asset_planner_prompt_mentions_library_reuse():
+    from app.llm.prompts import PROMPTS
+
+    prompt = PROMPTS["asset_planner"]
+    assert "EXACT NAME" in prompt
+    assert "librar" in prompt.lower()
+
+
+class TestSplitReuse:
+    """Cross-scene reuse routing: planned assets whose normalized name matches a
+    global library asset are linked instead of regenerated."""
+
+    @staticmethod
+    def _planned(*names: str):
+        return [PlannedAsset(name=n, image_prompt=f"an image of {n}") for n in names]
+
+    def test_exact_match_routes_to_reuse(self):
+        from app.services.asset_gen_service import split_reuse
+
+        planned = self._planned("Red Cup")
+        to_reuse, to_generate = split_reuse(planned, {"Red Cup": "asset_1"})
+        assert to_reuse == [(planned[0], "asset_1")]
+        assert to_generate == []
+
+    def test_case_and_whitespace_normalized_match(self):
+        from app.services.asset_gen_service import split_reuse
+
+        planned = self._planned("red  CUP")
+        to_reuse, to_generate = split_reuse(planned, {"Red\tCup ": "asset_1"})
+        assert to_reuse == [(planned[0], "asset_1")]
+        assert to_generate == []
+
+    def test_novel_routes_to_generate(self):
+        from app.services.asset_gen_service import split_reuse
+
+        planned = self._planned("Lantern")
+        to_reuse, to_generate = split_reuse(planned, {"Red Cup": "asset_1"})
+        assert to_reuse == []
+        assert to_generate == planned
+
+    def test_order_preserved_in_both_lists(self):
+        from app.services.asset_gen_service import split_reuse
+
+        planned = self._planned("A", "B", "C", "D")
+        library = {"B": "asset_b", "D": "asset_d"}
+        to_reuse, to_generate = split_reuse(planned, library)
+        assert [(p.name, a) for p, a in to_reuse] == [("B", "asset_b"), ("D", "asset_d")]
+        assert [p.name for p in to_generate] == ["A", "C"]
+
+    def test_empty_library_generates_everything(self):
+        from app.services.asset_gen_service import split_reuse
+
+        planned = self._planned("Red Cup", "Lantern")
+        to_reuse, to_generate = split_reuse(planned, {})
+        assert to_reuse == []
+        assert to_generate == planned
+
+
 class TestTagPrompt:
     def test_name_present_first_occurrence_replaced(self):
         from app.services.asset_gen_service import tag_prompt

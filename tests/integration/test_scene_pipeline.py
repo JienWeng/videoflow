@@ -484,6 +484,71 @@ def test_generate_scene_assets_unknown_scene_404(ctx):
     assert resp.status_code == 404
 
 
+def _seed_global_red_cup():
+    """Insert a GLOBAL library asset (image prop, NOT linked to scene_1)."""
+    import app.database
+    from app.models import Asset
+
+    with Session(app.database.engine) as s:
+        s.add(Asset(id="asset_redcup", type="prop", name="Red Cup",
+                    description="a shiny red cup", file_path="/tmp/red_cup.png"))
+        s.commit()
+
+
+_REUSE_PLAN = [
+    # Name twisted in case and whitespace — must still match "Red Cup".
+    PlannedAsset(name="red  CUP", asset_type="prop", description="a red cup",
+                 image_prompt="a shiny red ceramic cup, warm daylight",
+                 shot_orders=[0]),
+    PlannedAsset(name="Lantern", asset_type="prop", description="a paper lantern",
+                 image_prompt="a glowing paper lantern, warm daylight",
+                 shot_orders=[0]),
+]
+
+
+def test_generate_scene_assets_reuses_global_library_asset(ctx, monkeypatch):
+    client, fake = ctx
+    _seed_global_red_cup()
+    monkeypatch.setattr(FakeLLM, "planned_assets", _REUSE_PLAN)
+
+    resp = client.post("/scenes/scene_1/assets/generate", json={})
+    assert resp.status_code == 200, resp.text
+    assets = resp.json()
+    # Response contains BOTH the reused library asset and the new one.
+    assert {a["name"] for a in assets} == {"Red Cup", "Lantern"}
+    assert "asset_redcup" in {a["id"] for a in assets}
+
+    # Only ONE image generated — the novel Lantern; Red Cup was linked, not rendered.
+    assert len(fake.image_payloads) == 1
+    assert "lantern" in fake.image_payloads[0]["prompt"].lower()
+
+    # Scene now links the existing Red Cup alongside the new Lantern.
+    scene = client.get("/scenes/scene_1").json()
+    assert "asset_redcup" in scene["asset_ids_json"]
+
+    # shot_1 (order 0) got the EXISTING asset id attached and the @-tag uses the
+    # EXISTING asset's canonical name, not the planner's twisted spelling.
+    shot = client.get("/scenes/scene_1/shots").json()[0]
+    assert "asset_redcup" in shot["asset_ids_json"]
+    assert "@Red Cup" in shot["prompt"]
+
+
+def test_plan_scene_assets_marks_reusable_suggestions(ctx, monkeypatch):
+    client, fake = ctx
+    _seed_global_red_cup()
+    monkeypatch.setattr(FakeLLM, "planned_assets", _REUSE_PLAN)
+
+    resp = client.post("/scenes/scene_1/assets/plan", json={})
+    assert resp.status_code == 200, resp.text
+    by_name = {a["name"]: a for a in resp.json()["assets"]}
+    assert by_name["red  CUP"]["reuse"] is True
+    assert by_name["Lantern"]["reuse"] is False
+    # Plan-only: nothing generated, nothing linked.
+    assert fake.image_payloads == []
+    shot = client.get("/scenes/scene_1/shots").json()[0]
+    assert shot["asset_ids_json"] in (None, [])
+
+
 def test_generate_scene_assets_respects_max_assets(ctx):
     client, fake = ctx
     resp = client.post(
