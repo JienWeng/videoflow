@@ -12,7 +12,7 @@ from sqlmodel import Session
 from app.agents.prompt_agent import build_render_spec
 from app.database import get_session
 from app.errors import NotFoundError
-from app.models import Asset, Character, Shot
+from app.models import Asset, Character, RenderOutput, Shot
 from app.schemas import RenderSpec, ShotSpec
 from app.services import render_service, scene_service, style_service
 
@@ -141,6 +141,55 @@ async def caption_output(
         return JSONResponse(status_code=202, content={"op_id": op.id, "status": op.status})
     return await caption_service.caption_output(
         session, output_id, style=body.style, language=body.language, model=body.model
+    )
+
+
+class CaptionLine(BaseModel):
+    start: float
+    end: float
+    text: str
+
+
+class CaptionUpdateRequest(BaseModel):
+    segments: list[CaptionLine]
+    style: str | None = None  # None -> keep the style from the last caption run
+
+
+@router.get("/outputs/{output_id}/captions")
+def get_captions(output_id: str, session: Session = Depends(get_session)):
+    """Stored caption segments for the editor. `available=False` (with empty
+    segments) when the output was never captioned."""
+    output = session.get(RenderOutput, output_id)
+    if output is None:
+        raise NotFoundError(f"render output {output_id} not found")
+    data = output.captions_json or {}
+    segments = data.get("segments") or []
+    return {"segments": segments, "style": data.get("style"), "available": bool(segments)}
+
+
+@router.put("/outputs/{output_id}/captions")
+async def update_captions(
+    output_id: str,
+    body: CaptionUpdateRequest,
+    background: bool = False,
+    session: Session = Depends(get_session),
+):
+    """Replace the caption segments and re-burn the subtitles (no whisper).
+    With ?background=true the burn runs as a tracked op (202 + /ops polling)."""
+    from app.services import caption_service, op_service
+
+    segments = [s.model_dump() for s in body.segments]
+    if background:
+        op = op_service.start_op(
+            "caption",
+            lambda s: caption_service.recaption_output(
+                s, output_id, segments, style=body.style
+            ),
+            output_id=output_id,
+        )
+        return JSONResponse(status_code=202, content={"op_id": op.id, "status": op.status})
+    return await caption_service.recaption_output(
+        session, output_id, segments, style=body.style
     )
 
 

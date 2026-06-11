@@ -4,11 +4,13 @@
   import { runBackgroundOp } from '$lib/ops';
   import { subscribeJobs } from '$lib/sse';
   import VideoPreview from '$lib/components/VideoPreview.svelte';
+  import CaptionEditor from '$lib/components/CaptionEditor.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
+  import * as Dialog from '$lib/components/ui/dialog';
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
   import { toast } from 'svelte-sonner';
-  import { Play, Captions, RefreshCw } from '@lucide/svelte';
+  import { Play, Captions, Pencil, RefreshCw } from '@lucide/svelte';
 
   let jobs: any[] = $state([]);
   let scenes: any[] = $state([]);
@@ -35,6 +37,15 @@
   // Captioning runs as a background op — per-output so several can run at once.
   let captioning: Record<string, boolean> = $state({});
   let retrying = $state('');
+  // Caption editor dialog: the output being edited (lazy — the editor only
+  // fetches when the dialog opens) plus its job id so we can refresh the row.
+  let editingOutput = $state<{ jobId: string; out: any } | null>(null);
+
+  async function refreshJobOutputs(jobId: string) {
+    const detail = await get(`/render-jobs/${jobId}`);
+    outputs[jobId] = detail.outputs;
+    outputs = outputs;
+  }
 
 
   async function refresh() {
@@ -86,9 +97,7 @@
           onDone: async () => {
             captioning[out.id] = false;
             // Refetch the job detail so the output row picks up captioned_path.
-            const detail = await get(`/render-jobs/${jobId}`);
-            outputs[jobId] = detail.outputs;
-            outputs = outputs;
+            await refreshJobOutputs(jobId);
           },
           onFail: () => (captioning[out.id] = false)
         }
@@ -253,6 +262,13 @@
                         <Captions class="size-3 mr-1" />
                         {captioning[out.id] ? 'transcribing…' : out.captioned_path ? 'Re-caption' : 'Auto captions'}
                       </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onclick={() => (editingOutput = { jobId: j.id, out })}
+                      >
+                        <Pencil class="size-3 mr-1" />Edit captions
+                      </Button>
                     </div>
                   </div>
                 {/each}
@@ -263,4 +279,26 @@
       {/each}
     </TableBody>
   </Table>
+
+  <Dialog.Root
+    open={editingOutput !== null}
+    onOpenChange={(open) => !open && (editingOutput = null)}
+  >
+    <Dialog.Content class="max-w-3xl sm:max-w-3xl">
+      <Dialog.Header>
+        <Dialog.Title>Edit captions</Dialog.Title>
+        <Dialog.Description>
+          Fix subtitle text and timing, then re-burn — no re-transcription.
+        </Dialog.Description>
+      </Dialog.Header>
+      {#if editingOutput}
+        {@const editing = editingOutput}
+        <CaptionEditor
+          outputId={editing.out.id}
+          videoPath={editing.out.video_path}
+          onsaved={() => refreshJobOutputs(editing.jobId).catch(() => {})}
+        />
+      {/if}
+    </Dialog.Content>
+  </Dialog.Root>
 </div>

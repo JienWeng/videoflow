@@ -1,4 +1,4 @@
-import { get, post } from '$lib/api';
+import { get, post, put } from '$lib/api';
 import { subscribeJobs } from '$lib/sse';
 import { toast } from 'svelte-sonner';
 
@@ -16,21 +16,23 @@ type OpHandlers = {
   onDone?: (op: Op) => unknown;
   onFail?: (op: Op) => unknown;
   label: string;
+  method?: 'POST' | 'PUT';
 };
 
 /**
- * POST `path` with ?background=true (202 -> {op_id}), then resolve completion
- * via the SSE stream (filtered on op_id) plus a 5s polling fallback on
- * GET /ops/{op_id}. Toasts start/success/failure; cleans up when terminal.
- * Throws only if the initial POST fails.
+ * POST (or PUT) `path` with ?background=true (202 -> {op_id}), then resolve
+ * completion via the SSE stream (filtered on op_id) plus a 5s polling fallback
+ * on GET /ops/{op_id}. Toasts start/success/failure; cleans up when terminal.
+ * Throws only if the initial request fails.
  */
 export async function runBackgroundOp(
   path: string,
   body: unknown,
-  { onDone, onFail, label }: OpHandlers
+  { onDone, onFail, label, method = 'POST' }: OpHandlers
 ): Promise<void> {
   const sep = path.includes('?') ? '&' : '?';
-  const started = await post(`${path}${sep}background=true`, body);
+  const send = method === 'PUT' ? put : post;
+  const started = await send(`${path}${sep}background=true`, body);
   const opId: string = started.op_id;
   toast.info(`${label} started`);
 

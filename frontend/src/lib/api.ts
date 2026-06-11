@@ -31,6 +31,13 @@ export const post = (path: string, body?: unknown) =>
     body: body !== undefined ? JSON.stringify(body) : undefined
   }).then(handle);
 
+export const put = (path: string, body: unknown) =>
+  fetch(`${API_BASE}${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(handle);
+
 export const patch = (path: string, body: unknown) =>
   fetch(`${API_BASE}${path}`, {
     method: 'PATCH',

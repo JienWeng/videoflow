@@ -311,6 +311,106 @@ async def burn_subtitles(video_path: Path, ass_path: Path, dest: Path) -> Path:
     return dest
 
 
+def validate_segments(raw: list[dict]) -> list[CaptionSegment]:
+    """Normalize user-edited caption segments.
+
+    Text is stripped; empty-text segments are dropped silently (that is how the
+    editor deletes a line). Timings must satisfy end > start >= 0. At least one
+    usable segment must remain. Returns segments sorted by start time."""
+    segments: list[CaptionSegment] = []
+    for item in raw:
+        text = str(item["text"]).strip()
+        if not text:
+            continue
+        start, end = float(item["start"]), float(item["end"])
+        if start < 0 or end <= start:
+            raise ValidationFailedError(
+                f"invalid caption timing [{start}, {end}] — need end > start >= 0"
+            )
+        segments.append(CaptionSegment(start=start, end=end, text=text))
+    if not segments:
+        raise ValidationFailedError("at least one caption segment with text is required")
+    return sorted(segments, key=lambda s: s.start)
+
+
+async def _burn_and_store(
+    session: Session,
+    output: RenderOutput,
+    segments: list[CaptionSegment],
+    *,
+    style: str,
+    language: str | None,
+) -> RenderOutput:
+    """Write the .ass next to the video, burn it into a copy, persist
+    captioned_path + captions_json and mirror onto the linked video asset."""
+    video_path = Path(output.video_path)
+    base = video_path.with_suffix("")
+    ass_path = Path(f"{base}.ass")
+    ass_path.write_text(build_ass(segments, style=style), encoding="utf-8")
+    captioned = Path(f"{base}_captioned.mp4")
+    await burn_subtitles(video_path, ass_path, captioned)
+
+    output.captioned_path = str(captioned)
+    output.captions_json = {
+        "segments": [dataclasses.asdict(s) for s in segments],
+        "style": style,
+        "language": language,
+    }
+    output.updated_at = utcnow()
+    session.add(output)
+    session.commit()
+    session.refresh(output)
+
+    # Mirror captioned_path onto the linked video asset so the Assets library
+    # stays in sync. Linear scan is fine; table is small and SQLite JSON
+    # columns aren't easily queryable.
+    captioned_path_str = output.captioned_path
+    output_id = output.id
+    for a in session.exec(select(Asset)).all():
+        if a.metadata_json.get("render_output_id") == output_id:
+            a.metadata_json = {**a.metadata_json, "captioned_path": captioned_path_str}
+            session.add(a)
+            session.commit()
+            break
+
+    # Re-attach output after the asset commit (SQLAlchemy expires objects on commit).
+    session.refresh(output)
+    return output
+
+
+async def recaption_output(
+    session: Session,
+    output_id: str,
+    segments: list[dict],
+    *,
+    style: str | None = None,
+) -> RenderOutput:
+    """Re-burn captions from user-edited segments — no whisper involved.
+
+    `style=None` keeps the style stored by the previous caption run (falls back
+    to "kids" when the output was never auto-captioned)."""
+    output = session.get(RenderOutput, output_id)
+    if output is None:
+        raise NotFoundError(f"render output {output_id} not found")
+    if not output.video_path or not Path(output.video_path).exists():
+        raise ValidationFailedError(f"output {output_id} has no video file")
+
+    stored = output.captions_json or {}
+    style = style or stored.get("style") or "kids"
+    if style not in STYLES:
+        raise ValidationFailedError(
+            f"unknown caption style '{style}' (have: {', '.join(STYLES)})"
+        )
+    validated = validate_segments(segments)
+    output = await _burn_and_store(
+        session, output, validated, style=style, language=stored.get("language")
+    )
+    logger.info(
+        "re-captioned %s (%d segments, style=%s)", output_id, len(validated), style
+    )
+    return output
+
+
 async def caption_output(
     session: Session,
     output_id: str,
@@ -351,30 +451,8 @@ async def caption_output(
         if script_lines:
             segments = correct_segments(segments, script_lines)
 
-    base = video_path.with_suffix("")
-    ass_path = Path(f"{base}.ass")
-    ass_path.write_text(build_ass(segments, style=style), encoding="utf-8")
-    captioned = Path(f"{base}_captioned.mp4")
-    await burn_subtitles(video_path, ass_path, captioned)
-
-    output.captioned_path = str(captioned)
-    output.updated_at = utcnow()
-    session.add(output)
-    session.commit()
-    session.refresh(output)
-
-    # Mirror captioned_path onto the linked video asset so the Assets library
-    # stays in sync. Linear scan is fine; table is small and SQLite JSON
-    # columns aren't easily queryable.
-    captioned_path_str = output.captioned_path
-    for a in session.exec(select(Asset)).all():
-        if a.metadata_json.get("render_output_id") == output_id:
-            a.metadata_json = {**a.metadata_json, "captioned_path": captioned_path_str}
-            session.add(a)
-            session.commit()
-            break
-
-    # Re-attach output after the asset commit (SQLAlchemy expires objects on commit).
-    session.refresh(output)
+    output = await _burn_and_store(
+        session, output, segments, style=style, language=language
+    )
     logger.info("captioned %s (%d segments, style=%s)", output_id, len(segments), style)
     return output

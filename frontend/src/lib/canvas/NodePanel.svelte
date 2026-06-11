@@ -21,9 +21,10 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Separator } from '$lib/components/ui/separator';
   import { toast } from 'svelte-sonner';
-  import { Captions, History, RefreshCw, Sparkles, Trash2 } from '@lucide/svelte';
+  import { Captions, History, Pencil, RefreshCw, Sparkles, Trash2 } from '@lucide/svelte';
   import { get, patch, post, del, mediaUrl, isImage } from '$lib/api';
   import { runBackgroundOp } from '$lib/ops';
+  import CaptionEditor from '$lib/components/CaptionEditor.svelte';
 
   let {
     node,
@@ -54,6 +55,8 @@
   let captionStyle = $state('');
   let captionModel = $state('');
   let captionLanguage = $state('zh');
+  // Caption editor is lazy: only mounted (and its captions fetched) when opened.
+  let editingCaptions = $state(false);
 
   $effect(() => {
     const d = (node?.data ?? {}) as Record<string, any>;
@@ -61,6 +64,7 @@
     confirmingDelete = false;
     showHistory = false;
     revisions = [];
+    editingCaptions = false;
     if (node && String(d.kind) === 'scene') {
       form = {
         title: d.label ?? '',
@@ -403,6 +407,18 @@
             <Captions class="size-4 mr-1" />
             {captioning ? 'Transcribing…' : data.captioned_path ? 'Re-caption' : 'Auto captions'}
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="justify-start"
+            onclick={() => (editingCaptions = !editingCaptions)}
+          >
+            <Pencil class="size-4 mr-1" />
+            {editingCaptions ? 'Hide caption editor' : 'Edit captions'}
+          </Button>
+          {#if editingCaptions && node}
+            <CaptionEditor outputId={node.id} videoPath={data.video_path} onsaved={onsaved} />
+          {/if}
         </div>
       {:else if kind === 'asset'}
         {#if imageSrc}

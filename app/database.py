@@ -35,6 +35,11 @@ def _migrate(target_engine) -> None:
                 "ALTER TABLE render_outputs ADD COLUMN captioned_path VARCHAR"
             )
             conn.commit()
+        if cols and "captions_json" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE render_outputs ADD COLUMN captions_json JSON"
+            )
+            conn.commit()
         cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(scenes)")]
         if cols and "script_id" not in cols:
             conn.exec_driver_sql("ALTER TABLE scenes ADD COLUMN script_id VARCHAR")

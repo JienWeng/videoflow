@@ -244,3 +244,41 @@ class TestDefaultCaptionStyle:
 
         assert default_caption_style(None) in STYLES
         assert default_caption_style(self._Style("adults")) in STYLES
+
+
+# ---------------------------------------------------------------------------
+# Caption editor — segment validation for user-edited subtitle lines
+# ---------------------------------------------------------------------------
+
+from app.errors import ValidationFailedError
+from app.services.caption_service import validate_segments
+
+
+class TestValidateSegments:
+    def test_strips_text_drops_empty_and_sorts_by_start(self):
+        segs = validate_segments(
+            [
+                {"start": 3.0, "end": 5.0, "text": "second"},
+                {"start": 0.0, "end": 2.0, "text": "  first "},
+                {"start": 5.0, "end": 6.0, "text": "   "},  # dropped silently
+            ]
+        )
+        assert [s.text for s in segs] == ["first", "second"]
+        assert [s.start for s in segs] == [0.0, 3.0]
+        assert all(isinstance(s, CaptionSegment) for s in segs)
+
+    def test_rejects_end_not_after_start(self):
+        with pytest.raises(ValidationFailedError):
+            validate_segments([{"start": 2.0, "end": 2.0, "text": "x"}])
+        with pytest.raises(ValidationFailedError):
+            validate_segments([{"start": 3.0, "end": 1.0, "text": "x"}])
+
+    def test_rejects_negative_start(self):
+        with pytest.raises(ValidationFailedError):
+            validate_segments([{"start": -0.5, "end": 2.0, "text": "x"}])
+
+    def test_requires_at_least_one_nonempty_segment(self):
+        with pytest.raises(ValidationFailedError):
+            validate_segments([])
+        with pytest.raises(ValidationFailedError):
+            validate_segments([{"start": 0.0, "end": 1.0, "text": "  "}])

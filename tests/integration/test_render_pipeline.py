@@ -188,6 +188,13 @@ def test_caption_output_endpoint(client, monkeypatch, tmp_path):
     # transcribe was called with the requested model size
     assert captured_kwargs.get("model_size") == "tiny"
 
+    # The post-correction segments are persisted on the output row so the
+    # caption editor can load them without re-running whisper.
+    assert out["captions_json"]["style"] == "kids"
+    assert out["captions_json"]["segments"] == [
+        {"start": 0.0, "end": 2.0, "text": "我是乐乐 乐乐是我"}
+    ]
+
     # Posting an invalid model name must be rejected with a 4xx.
     resp_bad = client.post(f"/outputs/{output_id}/caption", json={"style": "kids", "model": "bogus"})
     assert resp_bad.status_code in (400, 422), resp_bad.text
@@ -198,6 +205,114 @@ def test_caption_output_endpoint(client, monkeypatch, tmp_path):
     video_assets = [a for a in assets if a["type"] == "video"]
     assert len(video_assets) == 1
     assert video_assets[0]["metadata_json"]["captioned_path"] == out["captioned_path"]
+
+
+def test_caption_editor_roundtrip(client, monkeypatch):
+    """GET /outputs/{id}/captions exposes the stored segments; PUT validates the
+    edits, rebuilds the .ass and re-burns (burn mocked, build_ass real) without
+    re-running whisper."""
+    from app.services import caption_service
+
+    transcribe_calls = {"n": 0}
+
+    async def fake_transcribe(video_path, language=None, model_size=None):
+        transcribe_calls["n"] += 1
+        return [
+            caption_service.CaptionSegment(start=0.0, end=2.0, text="第一句"),
+            caption_service.CaptionSegment(start=2.5, end=4.0, text="第二句"),
+        ]
+
+    async def fake_burn(video_path, ass_path, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"captioned")
+        return dest
+
+    monkeypatch.setattr(caption_service, "transcribe", fake_transcribe)
+    monkeypatch.setattr(caption_service, "burn_subtitles", fake_burn)
+
+    # Unknown output -> 404 on both verbs.
+    assert client.get("/outputs/nonexistent/captions").status_code == 404
+    assert (
+        client.put(
+            "/outputs/nonexistent/captions",
+            json={"segments": [{"start": 0, "end": 1, "text": "x"}]},
+        ).status_code
+        == 404
+    )
+
+    # Produce a finished render.
+    spec = {
+        "scene_id": "scene_x", "duration": 5, "prompt": "@Image p",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+    }
+    job_id = client.post("/render", json=spec).json()["job_id"]
+    body = _wait_for_job(client, job_id)
+    output_id = body["outputs"][0]["id"]
+
+    # Never captioned -> available=False with empty segments.
+    r = client.get(f"/outputs/{output_id}/captions")
+    assert r.status_code == 200
+    assert r.json() == {"segments": [], "style": None, "available": False}
+
+    # Auto-caption, then edit.
+    assert client.post(
+        f"/outputs/{output_id}/caption", json={"style": "clean", "model": "tiny"}
+    ).status_code == 200
+    assert transcribe_calls["n"] == 1
+
+    r = client.get(f"/outputs/{output_id}/captions").json()
+    assert r["available"] is True
+    assert r["style"] == "clean"
+    assert [s["text"] for s in r["segments"]] == ["第一句", "第二句"]
+
+    # Edit text + timing (deliberately unsorted; empty line dropped silently).
+    edited = [
+        {"start": 2.5, "end": 4.2, "text": "改好的第二句"},
+        {"start": 0.0, "end": 2.0, "text": " 改好的第一句 "},
+        {"start": 5.0, "end": 6.0, "text": "   "},
+    ]
+    r = client.put(f"/outputs/{output_id}/captions", json={"segments": edited})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert transcribe_calls["n"] == 1, "re-burn must not re-run whisper"
+    assert out["captions_json"]["segments"] == [
+        {"start": 0.0, "end": 2.0, "text": "改好的第一句"},
+        {"start": 2.5, "end": 4.2, "text": "改好的第二句"},
+    ]
+    # Style defaults to the stored one when the body omits it.
+    assert out["captions_json"]["style"] == "clean"
+    assert out["captioned_path"].endswith("_captioned.mp4")
+    ass_text = Path(out["captioned_path"].replace("_captioned.mp4", ".ass")).read_text(
+        encoding="utf-8"
+    )
+    assert "改好的第一句" in ass_text and "改好的第二句" in ass_text
+    assert "第一句\n" not in ass_text.replace("改好的第一句", "")
+
+    # GET reflects the edits.
+    r = client.get(f"/outputs/{output_id}/captions").json()
+    assert [s["text"] for s in r["segments"]] == ["改好的第一句", "改好的第二句"]
+
+    # A style override is applied and persisted.
+    r = client.put(
+        f"/outputs/{output_id}/captions",
+        json={"segments": [{"start": 0, "end": 1, "text": "x"}], "style": "kids"},
+    )
+    assert r.status_code == 200
+    assert r.json()["captions_json"]["style"] == "kids"
+
+    # Invalid timing -> 422; unknown style -> 422; no usable segments -> 422.
+    bad = client.put(
+        f"/outputs/{output_id}/captions",
+        json={"segments": [{"start": 2.0, "end": 2.0, "text": "x"}]},
+    )
+    assert bad.status_code == 422
+    assert client.put(
+        f"/outputs/{output_id}/captions",
+        json={"segments": [{"start": 0, "end": 1, "text": "x"}], "style": "bogus"},
+    ).status_code == 422
+    assert client.put(
+        f"/outputs/{output_id}/captions", json={"segments": [{"start": 0, "end": 1, "text": " "}]}
+    ).status_code == 422
 
 
 def test_caption_config_endpoint(client):

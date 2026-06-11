@@ -22,5 +22,9 @@ class RenderOutput(SQLModel, table=True):
     selected: bool = False
     notes: str = ""
     qa_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    # Persisted caption segments so the editor can tweak text/timing and
+    # re-burn without re-running whisper:
+    # {"segments": [{"start", "end", "text"}], "style": str, "language": str|None}
+    captions_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
