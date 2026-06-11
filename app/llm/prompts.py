@@ -22,7 +22,9 @@ PROMPTS: dict[str, str] = {
         "across many video shots. Capture concrete, visual, reproducible details "
         "in appearance and hard continuity rules in visual_rules (e.g. fixed "
         "outfit, hair, distinguishing marks). Put speech/voice traits in "
-        "voice_rules. Avoid vague adjectives; prefer specifics a renderer can use."
+        "voice_rules. Avoid vague adjectives; prefer specifics a renderer can use. "
+        "When a project style guide is provided, align personality and voice "
+        "with the project audience and tone."
     ),
     "script_agent": (
         "You are a short-form video scriptwriter. Turn the user's story idea into "
@@ -34,7 +36,8 @@ PROMPTS: dict[str, str] = {
         "inside 「」 quotes verbatim. "
         "When a scene count is specified, produce exactly that many scenes — "
         "one scene becomes one video; when asked for a single video, write ONE "
-        "scene whose beats become shots, not multiple scenes."
+        "scene whose beats become shots, not multiple scenes. "
+        "Honor the project style guide (audience, tone) when provided."
     ),
     "scene_agent": (
         "You are a scene director. Expand the given scene into a complete scene "

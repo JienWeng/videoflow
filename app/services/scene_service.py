@@ -50,7 +50,12 @@ async def create_script(
     When scene_count is set, the draft is truncated to at most that many
     scenes BEFORE persisting — this is the deterministic enforcement cap.
     """
-    draft = await generate_script(idea=idea, target_duration=target_duration, scene_count=scene_count)
+    draft = await generate_script(
+        idea=idea,
+        target_duration=target_duration,
+        scene_count=scene_count,
+        style=style_service.style_context(style_service.get_style(session)),
+    )
     if scene_count is not None and len(draft.scenes) > scene_count:
         draft = draft.model_copy(update={"scenes": draft.scenes[:scene_count]})
     for s in draft.scenes:

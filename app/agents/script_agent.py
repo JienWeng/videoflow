@@ -11,12 +11,15 @@ async def generate_script(
     idea: str,
     target_duration: int | None = None,
     scene_count: int | None = None,
+    style: dict | None = None,
     client=None,
 ) -> ScriptDraft:
     parts = [
         as_block("Story idea", idea),
         as_block("Target total duration (s)", target_duration or "unspecified"),
     ]
+    if style:
+        parts.append(as_block("Project style guide", style))
     if scene_count is not None:
         parts.append(f"Produce EXACTLY {scene_count} scene(s).")
     parts.append("Produce a ScriptDraft with an ordered list of scenes.")

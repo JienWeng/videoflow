@@ -140,3 +140,46 @@ async def test_plan_assets_without_style_omits_block():
     llm = CapturingLLM(AssetPlan())
     await plan_assets(scene_summary="s", scene_json={}, existing_assets=[], client=llm)
     assert "Style guide" not in llm.user_prompt
+
+
+async def test_generate_script_includes_style_block():
+    from app.agents.script_agent import generate_script
+    from app.schemas import ScriptDraft
+
+    llm = CapturingLLM(ScriptDraft(title="t", summary="s"))
+    await generate_script(idea="a cat story", style=STYLE, client=llm)
+    assert "Project style guide" in llm.user_prompt
+    assert "3D cartoon" in llm.user_prompt
+    assert "playful" in llm.user_prompt
+
+
+async def test_generate_script_without_style_omits_block():
+    from app.agents.script_agent import generate_script
+    from app.schemas import ScriptDraft
+
+    llm = CapturingLLM(ScriptDraft(title="t", summary="s"))
+    await generate_script(idea="a cat story", client=llm)
+    assert "Project style guide" not in llm.user_prompt
+
+
+async def test_build_character_bible_includes_style_block():
+    from app.agents.character_memory import build_character_bible
+    from app.schemas import CharacterBible
+
+    bible = CharacterBible(character_id="c1", name="Grace", appearance="a", personality="p")
+    llm = CapturingLLM(bible)
+    await build_character_bible(
+        character_id="c1", name="Grace", notes="n", style=STYLE, client=llm
+    )
+    assert "Project style guide" in llm.user_prompt
+    assert "soft pastel" in llm.user_prompt
+
+
+async def test_build_character_bible_without_style_omits_block():
+    from app.agents.character_memory import build_character_bible
+    from app.schemas import CharacterBible
+
+    bible = CharacterBible(character_id="c1", name="Grace", appearance="a", personality="p")
+    llm = CapturingLLM(bible)
+    await build_character_bible(character_id="c1", name="Grace", notes="n", client=llm)
+    assert "Project style guide" not in llm.user_prompt
