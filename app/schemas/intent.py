@@ -17,6 +17,11 @@ class IntentAction(str, Enum):
     caption = "caption"
     retry_render = "retry_render"
     generate_assets = "generate_assets"
+    refine_scene = "refine_scene"
+    refine_shot = "refine_shot"
+    delete_scene = "delete_scene"
+    style_ingest = "style_ingest"
+    plan_assets = "plan_assets"
     unknown = "unknown"
 
 

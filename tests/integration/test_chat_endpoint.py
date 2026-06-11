@@ -85,6 +85,47 @@ def test_chat_generate_assets_intent(monkeypatch, tmp_path):
     assert body["intent"]["idea"] == "red cup"
 
 
+def test_chat_refine_scene_intent(monkeypatch, tmp_path):
+    """refine_scene round-trip: the instruction rides in `idea`, scene resolved."""
+    intent = Intent(action=IntentAction.refine_scene, scene_id="scene_1",
+                    idea="make the lighting warmer", confidence=0.9,
+                    reply="好的，让灯光更暖")
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        r = client.post("/chat", json={"message": "把乐乐场景的灯光调暖一点"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["intent"]["action"] == "refine_scene"
+    assert body["intent"]["scene_id"] == "scene_1"
+    assert body["intent"]["idea"] == "make the lighting warmer"
+
+
+def test_chat_delete_scene_intent(monkeypatch, tmp_path):
+    """delete_scene round-trip: action + scene_id survive validation (the card
+    itself is the confirmation; chat never deletes anything)."""
+    intent = Intent(action=IntentAction.delete_scene, scene_id="scene_1",
+                    confidence=0.9, reply="确认后将删除该场景")
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        r = client.post("/chat", json={"message": "删掉乐乐那个场景"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["intent"]["action"] == "delete_scene"
+    assert body["intent"]["scene_id"] == "scene_1"
+
+
+def test_chat_plan_assets_intent(monkeypatch, tmp_path):
+    """plan_assets round-trip: suggestion-only props planning intent."""
+    intent = Intent(action=IntentAction.plan_assets, scene_id="scene_1",
+                    idea="kitchen props", confidence=0.9,
+                    reply="好的，为场景建议道具")
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        r = client.post("/chat", json={"message": "这个场景还需要什么道具？"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["intent"]["action"] == "plan_assets"
+    assert body["intent"]["scene_id"] == "scene_1"
+    assert body["intent"]["idea"] == "kitchen props"
+
+
 def test_chat_scene_count_passes_through(monkeypatch, tmp_path):
     """Intent.scene_count is preserved end-to-end through the chat endpoint."""
     intent = Intent(

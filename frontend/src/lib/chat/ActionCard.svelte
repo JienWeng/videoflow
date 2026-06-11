@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { get, post } from '$lib/api';
+  import { del, get, post } from '$lib/api';
   import { Suggestion, Suggestions } from '$lib/components/ai-elements/suggestion';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
   import { Textarea } from '$lib/components/ui/textarea';
   import LoaderCircle from '@lucide/svelte/icons/loader-circle';
   import Play from '@lucide/svelte/icons/play';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
   import { toast } from 'svelte-sonner';
 
   interface Option {
@@ -71,6 +72,9 @@
   let captionModels = $state<string[]>([]);
   let maxAssets = $state(4);
   let autoAssets = $state(true);
+  let plannedAssets = $state<
+    { name: string; asset_type: string; shot_orders: number[] }[] | null
+  >(null);
 
   const labels: Record<string, string> = {
     generate_script: 'Generate script',
@@ -81,8 +85,15 @@
     render_shot: 'Render shot',
     caption: 'Add captions',
     retry_render: 'Fix & re-render',
-    generate_assets: 'Generate assets'
+    generate_assets: 'Generate assets',
+    refine_scene: 'AI refine scene',
+    refine_shot: 'AI refine shot',
+    delete_scene: 'Delete scene',
+    style_ingest: 'Ingest style from story',
+    plan_assets: 'Suggest assets'
   };
+
+  const needsShot = (action: string) => action === 'render_shot' || action === 'refine_shot';
 
   async function loadShots() {
     shotId = intent.shot_id && sceneId === intent.scene_id ? intent.shot_id : '';
@@ -97,7 +108,7 @@
   }
 
   // svelte-ignore state_referenced_locally
-  if (intent.action === 'render_shot' && sceneId) loadShots();
+  if (needsShot(intent.action) && sceneId) loadShots();
 
   // svelte-ignore state_referenced_locally
   if (intent.action === 'caption') {
@@ -119,9 +130,17 @@
       case 'storyboard':
       case 'render_scene':
       case 'generate_assets':
+      case 'delete_scene':
+      case 'plan_assets':
         return !!sceneId;
+      case 'refine_scene':
+        return !!sceneId && idea.trim().length > 0;
       case 'render_shot':
         return !!sceneId && !!shotId;
+      case 'refine_shot':
+        return !!sceneId && !!shotId && idea.trim().length > 0;
+      case 'style_ingest':
+        return true;
       case 'caption':
         return !!outputId && !!captionStyle;
       case 'retry_render':
@@ -183,6 +202,33 @@
           focusId = Array.isArray(result) ? result[0]?.id : undefined;
           toast.success(`Generated ${Array.isArray(result) ? result.length : 0} assets`);
           break;
+        case 'refine_scene':
+          result = await post(`/scenes/${sceneId}/refine`, { instruction: idea.trim() });
+          focusId = sceneId;
+          toast.success(result.note || 'Scene refined');
+          break;
+        case 'refine_shot':
+          result = await post(`/shots/${shotId}/refine`, { instruction: idea.trim() });
+          focusId = shotId;
+          toast.success(result.note || 'Shot refined');
+          break;
+        case 'delete_scene':
+          result = await del(`/scenes/${sceneId}`);
+          toast.success(`Scene deleted — ${result.shots_deleted ?? 0} shots removed`);
+          break;
+        case 'style_ingest':
+          result = await post('/style/ingest');
+          toast.success('Style updated');
+          break;
+        case 'plan_assets':
+          result = await post(`/scenes/${sceneId}/assets/plan`, {
+            instruction: idea.trim(),
+            max_assets: maxAssets
+          });
+          plannedAssets = result.assets ?? [];
+          focusId = sceneId;
+          toast.success(`${result.assets?.length ?? 0} asset suggestions`);
+          break;
         case 'caption':
           result = await post(`/outputs/${outputId}/caption`, {
             style: captionStyle,
@@ -225,11 +271,14 @@
           <li>add captions to a rendered video</li>
           <li>fix &amp; re-render a video using its QA review feedback</li>
           <li>generate props/assets for a scene (生成场景道具)</li>
+          <li>refine a scene or shot with AI (帮我改一下场景)</li>
+          <li>delete a scene (with confirmation)</li>
+          <li>derive the project style from the story</li>
+          <li>suggest assets without generating them</li>
         </ul>
-        <p>Scenes can be deleted from the Scenes page.</p>
       </div>
       <Suggestions>
-        {#each ['生成分镜图', 'Render scene', 'Add captions', 'Generate a script', '生成场景道具'] as s (s)}
+        {#each ['生成分镜图', 'Render scene', 'Add captions', 'Generate a script', '生成场景道具', '帮我改一下场景', 'Suggest assets'] as s (s)}
           <Suggestion suggestion={s} onclick={(text) => onsuggest?.(text)} />
         {/each}
       </Suggestions>
@@ -247,13 +296,13 @@
         </div>
       {/if}
 
-      {#if ['generate_scenes', 'generate_shots', 'storyboard', 'render_scene', 'render_shot', 'generate_assets'].includes(intent.action)}
+      {#if ['generate_scenes', 'generate_shots', 'storyboard', 'render_scene', 'render_shot', 'generate_assets', 'refine_scene', 'refine_shot', 'delete_scene', 'plan_assets'].includes(intent.action)}
         <div>
           <label class={labelClass} for="scene-{intent.action}">Scene</label>
           <select
             id="scene-{intent.action}"
             bind:value={sceneId}
-            onchange={() => intent.action === 'render_shot' && loadShots()}
+            onchange={() => needsShot(intent.action) && loadShots()}
             class={selectClass}
           >
             <option value="">choose…</option>
@@ -262,7 +311,7 @@
         </div>
       {/if}
 
-      {#if intent.action === 'render_shot'}
+      {#if needsShot(intent.action)}
         <div>
           <label class={labelClass} for="shot-{intent.action}">Shot</label>
           <select id="shot-{intent.action}" bind:value={shotId} disabled={!shots.length} class={selectClass}>
@@ -281,7 +330,27 @@
         </label>
       {/if}
 
-      {#if intent.action === 'generate_assets'}
+      {#if ['refine_scene', 'refine_shot'].includes(intent.action)}
+        <div>
+          <label class={labelClass} for="instr-{intent.action}">Instruction</label>
+          <Textarea id="instr-{intent.action}" bind:value={idea} rows={2}
+            placeholder="e.g. make the lighting warmer / 台词更简单" />
+        </div>
+      {/if}
+
+      {#if intent.action === 'delete_scene'}
+        <p class="text-xs text-destructive">
+          Deletes the scene and its shots; renders are kept.
+        </p>
+      {/if}
+
+      {#if intent.action === 'style_ingest'}
+        <p class="text-xs text-muted-foreground">
+          Derives style_prompt/palette/lighting/audience/tone from your story (keeps name + pinned references).
+        </p>
+      {/if}
+
+      {#if ['generate_assets', 'plan_assets'].includes(intent.action)}
         <div>
           <label class={labelClass} for="instr-{intent.action}">Instruction (optional)</label>
           <Textarea id="instr-{intent.action}" bind:value={idea} rows={2}
@@ -291,6 +360,30 @@
           <label class={labelClass} for="max-{intent.action}">Max assets</label>
           <input id="max-{intent.action}" type="number" min="1" max="8"
             bind:value={maxAssets} class={selectClass} />
+        </div>
+      {/if}
+
+      {#if intent.action === 'plan_assets' && plannedAssets}
+        <div class="text-xs space-y-1">
+          {#if plannedAssets.length === 0}
+            <p class="text-muted-foreground">No missing assets — the scene is covered.</p>
+          {:else}
+            <ul class="list-disc pl-4 space-y-0.5">
+              {#each plannedAssets as a (a.name)}
+                <li>
+                  <span class="font-medium">{a.name}</span>
+                  <span class="text-muted-foreground">
+                    ({a.asset_type}{a.shot_orders?.length
+                      ? `, shots ${a.shot_orders.map((o) => o + 1).join(', ')}`
+                      : ''})
+                  </span>
+                </li>
+              {/each}
+            </ul>
+            <p class="text-muted-foreground">
+              Generate them on the Scenes page or say '生成场景道具'.
+            </p>
+          {/if}
         </div>
       {/if}
 
@@ -330,9 +423,17 @@
       {/if}
 
       <div class="flex items-center gap-1.5 pt-1">
-        <Button size="sm" class="rounded-full px-4" disabled={busy || !ready} onclick={run}>
+        <Button
+          size="sm"
+          variant={intent.action === 'delete_scene' ? 'destructive' : 'default'}
+          class="rounded-full px-4"
+          disabled={busy || !ready}
+          onclick={run}
+        >
           {#if busy}
             <LoaderCircle class="size-4 mr-1 animate-spin" />
+          {:else if intent.action === 'delete_scene'}
+            <Trash2 class="size-4 mr-1" />
           {:else}
             <Play class="size-4 mr-1" />
           {/if}

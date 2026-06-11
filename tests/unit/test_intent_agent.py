@@ -59,6 +59,15 @@ def test_intent_prompt_mentions_retry_render():
     assert "retry_render" in PROMPTS["intent_agent"]
 
 
+def test_intent_prompt_mentions_new_actions():
+    from app.llm.prompts import PROMPTS
+
+    prompt = PROMPTS["intent_agent"]
+    for action in ("refine_scene", "refine_shot", "delete_scene",
+                   "style_ingest", "plan_assets"):
+        assert action in prompt, action
+
+
 @pytest.mark.asyncio
 async def test_intent_defaults_are_safe():
     intent = Intent()
