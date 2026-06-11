@@ -97,3 +97,20 @@ async def test_missing_reference_images_rejected(provider):
     spec = RenderSpec(scene_id="s1", duration=5, prompt="p")
     with pytest.raises(ValidationFailedError):
         await provider.build_payload(spec, FakeResolver())
+
+
+async def test_images_defensively_sliced_to_live_kling_limit(provider):
+    """Belt-and-braces: even if upstream capping is bypassed, the payload never
+    carries more than atlas_video_max_refs images (live ret:1201 above 7)."""
+    spec = RenderSpec(
+        scene_id="s1", duration=5, prompt="p",
+        reference_images=[
+            ReferenceImage(name=f"r{i}", asset_id=f"asset_{i}") for i in range(9)
+        ],
+    )
+    payload = await provider.build_payload(spec, FakeResolver())
+    assert len(payload["images"]) == 7
+    # The FIRST seven (highest priority upstream) survive, in order.
+    assert payload["images"] == [
+        f"https://static.atlascloud.ai/asset_{i}.png" for i in range(7)
+    ]

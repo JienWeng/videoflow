@@ -1615,10 +1615,13 @@ def test_scene_render_anchors_previous_scenes_final_frame(ctx, monkeypatch):
     assert anchor.metadata_json["source_output_id"] == "out_prev"
     assert anchor.metadata_json["anchor"] is True
 
-    # The anchor frame reaches Kling images[] — appended LAST.
+    # The anchor frame reaches Kling images[] — after the cast, before props
+    # (priority order: characters > storyboard > anchor > props).
     payload = fake.video_payloads[0]
     anchor_url = f"https://static.atlascloud.ai/up/{Path(anchor.file_path).name}"
-    assert payload["images"][-1] == anchor_url
+    char_url = "https://static.atlascloud.ai/up/char.png"
+    assert anchor_url in payload["images"]
+    assert payload["images"].index(char_url) < payload["images"].index(anchor_url)
     # char + bg + anchor (no storyboard generated in this test).
     assert len(payload["images"]) == 3
     # The prompt instructs Kling to match the previous scene's final frame.
@@ -1671,7 +1674,7 @@ def test_scene_render_anchor_relinks_on_newer_source_render(ctx, monkeypatch):
     newest = next(a for a in anchors if a.id != first_anchor.id)
     assert newest.metadata_json["source_output_id"] == "out_prev2"
     new_url = f"https://static.atlascloud.ai/up/{Path(newest.file_path).name}"
-    assert fake.video_payloads[1]["images"][-1] == new_url
+    assert new_url in fake.video_payloads[1]["images"]
 
 
 def test_scene_render_without_previous_render_has_no_anchor(ctx, monkeypatch):
@@ -1689,6 +1692,96 @@ def test_scene_render_without_previous_render_has_no_anchor(ctx, monkeypatch):
     assert len(payload["images"]) == 2  # char + bg only
     assert "上一场景" not in payload["prompt"]
     assert _anchor_assets("scene_1") == []
+
+
+# ── live Kling reference cap: ret:1201 above 7 images, priority capping ───────
+
+def test_scene_render_caps_references_at_live_kling_limit(ctx, monkeypatch):
+    """2 characters + 分镜图 + 上一场景 anchor + 6 props would be 10 refs — the
+    live API rejects more than 7 (ret:1201), so props are dropped first while
+    every high-priority reference survives."""
+    client, fake = ctx
+    _seed_prev_scene_with_render(monkeypatch)
+
+    import app.database as _db_mod
+    from app.models import Asset, Character, Scene
+
+    with Session(_db_mod.engine) as s:
+        tmp = Path(_db_mod.engine.url.database).parent
+        (tmp / "char2.png").write_bytes(b"img")
+        s.add(Character(id="char_alan", name="Alan", appearance="boy in blue",
+                        reference_asset_ids_json=["asset_char2"]))
+        s.add(Asset(id="asset_char2", type="character_reference", name="Alan",
+                    file_path=str(tmp / "char2.png")))
+        for i in range(6):
+            (tmp / f"prop{i}.png").write_bytes(b"img")
+            s.add(Asset(id=f"asset_prop{i}", type="prop", name=f"Prop {i}",
+                        file_path=str(tmp / f"prop{i}.png")))
+        scene = s.get(Scene, "scene_1")
+        scene.character_ids_json = ["char_grace", "char_alan"]
+        scene.asset_ids_json = ["asset_bg"] + [f"asset_prop{i}" for i in range(6)]
+        s.add(scene)
+        s.commit()
+
+    sb = client.post("/scenes/scene_1/storyboard")
+    assert sb.status_code == 200
+    storyboard_url = (
+        f"https://static.atlascloud.ai/up/{Path(sb.json()['file_path']).name}"
+    )
+
+    assert client.post("/scenes/scene_1/render").status_code == 202
+    payload = fake.video_payloads[0]
+    images = payload["images"]
+    assert len(images) == 7
+    # Both character sheets, the storyboard and the anchor all survived.
+    assert "https://static.atlascloud.ai/up/char.png" in images
+    assert "https://static.atlascloud.ai/up/char2.png" in images
+    assert storyboard_url in images
+    anchor = _anchor_assets("scene_1")[0]
+    assert f"https://static.atlascloud.ai/up/{Path(anchor.file_path).name}" in images
+    # Props truncated from the END: bg + the first two props kept, rest dropped.
+    assert "https://static.atlascloud.ai/up/bg.png" in images
+    assert "https://static.atlascloud.ai/up/prop0.png" in images
+    assert "https://static.atlascloud.ai/up/prop1.png" in images
+    for i in range(2, 6):
+        assert f"https://static.atlascloud.ai/up/prop{i}.png" not in images
+    # Both surviving special refs are still directed in the prompt.
+    assert "@分镜图" in payload["prompt"]
+    assert "@上一场景" in payload["prompt"]
+
+
+def test_scene_render_prompt_omits_storyboard_token_when_capped_out(ctx):
+    """7 character sheets fill the live limit alone — the 分镜图 reference is
+    dropped and the prompt must NOT direct Kling at a @分镜图 image it never
+    received."""
+    client, fake = ctx
+    import app.database as _db_mod
+    from app.models import Asset, Character, Scene
+
+    with Session(_db_mod.engine) as s:
+        tmp = Path(_db_mod.engine.url.database).parent
+        cast_ids = ["char_grace"]
+        for i in range(6):
+            (tmp / f"cast{i}.png").write_bytes(b"img")
+            s.add(Character(id=f"char_extra{i}", name=f"Cast {i}",
+                            appearance="extra cast member",
+                            reference_asset_ids_json=[f"asset_cast{i}"]))
+            s.add(Asset(id=f"asset_cast{i}", type="character_reference",
+                        name=f"Cast {i}", file_path=str(tmp / f"cast{i}.png")))
+            cast_ids.append(f"char_extra{i}")
+        scene = s.get(Scene, "scene_1")
+        scene.character_ids_json = cast_ids
+        s.add(scene)
+        s.commit()
+
+    assert client.post("/scenes/scene_1/storyboard").status_code == 200
+    assert client.post("/scenes/scene_1/render").status_code == 202
+
+    payload = fake.video_payloads[-1]
+    assert len(payload["images"]) == 7
+    # Storyboard and the bg prop were capped out; the prompt stays consistent.
+    assert "分镜图" not in payload["prompt"]
+    assert "https://static.atlascloud.ai/up/bg.png" not in payload["images"]
 
 
 # --- Database-aware script/scene agents: catalogs flow into the prompts -----

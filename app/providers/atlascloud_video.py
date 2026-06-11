@@ -36,6 +36,9 @@ class AtlasCloudVideoProvider:
             raise ValidationFailedError(
                 "reference-to-video requires at least one reference image"
             )
+        # Belt-and-braces: the live API rejects more images than this with
+        # ret:1201; the upstream priority cap should already hold the limit.
+        images = images[: self._settings.atlas_video_max_refs]
 
         video_url = None
         if spec.video_asset_id:

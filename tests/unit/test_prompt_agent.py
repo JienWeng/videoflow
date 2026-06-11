@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.agents.prompt_agent import (
     NO_CLONE_NEGATIVE,
     NO_TEXT_NEGATIVE,
+    cap_references,
     collect_named_references,
     enforce_render_defaults,
     voice_line,
@@ -147,6 +148,57 @@ class TestCollectNamedReferences:
         assert [r["asset_id"] for r in refs] == ["a", "b", "c"]
 
 
+def _ref(name: str) -> dict:
+    return {"name": name, "asset_id": f"asset_{name}"}
+
+
+class TestCapReferences:
+    """Priority capping for the live Kling limit (ret:1201 above 7 images)."""
+
+    def test_under_limit_passes_through_unchanged(self):
+        groups = [[_ref("乐乐"), _ref("天天")], [_ref("分镜图")], [_ref("上一场景")]]
+        assert cap_references(groups, 7) == [
+            _ref("乐乐"), _ref("天天"), _ref("分镜图"), _ref("上一场景"),
+        ]
+
+    def test_exactly_at_limit_keeps_everything(self):
+        groups = [[_ref(f"c{i}") for i in range(5)], [_ref("分镜图"), _ref("上一场景")]]
+        assert len(cap_references(groups, 7)) == 7
+
+    def test_over_limit_drops_props_first_keeps_high_priority_groups(self):
+        chars = [_ref("乐乐"), _ref("天天")]
+        storyboard = [_ref("分镜图")]
+        anchor = [_ref("上一场景")]
+        props = [_ref(f"prop{i}") for i in range(6)]
+        capped = cap_references([chars, storyboard, anchor, props], 7)
+        assert capped == chars + storyboard + anchor + props[:3]
+
+    def test_order_preserved_within_groups(self):
+        props = [_ref("a"), _ref("b"), _ref("c")]
+        capped = cap_references([[_ref("char")], props], 3)
+        assert capped == [_ref("char"), _ref("a"), _ref("b")]
+
+    def test_storyboard_dropped_when_characters_alone_fill_the_limit(self):
+        chars = [_ref(f"char{i}") for i in range(7)]
+        capped = cap_references([chars, [_ref("分镜图")], [_ref("上一场景")]], 7)
+        assert capped == chars
+
+    def test_dropped_names_are_logged(self, caplog):
+        with caplog.at_level("WARNING", logger="app.agents.prompt_agent"):
+            cap_references([[_ref("乐乐")], [_ref("prop1"), _ref("prop2")]], 2)
+        assert "prop2" in caplog.text
+        assert "乐乐" not in caplog.text
+
+    def test_no_warning_when_under_limit(self, caplog):
+        with caplog.at_level("WARNING", logger="app.agents.prompt_agent"):
+            cap_references([[_ref("乐乐")]], 7)
+        assert caplog.text == ""
+
+    def test_empty_groups_are_fine(self):
+        assert cap_references([[], [_ref("a")], []], 7) == [_ref("a")]
+        assert cap_references([], 7) == []
+
+
 class FakeLLM:
     """Returns a canned RenderSpec the way a drifting model might: voice off,
     single-shot, and half the references dropped."""
@@ -282,6 +334,29 @@ class TestEnforceRenderDefaults:
             ("Grace", "a"),
             ("Sofa", "b"),
         ]
+
+    def test_restored_references_capped_at_live_limit_characters_first(self):
+        """8 refs (2 characters + 6 shot assets) -> capped to 7, both
+        characters kept, the LAST shot asset dropped (props drop first)."""
+        spec = self.spec(reference_images=[])
+        bibles = [bible("Grace", ["char_a"]), bible("Alan", ["char_b"])]
+        refs = (
+            [{"name": "Grace", "asset_id": "char_a"},
+             {"name": "Alan", "asset_id": "char_b"}]
+            + [{"name": f"Prop {i}", "asset_id": f"prop_{i}"} for i in range(6)]
+        )
+        enforce_render_defaults(spec, named_references=refs, character_bibles=bibles)
+        assert len(spec.reference_images) == 7
+        names = [r.name for r in spec.reference_images]
+        # Characters first, then shot assets in order, last prop dropped.
+        assert names == ["Grace", "Alan"] + [f"Prop {i}" for i in range(5)]
+
+    def test_no_cap_when_within_live_limit(self):
+        spec = self.spec()
+        refs = [{"name": "Grace", "asset_id": "a"},
+                {"name": "Sofa", "asset_id": "b"}]
+        enforce_render_defaults(spec, named_references=refs)
+        assert len(spec.reference_images) == 2
 
     def test_no_text_negative_appended_when_missing(self):
         spec = self.spec()  # prompt has no subtitle negative

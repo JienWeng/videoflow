@@ -8,9 +8,13 @@ resolve them into the Kling images[] array. Voice/sound default on.
 
 from __future__ import annotations
 
+import logging
+
 from app.agents.base import as_block, run_agent
 from app.config import get_settings
 from app.schemas import CharacterBible, ReferenceImage, RenderSpec, ShotSpec
+
+logger = logging.getLogger(__name__)
 
 # Captions/subtitles are added in post-production by the caption pipeline —
 # the video model must never draw text. Shared by enforce_render_defaults and
@@ -76,6 +80,28 @@ def collect_named_references(
     return refs
 
 
+def cap_references(refs_by_priority: list[list[dict]], limit: int) -> list[dict]:
+    """Cap reference images to the provider limit by PRIORITY, never naively.
+
+    `refs_by_priority` is a list of groups ordered most-important first (e.g.
+    [characters, storyboard, anchor, props]). Groups are flattened in that
+    order and truncated from the END, so the lowest-priority entries (props)
+    are dropped first while characters / the 分镜图 storyboard / the
+    上一场景 frame anchor survive. Order within each group is preserved.
+    The live Kling o3-pro API rejects more than `limit` images (ret:1201).
+    Dropped reference names are logged as a warning. Pure — no I/O."""
+    flat = [ref for group in refs_by_priority for ref in group]
+    if len(flat) <= limit:
+        return flat
+    kept, dropped = flat[:limit], flat[limit:]
+    logger.warning(
+        "%d reference images exceed the provider limit of %d; dropping the "
+        "lowest-priority references: %s",
+        len(flat), limit, ", ".join(r["name"] for r in dropped),
+    )
+    return kept
+
+
 def voice_line(character_bibles: list[CharacterBible]) -> str:
     """One deterministic voice-direction line for the render prompt, e.g.
     'Voices: @乐乐 — cheerful bright child's voice, speaks slowly; @天天 — ...'.
@@ -123,6 +149,29 @@ def enforce_render_defaults(
             spec.reference_images.append(
                 ReferenceImage(name=ref["name"], asset_id=ref["asset_id"])
             )
+    # Priority cap to the live Kling limit: character references first, then
+    # everything else in its existing order (caller refs precede shot assets in
+    # collect_named_references, so shot assets are dropped first).
+    limit = get_settings().atlas_video_max_refs
+    if len(spec.reference_images) > limit:
+        character_names = {b.name for b in (character_bibles or [])}
+        character_ids = {
+            aid
+            for b in (character_bibles or [])
+            for aid in b.reference_asset_ids[:1]
+        }
+        chars: list[dict] = []
+        others: list[dict] = []
+        for r in spec.reference_images:
+            group = (
+                chars
+                if r.name in character_names or r.asset_id in character_ids
+                else others
+            )
+            group.append({"name": r.name, "asset_id": r.asset_id})
+        spec.reference_images = [
+            ReferenceImage(**ref) for ref in cap_references([chars, others], limit)
+        ]
 
 
 async def build_render_spec(

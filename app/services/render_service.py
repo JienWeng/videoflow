@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 from app.agents.prompt_agent import (
     NO_CLONE_NEGATIVE,
     NO_TEXT_NEGATIVE,
+    cap_references,
     collect_named_references,
     voice_line,
 )
@@ -30,9 +31,6 @@ from app.schemas import ReferenceImage, RenderSpec, StoryboardShot
 from app.services.dialogue import has_dialogue
 
 logger = logging.getLogger(__name__)
-
-# Kling reference-to-video accepts at most 10 images.
-MAX_REFERENCE_IMAGES = 10
 
 # Name of the previous-scene anchor frame reference (@-token in the prompt).
 ANCHOR_NAME = "上一场景"
@@ -202,12 +200,31 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
         aid: a.name for aid in asset_ids
         if (a := session.get(Asset, aid)) and a.name
     }
-    refs = collect_named_references(
+    # Reference priority groups for the live Kling cap (ret:1201 above
+    # settings.atlas_video_max_refs): characters > 分镜图 storyboard >
+    # 上一场景 frame anchor > scene/shot prop assets. Characters and props are
+    # collected in TWO passes of collect_named_references — the second pass
+    # repeats the bibles so the dedup / clone-name-collision rules stay exactly
+    # as before, then the character entries are stripped back out by asset id,
+    # leaving only the prop refs.
+    char_refs = collect_named_references(
         named_references=[],
         character_bibles=bibles,
-        shot_asset_ids=asset_ids,
-        asset_names=asset_names,
+        shot_asset_ids=[],
+        asset_names={},
     )
+    char_ref_ids = {r["asset_id"] for r in char_refs}
+    prop_refs = [
+        r
+        for r in collect_named_references(
+            named_references=[],
+            character_bibles=bibles,
+            shot_asset_ids=asset_ids,
+            asset_names=asset_names,
+        )
+        if r["asset_id"] not in char_ref_ids
+    ]
+    seen_ids = char_ref_ids | {r["asset_id"] for r in prop_refs}
     # Every shot is supposed to speak (one 「」 line); warn but never block.
     for shot in shots:
         if not has_dialogue(shot.prompt):
@@ -217,25 +234,36 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
                 shot.id, shot.shot_order, scene_id,
             )
 
+    limit = get_settings().atlas_video_max_refs
     storyboard = storyboard_service.latest_storyboard_for_scene(session, scene_id)
-    if storyboard and storyboard.id not in {r["asset_id"] for r in refs}:
-        refs.append({"name": "分镜图", "asset_id": storyboard.id})
+    storyboard_refs = (
+        [{"name": "分镜图", "asset_id": storyboard.id}]
+        if storyboard and storyboard.id not in seen_ids
+        else []
+    )
 
-    # Frame anchoring: the previous scene's final rendered frame, appended LAST
-    # and only if Kling's 10-image cap leaves room. Best-effort — anchoring must
-    # never fail the render.
-    anchored = False
+    # Frame anchoring: the previous scene's final rendered frame. Only fetched
+    # when it could survive the cap (it outranks props, so only characters +
+    # storyboard can crowd it out — never extract a frame we'd just drop).
+    # Best-effort — anchoring must never fail the render.
+    anchor_refs: list[dict] = []
     try:
-        if len(refs) < MAX_REFERENCE_IMAGES:
+        if len(char_refs) + len(storyboard_refs) < limit:
             anchor = await _anchor_reference(session, scene)
-            if anchor and anchor["asset_id"] not in {r["asset_id"] for r in refs}:
-                refs.append(anchor)
-                anchored = True
+            if anchor and anchor["asset_id"] not in seen_ids:
+                anchor_refs = [anchor]
     except Exception:
         logger.exception(
             "frame anchoring failed for scene %s; rendering without the anchor",
             scene_id,
         )
+
+    refs = cap_references([char_refs, storyboard_refs, anchor_refs, prop_refs], limit)
+    kept_ids = {r["asset_id"] for r in refs}
+    # Mention @分镜图/@上一场景 in the prompt ONLY when their reference
+    # actually survived the cap — a token without its image confuses Kling.
+    storyboard_kept = storyboard is not None and storyboard.id in kept_ids
+    anchored = bool(anchor_refs) and anchor_refs[0]["asset_id"] in kept_ids
 
     # Deterministic voice direction from the cast's voice_rules, placed before
     # the negatives so every render of this cast uses the same voices.
@@ -243,7 +271,7 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
     prompt = (
         f"{scene.summary}. "
         + ("Follow the @分镜图 storyboard panels in order for composition, scene "
-           "continuity and lighting. " if storyboard else "")
+           "continuity and lighting. " if storyboard_kept else "")
         + (f"Match the lighting, color grading and character appearance of "
            f"@{ANCHOR_NAME} (the previous scene's final frame). " if anchored else "")
         + "Spoken dialogue, clear and natural. "

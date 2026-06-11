@@ -54,6 +54,9 @@ class Settings(BaseSettings):
         default="kwaivgi/kling-video-o3-pro/reference-to-video",
         alias="ATLAS_VIDEO_MODEL",
     )
+    # Max reference images for the video model — live-verified Kling o3-pro
+    # limit (ret:1201 "max number is 7" above 7, despite docs claiming 10).
+    atlas_video_max_refs: int = Field(default=7, alias="ATLAS_VIDEO_MAX_REFS")
     # Reference-image generation (分镜图 with character sheets as inputs).
     atlas_image_ref_model: str = Field(
         default="google/nano-banana-2/edit", alias="ATLAS_IMAGE_REF_MODEL"
