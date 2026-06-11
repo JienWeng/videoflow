@@ -80,6 +80,59 @@ async def test_generate_scene_omits_assets_block_when_absent():
     assert "Linked assets (use @Name)" not in llm.user_prompt
 
 
+STORY = {
+    "story": {"idea": "a cat learns to fly", "title": "Sky Cat", "summary": "a cat's flying journey"},
+    "other_scenes": [{"title": "Takeoff", "summary": "the cat jumps off the fence"}],
+}
+
+
+async def test_generate_scene_includes_story_block():
+    from app.agents.scene_agent import generate_scene
+
+    llm = CapturingLLM(SceneSpec(scene_id="s1", title="t", summary="sum", duration=5))
+    await generate_scene(
+        scene_id="s1", title="t", summary="sum", suggested_duration=5,
+        story=STORY, client=llm,
+    )
+    assert "Overall story and sibling scenes (keep continuity)" in llm.user_prompt
+    assert "a cat learns to fly" in llm.user_prompt
+    assert "the cat jumps off the fence" in llm.user_prompt
+
+
+async def test_generate_scene_omits_story_block_when_absent():
+    from app.agents.scene_agent import generate_scene
+
+    llm = CapturingLLM(SceneSpec(scene_id="s1", title="t", summary="sum", duration=5))
+    await generate_scene(scene_id="s1", title="t", summary="sum", suggested_duration=5, client=llm)
+    assert "Overall story and sibling scenes" not in llm.user_prompt
+
+
+async def test_generate_shots_includes_story_block():
+    from app.agents.shot_agent import generate_shots
+
+    scene = SceneSpec(scene_id="s1", title="t", summary="sum", duration=5)
+    llm = CapturingLLM(ShotList(scene_id="s1"))
+    await generate_shots(scene=scene, story=STORY, client=llm)
+    assert "Overall story and sibling scenes (keep continuity)" in llm.user_prompt
+    assert "Sky Cat" in llm.user_prompt
+
+
+async def test_generate_shots_omits_story_block_when_absent():
+    from app.agents.shot_agent import generate_shots
+
+    scene = SceneSpec(scene_id="s1", title="t", summary="sum", duration=5)
+    llm = CapturingLLM(ShotList(scene_id="s1"))
+    await generate_shots(scene=scene, client=llm)
+    assert "Overall story and sibling scenes" not in llm.user_prompt
+
+
+def test_prompts_carry_continuity_rule():
+    from app.llm.prompts import PROMPTS
+
+    for agent in ("shot_agent", "scene_agent"):
+        assert "continuity with the overall story" in PROMPTS[agent]
+
+
 def test_prompts_carry_at_mention_rule():
     from app.llm.prompts import PROMPTS
 

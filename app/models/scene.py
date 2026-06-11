@@ -14,6 +14,7 @@ class Scene(SQLModel, table=True):
     __tablename__ = "scenes"
 
     id: str = Field(default_factory=lambda: new_id("scene"), primary_key=True)
+    script_id: str | None = Field(default=None, foreign_key="scripts.id")
     title: str = ""
     summary: str = ""
     duration: int = 5

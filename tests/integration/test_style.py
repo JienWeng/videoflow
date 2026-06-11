@@ -95,6 +95,31 @@ def test_patch_reference_assets_drops_unknown_ids(client):
     assert resp.json()["reference_asset_ids_json"] == ["asset_bg"]
 
 
+def test_ingest_passes_scripts_to_derive_style(client, monkeypatch):
+    """ingest_style gathers persisted scripts (idea/title/summary) for derive_style."""
+    import app.database as _db_mod
+    from app.models import Script
+
+    with Session(_db_mod.engine) as s:
+        s.add(Script(id="script_1", idea="a cat learns to fly",
+                     title="Sky Cat", summary="a cat's flying journey"))
+        s.commit()
+
+    captured: dict = {}
+
+    async def fake_derive(**kw):
+        captured.update(kw)
+        return await FakeLLM().generate(response_model=StyleSpec)
+
+    monkeypatch.setattr("app.services.style_service.derive_style", fake_derive)
+    resp = client.post("/style/ingest")
+    assert resp.status_code == 200, resp.text
+    assert captured["scripts"] == [
+        {"idea": "a cat learns to fly", "title": "Sky Cat",
+         "summary": "a cat's flying journey"}
+    ]
+
+
 def test_ingest_overwrites_derived_fields_keeps_name(client):
     # Seed a named style with manual fields + a reference asset.
     client.patch(

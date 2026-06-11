@@ -10,6 +10,7 @@ async def generate_shots(
     *,
     scene: SceneSpec,
     style: dict | None = None,
+    story: dict | None = None,
     characters: list[CharacterBible] | None = None,
     assets: list[dict] | None = None,
     client=None,
@@ -26,6 +27,8 @@ async def generate_shots(
         parts.append(as_block("Linked assets (use @Name)", assets))
     if style:
         parts.append(as_block("Project style guide", style))
+    if story:
+        parts.append(as_block("Overall story and sibling scenes (keep continuity)", story))
     parts.append(
         "Produce a ShotList for this scene. Set scene_id to the scene's id. "
         "Shot durations should sum to roughly the scene duration."

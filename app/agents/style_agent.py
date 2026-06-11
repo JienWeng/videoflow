@@ -12,9 +12,11 @@ async def derive_style(
     scenes: list[dict] | None = None,
     characters: list[dict] | None = None,
     assets: list[dict] | None = None,
+    scripts: list[dict] | None = None,
     client: StructuredLLMClient | None = None,
 ) -> StyleSpec:
     parts = [
+        as_block("Scripts (overall story)", scripts or []),
         as_block("Scenes", scenes or []),
         as_block("Characters", characters or []),
         as_block("Assets", assets or []),

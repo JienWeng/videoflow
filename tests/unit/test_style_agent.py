@@ -44,6 +44,23 @@ async def test_derive_style_passes_context_blocks_and_agent_name():
     assert spec.palette == "soft pastel, warm yellows"
 
 
+async def test_derive_style_includes_scripts_block():
+    from app.agents.style_agent import derive_style
+
+    llm = FakeLLM()
+    await derive_style(
+        scenes=[],
+        characters=[],
+        assets=[],
+        scripts=[{"idea": "a cat learns to fly", "title": "Sky Cat",
+                  "summary": "a cat's flying journey"}],
+        client=llm,
+    )
+    assert "Scripts (overall story)" in llm.user_prompt
+    assert "a cat learns to fly" in llm.user_prompt
+    assert "Sky Cat" in llm.user_prompt
+
+
 def test_style_agent_prompt_and_skill_registered():
     from app.llm.prompts import PROMPTS
     from app.llm.skills import SKILLS

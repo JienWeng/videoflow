@@ -16,6 +16,7 @@ async def generate_scene(
     available_asset_ids: list[str] | None = None,
     assets: list[dict] | None = None,
     style: dict | None = None,
+    story: dict | None = None,
     client=None,
 ) -> SceneSpec:
     parts = [
@@ -30,6 +31,8 @@ async def generate_scene(
         parts.append(as_block("Linked assets (use @Name)", assets))
     if style:
         parts.append(as_block("Project style guide", style))
+    if story:
+        parts.append(as_block("Overall story and sibling scenes (keep continuity)", story))
     parts.append(
         "Produce a SceneSpec. Set scene_id to the given id. Honour every "
         "visual_rule in the character bibles."

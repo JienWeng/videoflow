@@ -52,7 +52,9 @@ PROMPTS: dict[str, str] = {
         "Reference every character and important prop inline as @Name using "
         "EXACT names from the cast/linked-asset lists — these @mentions are "
         "auto-linked by the system. Keep entities consistent with their "
-        "descriptions."
+        "descriptions. Keep continuity with the overall story and the other "
+        "scenes when provided — no contradictions in time, place, or "
+        "character state."
     ),
     "shot_agent": (
         "You are a shot planner. Break the scene into a precise ordered shot list. "
@@ -69,7 +71,9 @@ PROMPTS: dict[str, str] = {
         "Reference every character and important prop inline as @Name using "
         "EXACT names from the cast/linked-asset lists — these @mentions are "
         "auto-linked by the system. Keep entities consistent with their "
-        "descriptions."
+        "descriptions. Keep continuity with the overall story and the other "
+        "scenes when provided — no contradictions in time, place, or "
+        "character state."
     ),
     "prompt_agent": (
         "You are a prompt engineer for the Kling reference-to-video model. You "

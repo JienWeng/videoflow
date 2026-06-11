@@ -835,6 +835,48 @@ def test_generate_script_scene_count_respects_cap(script_ctx):
     assert len(body["draft"]["scenes"]) == 2
 
 
+def test_generate_script_persists_script_row(script_ctx):
+    """The script itself survives: response carries script.id, a Script row is
+    persisted with the idea + full draft_json, and every created scene links
+    back via script_id. GET /scripts returns it."""
+    client, engine = script_ctx
+    from app.models import Scene, Script
+
+    resp = client.post("/scripts/generate", json={"idea": "a cat story"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Additive response key: script alongside draft + scenes.
+    assert body["script"]["id"].startswith("script_")
+    assert body["script"]["idea"] == "a cat story"
+    assert body["script"]["title"] == "Test Video"
+    assert body["script"]["summary"] == "A multi-scene story"
+
+    with Session(engine) as s:
+        script = s.get(Script, body["script"]["id"])
+        assert script is not None
+        assert script.idea == "a cat story"
+        assert script.draft_json["title"] == "Test Video"
+        assert len(script.draft_json["scenes"]) == 3
+        scenes = list(s.exec(select(Scene)).all())
+        assert len(scenes) == 3
+        assert all(sc.script_id == script.id for sc in scenes)
+
+    listed = client.get("/scripts").json()
+    assert [r["id"] for r in listed] == [body["script"]["id"]]
+
+
+def test_generate_script_truncation_reflected_in_draft_json(script_ctx):
+    """With scene_count, draft_json stores the truncated draft (cap enforced)."""
+    client, engine = script_ctx
+    from app.models import Script
+
+    resp = client.post("/scripts/generate", json={"idea": "one video", "scene_count": 1})
+    assert resp.status_code == 200, resp.text
+    with Session(engine) as s:
+        script = s.get(Script, resp.json()["script"]["id"])
+        assert len(script.draft_json["scenes"]) == 1
+
+
 def test_mention_autolink_on_shot_edit(ctx):
     """PATCH /shots with @Name mentions auto-links characters (scene cast) and
     assets (shot asset_ids_json). The fixture has BOTH a character named Grace

@@ -11,7 +11,7 @@ from app.agents.scene_agent import generate_scene
 from app.agents.script_agent import generate_script
 from app.agents.shot_agent import generate_shots
 from app.errors import NotFoundError
-from app.models import Asset, Character, Scene, Shot
+from app.models import Asset, Character, Scene, Script, Shot
 from app.models.base import new_id, utcnow
 from app.schemas import CharacterBible, SceneSpec, ScriptDraft
 from app.services import style_service
@@ -44,8 +44,9 @@ async def create_script(
     idea: str,
     target_duration: int | None = None,
     scene_count: int | None = None,
-) -> ScriptDraft:
-    """Generate a script and persist each scene stub as a Scene row.
+) -> tuple[Script, ScriptDraft]:
+    """Generate a script, persist it as a Script row, and persist each scene
+    stub as a Scene row linked back via script_id.
 
     When scene_count is set, the draft is truncated to at most that many
     scenes BEFORE persisting — this is the deterministic enforcement cap.
@@ -58,9 +59,17 @@ async def create_script(
     )
     if scene_count is not None and len(draft.scenes) > scene_count:
         draft = draft.model_copy(update={"scenes": draft.scenes[:scene_count]})
+    script = Script(
+        idea=idea,
+        title=draft.title,
+        summary=draft.summary,
+        draft_json=draft.model_dump(),
+    )
+    session.add(script)
     for s in draft.scenes:
         scene = Scene(
             id=new_id("scene"),
+            script_id=script.id,
             title=s.title,
             summary=s.summary,
             duration=s.suggested_duration,
@@ -69,7 +78,35 @@ async def create_script(
         scene.scene_json = {"script_scene_id": s.scene_id}
         session.add(scene)
     session.commit()
-    return draft
+    session.refresh(script)
+    return script, draft
+
+
+def list_scripts(session: Session) -> list[Script]:
+    return list(session.exec(select(Script)).all())
+
+
+def story_context(session: Session, scene: Scene) -> dict | None:
+    """Overall story + sibling scenes for cross-scene continuity; None when
+    the scene is alone with no script."""
+    parts: dict = {}
+    if scene.script_id and (script := session.get(Script, scene.script_id)):
+        parts["story"] = {
+            "idea": script.idea,
+            "title": script.title,
+            "summary": script.summary,
+        }
+        siblings = [
+            s for s in list_scenes(session)
+            if s.script_id == scene.script_id and s.id != scene.id
+        ]
+    else:
+        siblings = [s for s in list_scenes(session) if s.id != scene.id]
+    if siblings:
+        parts["other_scenes"] = [
+            {"title": s.title, "summary": (s.summary or "")[:200]} for s in siblings[:12]
+        ]
+    return parts or None
 
 
 def get_scene(session: Session, scene_id: str) -> Scene:
@@ -100,6 +137,7 @@ async def expand_scene(session: Session, scene_id: str, character_ids: list[str]
         character_bibles=bibles,
         assets=_asset_dicts(session, scene.asset_ids_json or []),
         style=style_service.style_context(style_service.get_style(session)),
+        story=story_context(session, scene),
     )
     scene.title = spec.title
     scene.summary = spec.summary
@@ -181,6 +219,7 @@ async def create_shots(
         characters=bibles or None,
         assets=_asset_dicts(session, asset_ids) or None,
         style=style_service.style_context(style_service.get_style(session)),
+        story=story_context(session, scene),
     )
 
     # Replace: delete all existing shots for this scene BEFORE persisting the

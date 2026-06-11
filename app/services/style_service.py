@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlmodel import Session, select
 
 from app.agents.style_agent import derive_style
-from app.models import Asset, Character, Scene, StyleGuide
+from app.models import Asset, Character, Scene, Script, StyleGuide
 from app.models.base import utcnow
 
 # Fields the ingest agent owns (overwritten on every ingest).
@@ -93,8 +93,12 @@ def upsert_style(
 
 
 async def ingest_style(session: Session) -> StyleGuide:
-    """Derive the project style from scenes/characters/assets and upsert the
-    five derived fields (name + reference assets are kept)."""
+    """Derive the project style from scripts/scenes/characters/assets and
+    upsert the five derived fields (name + reference assets are kept)."""
+    scripts = [
+        {"idea": sc.idea, "title": sc.title, "summary": sc.summary}
+        for sc in session.exec(select(Script)).all()
+    ]
     scenes = [
         {"title": s.title, "summary": s.summary, "aspect_ratio": s.aspect_ratio}
         for s in session.exec(select(Scene)).all()
@@ -107,5 +111,7 @@ async def ingest_style(session: Session) -> StyleGuide:
         {"name": a.name, "description": a.description}
         for a in session.exec(select(Asset).limit(_INGEST_ASSET_LIMIT)).all()
     ]
-    spec = await derive_style(scenes=scenes, characters=characters, assets=assets)
+    spec = await derive_style(
+        scripts=scripts, scenes=scenes, characters=characters, assets=assets
+    )
     return upsert_style(session, **{f: getattr(spec, f) for f in DERIVED_FIELDS})

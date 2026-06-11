@@ -53,13 +53,18 @@ class ShotEdit(BaseModel):
 
 @router.post("/scripts/generate")
 async def generate_script(body: ScriptRequest, session: Session = Depends(get_session)):
-    draft = await scene_service.create_script(
+    script, draft = await scene_service.create_script(
         session,
         idea=body.idea,
         target_duration=body.target_duration,
         scene_count=body.scene_count,
     )
-    return {"draft": draft, "scenes": scene_service.list_scenes(session)}
+    return {"script": script, "draft": draft, "scenes": scene_service.list_scenes(session)}
+
+
+@router.get("/scripts")
+def list_scripts(session: Session = Depends(get_session)):
+    return scene_service.list_scripts(session)
 
 
 @router.get("/scenes")
