@@ -53,6 +53,13 @@
     reasoning: string;
   }
 
+  /** Passed up with the result so the chat can propose the next step. */
+  interface RunContext {
+    action: string;
+    sceneId?: string;
+    outputId?: string;
+  }
+
   let {
     intent,
     options,
@@ -62,7 +69,7 @@
   }: {
     intent: Intent;
     options: Options;
-    onran?: (result: any) => void | Promise<void>;
+    onran?: (result: any, ctx?: RunContext) => void | Promise<void>;
     onfocus?: (id: string) => void;
     onsuggest?: (text: string) => void;
   } = $props();
@@ -203,7 +210,8 @@
     path: string,
     body: unknown,
     label: string,
-    focus: (op: Op) => string | undefined
+    focus: (op: Op) => string | undefined,
+    ctx?: RunContext
   ) {
     busy = true;
     try {
@@ -211,7 +219,7 @@
         label,
         onDone: async (op) => {
           busy = false;
-          await onran?.(op.result_json ?? op); // let the canvas refresh before zooming to the new node
+          await onran?.(op.result_json ?? op, ctx); // let the canvas refresh before zooming to the new node
           const focusId = focus(op);
           if (focusId) onfocus?.(focusId);
         },
@@ -224,27 +232,35 @@
   }
 
   async function run() {
+    const ctx: RunContext = {
+      action: intent.action,
+      sceneId: sceneId || undefined,
+      outputId: outputId || undefined
+    };
     switch (intent.action) {
       case 'storyboard':
         return runInBackground(
           `/scenes/${sceneId}/storyboard`,
           undefined,
           'Storyboard',
-          (op) => op.result_json?.asset_id ?? op.scene_id ?? sceneId
+          (op) => op.result_json?.asset_id ?? op.scene_id ?? sceneId,
+          ctx
         );
       case 'generate_shots':
         return runInBackground(
           `/scenes/${sceneId}/shots/generate`,
           { auto_assets: autoAssets },
           'Shot generation',
-          (op) => op.result_json?.scene_id ?? op.scene_id ?? sceneId
+          (op) => op.result_json?.scene_id ?? op.scene_id ?? sceneId,
+          ctx
         );
       case 'generate_assets':
         return runInBackground(
           `/scenes/${sceneId}/assets/generate`,
           { instruction: idea.trim(), max_assets: maxAssets },
           'Asset generation',
-          (op) => op.result_json?.asset_ids?.[0]
+          (op) => op.result_json?.asset_ids?.[0],
+          ctx
         );
       case 'caption':
         return runInBackground(
@@ -255,7 +271,8 @@
             language: captionLanguage === 'auto' ? null : captionLanguage
           },
           'Captioning',
-          (op) => op.result_json?.output_id ?? op.output_id ?? outputId
+          (op) => op.result_json?.output_id ?? op.output_id ?? outputId,
+          ctx
         );
     }
     busy = true;
@@ -319,7 +336,7 @@
           toast.success(`Corrective re-render started — job ${result.job_id}`);
           break;
       }
-      await onran?.(result); // let the canvas refresh before zooming to the new node
+      await onran?.(result, ctx); // let the canvas refresh before zooming to the new node
       if (focusId) onfocus?.(focusId);
     } catch (e) {
       toast.error((e as Error).message);

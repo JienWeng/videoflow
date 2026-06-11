@@ -28,11 +28,25 @@
   import MessageSquare from '@lucide/svelte/icons/message-square';
   import PenLine from '@lucide/svelte/icons/pen-line';
 
+  /**
+   * Next-step chip: `send` posts the message immediately, `fill` pre-fills the
+   * prompt input for the user to finish (e.g. refine instructions), `href`
+   * links to a page.
+   */
+  interface Chip {
+    label: string;
+    send?: string;
+    fill?: string;
+    href?: string;
+  }
+
   interface Msg {
     role: 'user' | 'assistant';
     text: string;
     intent?: any;
     options?: any;
+    /** Inline next-step suggestions rendered inside the bubble. */
+    chips?: Chip[];
   }
 
   interface SelectedNode {
@@ -60,27 +74,14 @@
   let input = $state('');
   let busy = $state(false);
 
-  /**
-   * Next-step chip: `send` posts the message immediately, `fill` pre-fills the
-   * prompt input for the user to finish (e.g. refine instructions), `href`
-   * links to a page.
-   */
-  interface Chip {
-    label: string;
-    send?: string;
-    fill?: string;
-    href?: string;
-  }
-
   let graphData = $state<any>(null);
   let styleData = $state<any>(null);
 
   /**
-   * Derive the project state from one /graph call (scenes, shots, storyboards
-   * and render jobs are all nodes) plus /style, and suggest the next steps.
-   * When a canvas node is selected, chips target that node instead.
+   * One pass over /graph (scenes, shots, storyboards and render jobs are all
+   * nodes) shared by the suggestion strip and the post-run follow-ups.
    */
-  function computeChips(graph: any, style: any, sel: SelectedNode | null): Chip[] {
+  function analyzeGraph(graph: any) {
     const nodes: any[] = graph?.nodes ?? [];
     const edges: any[] = graph?.edges ?? [];
     const byId = new Map<string, any>(nodes.map((n) => [n.id, n]));
@@ -120,6 +121,34 @@
         return { label: `Render《${label}》`, send: `render scene 《${label}》` };
       return null;
     }
+
+    return {
+      byId,
+      characters,
+      scenes,
+      outputs,
+      scenesWithShots,
+      scenesWithStoryboard,
+      renderedScenes,
+      sceneNextChip
+    };
+  }
+
+  /**
+   * Suggest the next steps from the analyzed graph plus /style. When a canvas
+   * node is selected, chips target that node instead.
+   */
+  function computeChips(graph: any, style: any, sel: SelectedNode | null): Chip[] {
+    const {
+      byId,
+      characters,
+      scenes,
+      outputs,
+      scenesWithShots,
+      scenesWithStoryboard,
+      renderedScenes,
+      sceneNextChip
+    } = analyzeGraph(graph);
 
     // Selection-aware chips replace the globals while a node is selected.
     if (sel) {
@@ -217,6 +246,108 @@
     refreshChips();
   });
 
+  /** Context passed up by ActionCard after a successful run. */
+  interface RunContext {
+    action: string;
+    sceneId?: string;
+    outputId?: string;
+  }
+
+  const captionsChip: Chip = { label: '给最新视频加字幕', send: '给最新视频加字幕' };
+
+  /**
+   * Compose the assistant follow-up posted after a card runs successfully.
+   * Deterministic: derived from the *refreshed* graph, so the chips reflect
+   * the state the action just produced. Returns null when there is nothing
+   * useful to propose (e.g. unknown actions).
+   */
+  function buildFollowUp(ctx: RunContext): Msg | null {
+    if (!ctx.action || ctx.action === 'unknown') return null;
+    const g = analyzeGraph(graphData);
+
+    /** Wrap-up message when a scene's pipeline has nothing left to do. */
+    function sceneComplete(title: string): Msg {
+      return {
+        role: 'assistant',
+        text: `《${title}》 is fully rendered.`,
+        chips: [captionsChip, { label: '写一个新故事…', fill: '写一个新故事：' }]
+      };
+    }
+
+    switch (ctx.action) {
+      case 'generate_script': {
+        const chips = g.scenes
+          .map((s) => g.sceneNextChip(s.id, s.label))
+          .filter((c): c is Chip => !!c)
+          .slice(0, 2);
+        return {
+          role: 'assistant',
+          text: 'Script created. Next: expand a scene.',
+          chips
+        };
+      }
+      case 'generate_scenes':
+      case 'generate_shots':
+      case 'storyboard':
+      case 'generate_assets':
+      case 'refine_scene':
+      case 'refine_shot': {
+        if (!ctx.sceneId) return null;
+        const title = g.byId.get(ctx.sceneId)?.label ?? 'this scene';
+        const next = g.sceneNextChip(ctx.sceneId, title);
+        if (!next) return sceneComplete(title);
+        return {
+          role: 'assistant',
+          text: `Done — next for 《${title}》:`,
+          chips: [next, { label: `改进场景《${title}》…`, fill: `改进场景《${title}》：` }]
+        };
+      }
+      case 'render_scene':
+      case 'render_shot':
+      case 'retry_render':
+        return {
+          role: 'assistant',
+          text: 'Render submitted — watch the Activity tray; when it succeeds, captions are one click:',
+          chips: [captionsChip]
+        };
+      case 'caption':
+        return {
+          role: 'assistant',
+          text: 'Captions added.',
+          chips: computeChips(graphData, styleData, null).slice(0, 2)
+        };
+      case 'plan_assets':
+        return {
+          role: 'assistant',
+          text: 'Asset suggestions are on the card above. When you are ready:',
+          chips: computeChips(graphData, styleData, null).slice(0, 2)
+        };
+      case 'style_ingest':
+        return {
+          role: 'assistant',
+          text: 'Style ingested from the story. Next:',
+          chips: computeChips(graphData, styleData, null).slice(0, 2)
+        };
+      case 'delete_scene':
+        return {
+          role: 'assistant',
+          text: 'Scene deleted. Next:',
+          chips: computeChips(graphData, styleData, null).slice(0, 2)
+        };
+      default:
+        return null;
+    }
+  }
+
+  /** Card ran successfully: refresh, then keep the conversation moving. */
+  async function handleRan(_result: any, ctx?: RunContext) {
+    await onmutate?.();
+    await refreshChips();
+    if (!ctx) return;
+    const follow = buildFollowUp(ctx);
+    if (follow) messages.push(follow);
+  }
+
   function intentSummary(intent: any, options: any): string {
     const lines: string[] = [`action: ${intent.action}`];
     if (intent.scene_id) {
@@ -269,6 +400,35 @@
   }
 </script>
 
+{#snippet chipRow(list: Chip[])}
+  {#each list as c (c.label)}
+    {#if c.href}
+      <Button
+        variant="secondary"
+        size="sm"
+        href={c.href}
+        class="h-7 shrink-0 rounded-full px-3 text-xs font-normal"
+      >
+        {c.label}
+        <ArrowUpRight class="size-3" />
+      </Button>
+    {:else}
+      <Button
+        variant="secondary"
+        size="sm"
+        class="h-7 shrink-0 rounded-full px-3 text-xs font-normal"
+        disabled={busy}
+        onclick={() => applyChip(c)}
+      >
+        {#if c.fill}
+          <PenLine class="size-3 text-muted-foreground" />
+        {/if}
+        {c.label}
+      </Button>
+    {/if}
+  {/each}
+{/snippet}
+
 <div class="h-full flex flex-col">
   <div class="flex items-center gap-2 border-b border-border px-4 py-2.5">
     <MessageSquare class="size-4 text-muted-foreground" />
@@ -291,15 +451,17 @@
               </Reasoning>
             {/if}
             <p class="whitespace-pre-wrap">{m.text}</p>
+            {#if m.chips?.length}
+              <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                {@render chipRow(m.chips)}
+              </div>
+            {/if}
             {#if m.intent}
               <ActionCard
                 intent={m.intent}
                 options={m.options}
                 {onfocus}
-                onran={() => {
-                  onmutate?.();
-                  refreshChips();
-                }}
+                onran={handleRan}
                 onsuggest={(text) => send(text)}
               />
             {/if}
@@ -322,32 +484,7 @@
   <div class="border-t border-border p-3" bind:this={inputWrapper}>
     {#if chips.length}
       <div class="mb-2 flex items-center gap-1.5 overflow-x-auto whitespace-nowrap pb-0.5">
-        {#each chips as c (c.label)}
-          {#if c.href}
-            <Button
-              variant="secondary"
-              size="sm"
-              href={c.href}
-              class="h-7 shrink-0 rounded-full px-3 text-xs font-normal"
-            >
-              {c.label}
-              <ArrowUpRight class="size-3" />
-            </Button>
-          {:else}
-            <Button
-              variant="secondary"
-              size="sm"
-              class="h-7 shrink-0 rounded-full px-3 text-xs font-normal"
-              disabled={busy}
-              onclick={() => applyChip(c)}
-            >
-              {#if c.fill}
-                <PenLine class="size-3 text-muted-foreground" />
-              {/if}
-              {c.label}
-            </Button>
-          {/if}
-        {/each}
+        {@render chipRow(chips)}
       </div>
     {/if}
     <PromptInput class="rounded-xl border border-input bg-background shadow-xs" onSubmit={(m) => send(m.text)}>
