@@ -374,7 +374,11 @@ def list_shots(session: Session, scene_id: str) -> list[Shot]:
 
 def diff_fields(current: dict, incoming: dict) -> dict:
     """Subset of *current* whose keys appear in *incoming* with a DIFFERENT,
-    non-None value — i.e. the old values an update is about to overwrite."""
+    non-None value — i.e. the old values an update is about to overwrite.
+
+    Known limitation: a field whose PREVIOUS value was None is stored as None
+    here, and reverting it is a no-op because update_scene/update_shot treat
+    None kwargs as "leave unchanged"."""
     return {
         k: current[k]
         for k, v in incoming.items()
@@ -523,7 +527,11 @@ def update_shot(
 def list_revisions(
     session: Session, entity_type: str, entity_id: str, limit: int = 20
 ) -> list[Revision]:
-    """The entity's revision trail, newest first."""
+    """The entity's revision trail, newest first. 404 when the entity is gone."""
+    if entity_type == "scene":
+        get_scene(session, entity_id)
+    elif entity_type == "shot" and session.get(Shot, entity_id) is None:
+        raise NotFoundError(f"shot {entity_id} not found")
     return list(
         session.exec(
             select(Revision)
