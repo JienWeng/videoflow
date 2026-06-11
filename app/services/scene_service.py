@@ -26,6 +26,19 @@ DIALOGUE_FIX_INSTRUCTION = (
 )
 
 
+def _character_catalog(
+    session: Session, exclude_ids: set[str] | None = None
+) -> list[dict]:
+    """Compact {name, appearance} catalog of every character (minus
+    exclude_ids) for agent context blocks. The agents are instructed to cast
+    these by their EXACT names so auto_link_scene can @-tag and DB-link them."""
+    return [
+        {"name": c.name, "appearance": (c.appearance or "")[:160]}
+        for c in session.exec(select(Character))
+        if c.id not in (exclude_ids or set())
+    ]
+
+
 def character_to_bible(char: Character) -> CharacterBible:
     return CharacterBible(
         character_id=char.id,
@@ -56,6 +69,10 @@ async def create_script(
         target_duration=target_duration,
         scene_count=scene_count,
         style=style_service.style_context(style_service.get_style(session)),
+        # Full character catalog so the agent casts existing characters by
+        # their EXACT names (auto_link_scene later tags + links the mentions)
+        # instead of inventing near-duplicates.
+        characters=_character_catalog(session) or None,
     )
     if scene_count is not None and len(draft.scenes) > scene_count:
         draft = draft.model_copy(update={"scenes": draft.scenes[:scene_count]})
@@ -129,6 +146,21 @@ async def expand_scene(session: Session, scene_id: str, character_ids: list[str]
         if char:
             bibles.append(character_to_bible(char))
 
+    # Database catalogs: every character NOT already in the bibles, and the
+    # global asset library minus the scene's linked assets.  The agent casts /
+    # references these by their EXACT names; auto_link_scene (hooked below)
+    # converts the mentions into @tags and DB links.
+    from app.services import asset_gen_service  # local import: avoids circularity
+
+    cast_ids = {b.character_id for b in bibles}
+    available_characters = _character_catalog(session, exclude_ids=cast_ids)
+    library = [
+        {"name": a.name, "type": a.type, "description": a.description}
+        for a in asset_gen_service.gather_library(
+            session, exclude_ids=set(scene.asset_ids_json or [])
+        )
+    ]
+
     spec = await generate_scene(
         scene_id=scene.id,
         title=scene.title,
@@ -136,6 +168,8 @@ async def expand_scene(session: Session, scene_id: str, character_ids: list[str]
         suggested_duration=scene.duration,
         character_bibles=bibles,
         assets=_asset_dicts(session, scene.asset_ids_json or []),
+        available_characters=available_characters or None,
+        library=library or None,
         style=style_service.style_context(style_service.get_style(session)),
         story=story_context(session, scene),
     )

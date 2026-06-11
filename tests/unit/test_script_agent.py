@@ -62,3 +62,32 @@ async def test_scene_count_5_appears_in_prompt():
     await generate_script(idea="an epic story", scene_count=5, client=fake)
     prompt = fake.calls[0]["user_prompt"]
     assert "EXACTLY 5" in prompt or "exactly 5" in prompt
+
+
+@pytest.mark.asyncio
+async def test_existing_characters_block_in_prompt():
+    """The character catalog renders as a block so the agent casts by EXACT name."""
+    fake = FakeLLM(_make_draft(1))
+    await generate_script(
+        idea="a meadow story",
+        characters=[{"name": "Grace", "appearance": "girl in pink dress"}],
+        client=fake,
+    )
+    prompt = fake.calls[0]["user_prompt"]
+    assert "Existing characters (cast them by their EXACT names)" in prompt
+    assert "Grace" in prompt
+    assert "girl in pink dress" in prompt
+
+
+@pytest.mark.asyncio
+async def test_existing_characters_block_omitted_when_none():
+    fake = FakeLLM(_make_draft(1))
+    await generate_script(idea="a meadow story", client=fake)
+    assert "Existing characters" not in fake.calls[0]["user_prompt"]
+
+
+def test_script_agent_prompt_prefers_existing_characters():
+    from app.llm.prompts import PROMPTS
+
+    assert "EXACT names" in PROMPTS["script_agent"]
+    assert "only introduce a new character when the idea requires it" in PROMPTS["script_agent"]

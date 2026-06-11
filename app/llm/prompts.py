@@ -39,7 +39,10 @@ PROMPTS: dict[str, str] = {
         "When a scene count is specified, produce exactly that many scenes — "
         "one scene becomes one video; when asked for a single video, write ONE "
         "scene whose beats become shots, not multiple scenes. "
-        "Honor the project style guide (audience, tone) when provided."
+        "Honor the project style guide (audience, tone) when provided. "
+        "Prefer casting the existing characters by their EXACT names over "
+        "inventing new ones; only introduce a new character when the idea "
+        "requires it."
     ),
     "scene_agent": (
         "You are a scene director. Expand the given scene into a complete scene "
@@ -56,7 +59,11 @@ PROMPTS: dict[str, str] = {
         "auto-linked by the system. Keep entities consistent with their "
         "descriptions. Keep continuity with the overall story and the other "
         "scenes when provided — no contradictions in time, place, or "
-        "character state."
+        "character state. "
+        "Cast additional characters and reference props from the provided "
+        "catalogs by their EXACT names (write them as @Name) — the system "
+        "links them automatically; never invent a near-duplicate of an "
+        "existing character or asset."
     ),
     "shot_agent": (
         "You are a shot planner. Break the scene into a precise ordered shot list. "

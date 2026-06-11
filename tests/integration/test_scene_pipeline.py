@@ -1645,3 +1645,71 @@ def test_scene_render_without_previous_render_has_no_anchor(ctx, monkeypatch):
     assert len(payload["images"]) == 2  # char + bg only
     assert "上一场景" not in payload["prompt"]
     assert _anchor_assets("scene_1") == []
+
+
+# --- Database-aware script/scene agents: catalogs flow into the prompts -----
+
+
+def test_expand_scene_prompt_includes_database_catalogs(ctx, monkeypatch):
+    """A fresh scene with NO cast still sees the whole character catalog
+    ("Other available characters" — Grace) and the global asset library
+    ("Asset library" — Meadow) so the agent reuses entities by EXACT name."""
+    client, fake = ctx
+    captured: dict[str, str] = {}
+
+    class CapturingLLM(FakeLLM):
+        async def generate(self, *, response_model, **kw):
+            from app.schemas import SceneSpec
+
+            if response_model is SceneSpec:
+                captured["scene_prompt"] = kw.get("user_prompt", "")
+                return SceneSpec(scene_id="fresh", title="t", summary="sum", duration=5)
+            if response_model is ScriptDraft:
+                captured["script_prompt"] = kw.get("user_prompt", "")
+            return await super().generate(response_model=response_model, **kw)
+
+    monkeypatch.setattr("app.agents.base.get_llm_client", lambda: CapturingLLM())
+
+    # create_script passes the full character catalog to the script agent.
+    draft = client.post("/scripts/generate", json={"idea": "a meadow story"}).json()
+    assert "Existing characters (cast them by their EXACT names)" in captured["script_prompt"]
+    assert "Grace" in captured["script_prompt"]
+
+    # Fresh scene from the draft: char_grace is NOT cast on it.  /scripts/
+    # generate returns ALL scenes — pick one linked to the new script.
+    scene_id = next(s["id"] for s in draft["scenes"] if s["script_id"])
+    resp = client.post(f"/scenes/{scene_id}/generate", json={"character_ids": []})
+    assert resp.status_code == 200, resp.text
+
+    prompt = captured["scene_prompt"]
+    assert "Other available characters (cast by EXACT name if the scene needs them)" in prompt
+    assert "Grace" in prompt
+    # asset_bg (Meadow) is linked to scene_1, not this scene -> library entry;
+    # asset_char is a character_reference -> excluded from the library.
+    assert "Asset library (reference by EXACT name with @ to reuse)" in prompt
+    assert "Meadow" in prompt
+    assert "character_reference" not in prompt
+
+
+def test_expand_scene_omits_available_characters_already_cast(ctx, monkeypatch):
+    """Characters already in the bibles (the authoritative cast context) are
+    NOT repeated in the available-characters catalog."""
+    client, fake = ctx
+    captured: dict[str, str] = {}
+
+    class CapturingLLM(FakeLLM):
+        async def generate(self, *, response_model, **kw):
+            from app.schemas import SceneSpec
+
+            if response_model is SceneSpec:
+                captured["scene_prompt"] = kw.get("user_prompt", "")
+                return SceneSpec(scene_id="scene_1", title="t", summary="sum", duration=5)
+            return await super().generate(response_model=response_model, **kw)
+
+    monkeypatch.setattr("app.agents.base.get_llm_client", lambda: CapturingLLM())
+
+    # scene_1 already casts char_grace -> she is in the bibles, not the catalog.
+    resp = client.post("/scenes/scene_1/generate", json={"character_ids": []})
+    assert resp.status_code == 200, resp.text
+    assert "Other available characters" not in captured["scene_prompt"]
+    assert "Character bibles" in captured["scene_prompt"]

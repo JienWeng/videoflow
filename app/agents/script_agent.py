@@ -12,6 +12,7 @@ async def generate_script(
     target_duration: int | None = None,
     scene_count: int | None = None,
     style: dict | None = None,
+    characters: list[dict] | None = None,
     client=None,
 ) -> ScriptDraft:
     parts = [
@@ -20,6 +21,12 @@ async def generate_script(
     ]
     if style:
         parts.append(as_block("Project style guide", style))
+    if characters:
+        # Contract: the agent writes EXACT catalog names; downstream
+        # auto_link_scene converts those bare names to @tags and DB links.
+        parts.append(
+            as_block("Existing characters (cast them by their EXACT names)", characters)
+        )
     if scene_count is not None:
         parts.append(f"Produce EXACTLY {scene_count} scene(s).")
     parts.append("Produce a ScriptDraft with an ordered list of scenes.")

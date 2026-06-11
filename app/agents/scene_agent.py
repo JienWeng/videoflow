@@ -15,6 +15,8 @@ async def generate_scene(
     character_bibles: list[CharacterBible] | None = None,
     available_asset_ids: list[str] | None = None,
     assets: list[dict] | None = None,
+    available_characters: list[dict] | None = None,
+    library: list[dict] | None = None,
     style: dict | None = None,
     story: dict | None = None,
     client=None,
@@ -29,6 +31,20 @@ async def generate_scene(
     ]
     if assets:
         parts.append(as_block("Linked assets (use @Name)", assets))
+    # Database catalogs (bibles above stay the authoritative cast context).
+    # Contract: the agent writes EXACT catalog names; auto_link_scene then
+    # converts those mentions to @tags and DB links automatically.
+    if available_characters:
+        parts.append(
+            as_block(
+                "Other available characters (cast by EXACT name if the scene needs them)",
+                available_characters,
+            )
+        )
+    if library:
+        parts.append(
+            as_block("Asset library (reference by EXACT name with @ to reuse)", library)
+        )
     if style:
         parts.append(as_block("Project style guide", style))
     if story:

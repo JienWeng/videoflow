@@ -139,3 +139,49 @@ def test_prompts_carry_at_mention_rule():
     for agent in ("shot_agent", "scene_agent"):
         assert "@Name" in PROMPTS[agent]
         assert "auto-linked" in PROMPTS[agent]
+
+
+AVAILABLE = [{"name": "Milo", "appearance": "small orange cat"}]
+LIBRARY = [{"name": "Red Cup", "type": "prop", "description": "a shiny red cup"}]
+
+
+async def test_generate_scene_includes_available_characters_block():
+    from app.agents.scene_agent import generate_scene
+
+    llm = CapturingLLM(SceneSpec(scene_id="s1", title="t", summary="sum", duration=5))
+    await generate_scene(
+        scene_id="s1", title="t", summary="sum", suggested_duration=5,
+        available_characters=AVAILABLE, client=llm,
+    )
+    assert "Other available characters (cast by EXACT name if the scene needs them)" in llm.user_prompt
+    assert "Milo" in llm.user_prompt
+    assert "small orange cat" in llm.user_prompt
+
+
+async def test_generate_scene_includes_library_block():
+    from app.agents.scene_agent import generate_scene
+
+    llm = CapturingLLM(SceneSpec(scene_id="s1", title="t", summary="sum", duration=5))
+    await generate_scene(
+        scene_id="s1", title="t", summary="sum", suggested_duration=5,
+        library=LIBRARY, client=llm,
+    )
+    assert "Asset library (reference by EXACT name with @ to reuse)" in llm.user_prompt
+    assert "Red Cup" in llm.user_prompt
+    assert "a shiny red cup" in llm.user_prompt
+
+
+async def test_generate_scene_omits_catalog_blocks_when_absent():
+    from app.agents.scene_agent import generate_scene
+
+    llm = CapturingLLM(SceneSpec(scene_id="s1", title="t", summary="sum", duration=5))
+    await generate_scene(scene_id="s1", title="t", summary="sum", suggested_duration=5, client=llm)
+    assert "Other available characters" not in llm.user_prompt
+    assert "Asset library" not in llm.user_prompt
+
+
+def test_scene_agent_prompt_carries_catalog_reuse_rule():
+    from app.llm.prompts import PROMPTS
+
+    assert "EXACT names" in PROMPTS["scene_agent"]
+    assert "never invent a near-duplicate" in PROMPTS["scene_agent"]
