@@ -32,3 +32,10 @@ class TestHasDialogue:
 
     def test_western_quotes_do_not_count(self):
         assert has_dialogue('Grace says "Hello!"') is False
+
+
+def test_preserve_dialogue_empty_refined_has_no_leading_space():
+    from app.services.refine_service import _preserve_dialogue
+
+    out = _preserve_dialogue("Grace says, 「Hello!」", "")
+    assert out == "「Hello!」"

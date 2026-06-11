@@ -20,7 +20,8 @@ def _preserve_dialogue(original: str, refined: str) -> str:
     no dialogue requirement."""
     if has_dialogue(original) and not has_dialogue(refined):
         match = DIALOGUE_RE.search(original)
-        return refined.rstrip() + " " + match.group(0)
+        base = refined.rstrip()
+        return (base + " " if base else "") + match.group(0)
     return refined
 
 
