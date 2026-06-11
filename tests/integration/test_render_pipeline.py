@@ -291,6 +291,37 @@ def test_qa_prompt_carries_style_line_when_guide_seeded(client):
     )
 
 
+def test_qa_prompt_carries_voice_consistency_when_cast_has_voice_rules(client):
+    """When any cast bible has voice_rules, the QA requirements carry a
+    'Voice consistency:' line so the reviewer (and the human reading the QA
+    notes) tracks voice match across renders."""
+    from app.database import engine as db_engine
+    from app.models import Character, Scene
+
+    with Session(db_engine) as s:
+        s.add(Character(id="char_grace", name="Grace",
+                        voice_rules_json=["cheerful bright child's voice"]))
+        s.add(Scene(id="scene_v", title="t", summary="s", duration=5,
+                    character_ids_json=["char_grace"]))
+        s.commit()
+
+    spec = {
+        "scene_id": "scene_v",
+        "duration": 5,
+        "prompt": "@Grace waves",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+    }
+    job_id = client.post("/render", json=spec).json()["job_id"]
+    body = _wait_for_job(client, job_id)
+    assert body["job"]["status"] == "succeeded", body
+
+    assert client.fake_llm.qa_prompts
+    assert any(
+        "Voice consistency: @Grace — cheerful bright child's voice" in p
+        for p in client.fake_llm.qa_prompts
+    )
+
+
 def test_qa_retry_corrective_rerender(client):
     """A failing QA review can be turned into a corrective re-render: the new
     job's prompt carries the QA issues, multi_prompt entries stay as authored,

@@ -46,6 +46,30 @@ def _reference_image_paths(session: Session, job: RenderJob) -> list[str]:
     return paths[:MAX_REFERENCE_IMAGES]
 
 
+def _voice_requirements_line(session: Session, job: RenderJob) -> str:
+    """'Voice consistency: @Grace — warm voice; ...' built from the cast's
+    voice_rules; '' when the job has no scene or nobody has rules. Mirrors the
+    voice_line injected into the render prompt so QA judges the same contract."""
+    from app.agents.prompt_agent import voice_line
+    from app.services import scene_service
+
+    scene = session.get(Scene, job.scene_id) if job.scene_id else None
+    if scene is None:
+        return ""
+    bibles = [
+        scene_service.character_to_bible(char)
+        for cid in scene.character_ids_json or []
+        if (char := session.get(Character, cid))
+    ]
+    voices = voice_line(bibles)
+    if not voices:
+        return ""
+    return (
+        f"Voice consistency: {voices.removeprefix('Voices: ')} — each character "
+        "must keep this ONE voice in every shot."
+    )
+
+
 def _style_requirements_line(session: Session) -> str:
     """One-line style expectation for the QA requirements; '' when there is no
     style guide (or it carries no visual fields)."""
@@ -83,6 +107,8 @@ async def run_qa(
     )
     if style_line := _style_requirements_line(session):
         requirements += f"\n{style_line}"
+    if voice_req := _voice_requirements_line(session, job):
+        requirements += f"\n{voice_req}"
     description = (
         f"Generated video at {video_path.name}. "
         f"Multi-shot={ (job.request_json or {}).get('multi_shot') }. "

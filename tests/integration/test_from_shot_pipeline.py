@@ -88,6 +88,7 @@ def ctx(monkeypatch, tmp_path):
         # model renders her twice (clone bug).
         s.add(Character(
             id="char_grace", name="Grace",
+            voice_rules_json=["warm gentle voice", "slight British accent"],
             reference_asset_ids_json=["asset_char", "asset_char2"],
         ))
         s.add(Asset(id="asset_char", type="character_reference", name="Grace",
@@ -140,6 +141,12 @@ def test_from_shot_sends_characters_and_assets_with_multishot_voice(ctx):
     assert payload["keep_original_sound"] is True
     assert payload["multi_shot"] is True
     assert payload["shot_type"] == "intelligence"
+    # The LLM wrote no voice direction — the pipeline appends the cast's
+    # voice_rules deterministically (build_render_spec -> enforce_render_defaults).
+    assert (
+        "Voices: @Grace — warm gentle voice, slight British accent"
+        in payload["prompt"]
+    )
 
 
 def test_from_shot_passes_story_context_to_prompt_agent(ctx, monkeypatch):

@@ -160,6 +160,8 @@ def ctx(monkeypatch, tmp_path):
     (tmp_path / "bg.png").write_bytes(b"img")
     with Session(engine) as s:
         s.add(Character(id="char_grace", name="Grace", appearance="girl in pink dress",
+                        voice_rules_json=["cheerful bright child's voice",
+                                          "speaks slowly"],
                         reference_asset_ids_json=["asset_char"]))
         s.add(Asset(id="asset_char", type="character_reference", name="Grace",
                     file_path=str(tmp_path / "char.png")))
@@ -236,6 +238,11 @@ def test_scene_render_uses_shots_storyboard_and_references(ctx):
     from app.agents.prompt_agent import NO_CLONE_NEGATIVE
 
     assert NO_CLONE_NEGATIVE in payload["prompt"]
+    # The cast's voice_rules flow deterministically into the render prompt.
+    assert (
+        "Voices: @Grace — cheerful bright child's voice, speaks slowly"
+        in payload["prompt"]
+    )
 
 
 def test_scene_render_without_shots_rejected(ctx):

@@ -7,19 +7,45 @@ from app.agents.prompt_agent import (
     NO_TEXT_NEGATIVE,
     collect_named_references,
     enforce_render_defaults,
+    voice_line,
 )
 from app.llm.prompts import PROMPTS
 from app.schemas import CharacterBible, ReferenceImage, RenderSpec, StoryboardShot
 
 
-def bible(name: str, asset_ids: list[str]) -> CharacterBible:
+def bible(
+    name: str, asset_ids: list[str], voice_rules: list[str] | None = None
+) -> CharacterBible:
     return CharacterBible(
         character_id=f"char_{name.lower().replace(' ', '_')}",
         name=name,
         appearance="",
         personality="",
+        voice_rules=voice_rules or [],
         reference_asset_ids=asset_ids,
     )
+
+
+class TestVoiceLine:
+    def test_rules_joined_per_character(self):
+        line = voice_line(
+            [
+                bible("乐乐", [], ["cheerful bright child's voice", "speaks slowly"]),
+                bible("天天", [], ["low calm voice"]),
+            ]
+        )
+        assert line == (
+            "Voices: @乐乐 — cheerful bright child's voice, speaks slowly; "
+            "@天天 — low calm voice"
+        )
+
+    def test_character_without_rules_is_skipped(self):
+        line = voice_line([bible("Grace", [], ["warm voice"]), bible("Alan", [])])
+        assert line == "Voices: @Grace — warm voice"
+
+    def test_empty_when_nobody_has_rules(self):
+        assert voice_line([bible("Grace", []), bible("Alan", [])]) == ""
+        assert voice_line([]) == ""
 
 
 class TestCollectNamedReferences:
@@ -288,6 +314,41 @@ class TestEnforceRenderDefaults:
         assert spec.prompt.lower().count("no clones") == 1
         assert NO_CLONE_NEGATIVE not in spec.prompt
 
+    def test_voice_line_appended_when_cast_has_voice_rules(self):
+        spec = self.spec()
+        enforce_render_defaults(
+            spec,
+            named_references=[],
+            character_bibles=[bible("Grace", ["a"], ["warm gentle voice"])],
+        )
+        assert "Voices: @Grace — warm gentle voice" in spec.prompt
+        # Voice direction comes BEFORE the negative guidance.
+        assert spec.prompt.index("Voices:") < spec.prompt.index("no subtitles")
+
+    def test_voice_line_idempotent_on_rerun(self):
+        spec = self.spec()
+        bibles = [bible("Grace", ["a"], ["warm gentle voice"])]
+        enforce_render_defaults(spec, named_references=[], character_bibles=bibles)
+        enforce_render_defaults(spec, named_references=[], character_bibles=bibles)
+        assert spec.prompt.count("Voices:") == 1
+
+    def test_voice_line_skipped_when_no_rules(self):
+        spec = self.spec()
+        enforce_render_defaults(
+            spec, named_references=[], character_bibles=[bible("Grace", ["a"])]
+        )
+        assert "Voices:" not in spec.prompt
+
+    def test_voice_line_skipped_when_already_present(self):
+        spec = self.spec(prompt="@Grace waves. Voices: @Grace — squeaky robot voice.")
+        enforce_render_defaults(
+            spec,
+            named_references=[],
+            character_bibles=[bible("Grace", ["a"], ["warm gentle voice"])],
+        )
+        assert spec.prompt.count("Voices:") == 1
+        assert "warm gentle voice" not in spec.prompt
+
 
 class TestPromptRules:
     """The planning prompts must teach the two production rules: captions are
@@ -312,3 +373,13 @@ class TestPromptRules:
     def test_no_clone_rule_in_prompt_agent_negative_guidance(self):
         assert "no duplicated characters" in PROMPTS["prompt_agent"]
         assert "no clones or twins" in PROMPTS["prompt_agent"]
+
+    def test_voice_consistency_rule_in_prompt_agent(self):
+        assert "ONE consistent voice" in PROMPTS["prompt_agent"]
+        assert "voice_rules" in PROMPTS["prompt_agent"]
+        assert "Never change a character's voice between shots" in PROMPTS["prompt_agent"]
+
+    def test_character_memory_demands_reproducible_voice_rules(self):
+        assert "voice_rules MUST describe a concrete, reproducible voice" in (
+            PROMPTS["character_memory"]
+        )

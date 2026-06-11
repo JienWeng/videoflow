@@ -15,6 +15,7 @@ from app.agents.prompt_agent import (
     NO_CLONE_NEGATIVE,
     NO_TEXT_NEGATIVE,
     collect_named_references,
+    voice_line,
 )
 from app.errors import NotFoundError, ValidationFailedError
 from app.jobs import worker
@@ -104,11 +105,16 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
     if storyboard and storyboard.id not in {r["asset_id"] for r in refs}:
         refs.append({"name": "分镜图", "asset_id": storyboard.id})
 
+    # Deterministic voice direction from the cast's voice_rules, placed before
+    # the negatives so every render of this cast uses the same voices.
+    voices = voice_line(bibles)
     prompt = (
         f"{scene.summary}. "
         + ("Follow the @分镜图 storyboard panels in order for composition, scene "
            "continuity and lighting. " if storyboard else "")
-        + "Spoken dialogue, clear and natural. Negative: "
+        + "Spoken dialogue, clear and natural. "
+        + (f"{voices}. " if voices else "")
+        + "Negative: "
         f"{NO_TEXT_NEGATIVE}, no watermark, no outfit changes, no extra "
         f"characters, no distorted faces, {NO_CLONE_NEGATIVE}."
     )

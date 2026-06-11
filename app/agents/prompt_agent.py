@@ -76,16 +76,42 @@ def collect_named_references(
     return refs
 
 
-def enforce_render_defaults(spec: RenderSpec, *, named_references: list[dict]) -> None:
+def voice_line(character_bibles: list[CharacterBible]) -> str:
+    """One deterministic voice-direction line for the render prompt, e.g.
+    'Voices: @乐乐 — cheerful bright child's voice, speaks slowly; @天天 — ...'.
+    Each character's voice_rules are joined with ', '; characters without
+    rules are skipped; '' when nobody has rules. Shared by the prompt-agent
+    path and render_service so the same character sounds identical in every
+    render instead of Kling picking a random voice."""
+    parts = [
+        f"@{bible.name} — {', '.join(rule.strip() for rule in rules)}"
+        for bible in character_bibles
+        if (rules := [r for r in bible.voice_rules if r.strip()])
+    ]
+    return f"Voices: {'; '.join(parts)}" if parts else ""
+
+
+def enforce_render_defaults(
+    spec: RenderSpec,
+    *,
+    named_references: list[dict],
+    character_bibles: list[CharacterBible] | None = None,
+) -> None:
     """Post-LLM enforcement of fields the pipeline guarantees: voice/sound on,
-    every supplied reference present in reference_images, and multi-shot always
-    enabled (Kling 'intelligence' mode when the model wrote no storyboard)."""
+    every supplied reference present in reference_images, multi-shot always
+    enabled (Kling 'intelligence' mode when the model wrote no storyboard),
+    and the cast's voice_rules as a 'Voices:' direction — appended BEFORE the
+    negative lines, and only when the prompt doesn't already carry one
+    (idempotent on re-runs)."""
     spec.sound = True
     spec.keep_original_sound = True
     if not spec.multi_shot:
         spec.multi_shot = True
         spec.shot_type = "intelligence"
         spec.multi_prompt = []
+    voices = voice_line(character_bibles or [])
+    if voices and "Voices:" not in spec.prompt:
+        spec.prompt = f"{spec.prompt} — {voices}."
     if "no subtitles" not in spec.prompt.lower():
         spec.prompt = f"{spec.prompt} — {NO_TEXT_NEGATIVE} (added in post)."
     if "no clones" not in spec.prompt.lower():
@@ -165,5 +191,7 @@ async def build_render_spec(
     spec.aspect_ratio = aspect_ratio
     if video_asset_id and not spec.video_asset_id:
         spec.video_asset_id = video_asset_id
-    enforce_render_defaults(spec, named_references=named_references)
+    enforce_render_defaults(
+        spec, named_references=named_references, character_bibles=character_bibles
+    )
     return spec
