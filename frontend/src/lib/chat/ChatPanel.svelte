@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { get, post } from '$lib/api';
   import ActionCard from '$lib/chat/ActionCard.svelte';
-  import { Suggestion, Suggestions } from '$lib/components/ai-elements/suggestion';
   import { Button } from '$lib/components/ui/button';
   import {
     Conversation,
@@ -27,6 +26,7 @@
   import Brain from '@lucide/svelte/icons/brain';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import MessageSquare from '@lucide/svelte/icons/message-square';
+  import PenLine from '@lucide/svelte/icons/pen-line';
 
   interface Msg {
     role: 'user' | 'assistant';
@@ -35,10 +35,21 @@
     options?: any;
   }
 
+  interface SelectedNode {
+    id: string;
+    kind: string;
+    label: string;
+  }
+
   let {
     onfocus,
-    onmutate
-  }: { onfocus?: (id: string) => void; onmutate?: () => void | Promise<void> } = $props();
+    onmutate,
+    selected = null
+  }: {
+    onfocus?: (id: string) => void;
+    onmutate?: () => void | Promise<void>;
+    selected?: SelectedNode | null;
+  } = $props();
 
   let messages = $state<Msg[]>([
     {
@@ -49,20 +60,27 @@
   let input = $state('');
   let busy = $state(false);
 
-  /** Next-step chip: either a chat message to send or a page link. */
+  /**
+   * Next-step chip: `send` posts the message immediately, `fill` pre-fills the
+   * prompt input for the user to finish (e.g. refine instructions), `href`
+   * links to a page.
+   */
   interface Chip {
     label: string;
     send?: string;
+    fill?: string;
     href?: string;
   }
 
-  let chips = $state<Chip[]>([]);
+  let graphData = $state<any>(null);
+  let styleData = $state<any>(null);
 
   /**
    * Derive the project state from one /graph call (scenes, shots, storyboards
    * and render jobs are all nodes) plus /style, and suggest the next steps.
+   * When a canvas node is selected, chips target that node instead.
    */
-  function computeChips(graph: any, style: any): Chip[] {
+  function computeChips(graph: any, style: any, sel: SelectedNode | null): Chip[] {
     const nodes: any[] = graph?.nodes ?? [];
     const edges: any[] = graph?.edges ?? [];
     const byId = new Map<string, any>(nodes.map((n) => [n.id, n]));
@@ -70,6 +88,7 @@
     const characters = nodes.filter((n) => n.type === 'character');
     const scenes = nodes.filter((n) => n.type === 'scene');
     const shots = nodes.filter((n) => n.type === 'shot');
+    const outputs = nodes.filter((n) => n.type === 'output');
 
     const scenesWithShots = new Set(shots.map((sh) => sh.data?.scene_id).filter(Boolean));
     const shotScene = new Map(shots.map((sh) => [sh.id, sh.data?.scene_id]));
@@ -89,6 +108,47 @@
       if (byId.get(e.target)?.data?.status !== 'succeeded') continue;
       const sceneId = byId.get(e.source)?.type === 'shot' ? shotScene.get(e.source) : e.source;
       if (sceneId) renderedScenes.add(sceneId);
+    }
+
+    /** The next pipeline action for a single scene, if it isn't done yet. */
+    function sceneNextChip(sceneId: string, label: string): Chip | null {
+      if (!scenesWithShots.has(sceneId))
+        return { label: `给《${label}》生成分镜头`, send: `给《${label}》生成分镜头` };
+      if (!scenesWithStoryboard.has(sceneId))
+        return { label: `给《${label}》生成分镜图`, send: `给《${label}》生成分镜图` };
+      if (!renderedScenes.has(sceneId))
+        return { label: `Render《${label}》`, send: `render scene 《${label}》` };
+      return null;
+    }
+
+    // Selection-aware chips replace the globals while a node is selected.
+    if (sel) {
+      const out: Chip[] = [];
+      if (sel.kind === 'scene') {
+        const next = sceneNextChip(sel.id, sel.label);
+        if (next) out.push(next);
+        out.push({ label: `改进场景《${sel.label}》…`, fill: `改进场景《${sel.label}》：` });
+      } else if (sel.kind === 'shot') {
+        out.push({ label: '改进这个镜头…', fill: '改进这个镜头：' });
+        const sceneId = byId.get(sel.id)?.data?.scene_id;
+        const scene = sceneId ? byId.get(sceneId) : null;
+        if (scene) {
+          const next = sceneNextChip(scene.id, scene.label);
+          if (next) out.push(next);
+        }
+      } else if (sel.kind === 'output') {
+        out.push({ label: '给这个视频加字幕', send: '给这个视频加字幕' });
+        const qa = byId.get(sel.id)?.data?.qa_issues;
+        if (Array.isArray(qa) && qa.length)
+          out.push({ label: 'Fix the latest render', send: 'fix the latest render' });
+      } else if (sel.kind === 'character') {
+        out.push({
+          label: `给《${sel.label}》写一个新故事`,
+          send: `给《${sel.label}》写一个新故事`
+        });
+      }
+      if (out.length) return out.slice(0, 3);
+      // Unhandled kinds (asset, render_job) fall through to global chips.
     }
 
     const out: Chip[] = [];
@@ -111,20 +171,45 @@
       );
       if (notRendered)
         out.push({ label: `Render《${notRendered.label}》`, send: `render scene 《${notRendered.label}》` });
+
+      // QA found issues on an output → offer a retry.
+      if (outputs.some((o) => Array.isArray(o.data?.qa_issues) && o.data.qa_issues.length)) {
+        out.push({ label: 'Fix the latest render', send: 'fix the latest render' });
+      }
+      // Latest output is missing burned-in captions.
+      const latest = outputs[outputs.length - 1];
+      if (latest && !latest.data?.captioned_path) {
+        out.push({ label: '给最新视频加字幕', send: '给最新视频加字幕' });
+      }
       if (scenes.every((s) => renderedScenes.has(s.id))) {
-        out.push({ label: 'Add captions', send: 'add captions' });
+        out.push({ label: '下一个视频：写个新故事', fill: '写一个新故事：' });
         out.push({ label: '建议一些道具', send: '建议一些道具' });
       }
     }
     return out.slice(0, 4);
   }
 
+  let chips = $derived(computeChips(graphData, styleData, selected));
+
   async function refreshChips() {
     try {
       const [graph, style] = await Promise.all([get('/graph'), get('/style').catch(() => null)]);
-      chips = computeChips(graph, style);
+      graphData = graph;
+      styleData = style;
     } catch {
-      chips = [];
+      graphData = null;
+      styleData = null;
+    }
+  }
+
+  let inputWrapper = $state<HTMLDivElement | null>(null);
+
+  function applyChip(c: Chip) {
+    if (c.fill) {
+      input = c.fill;
+      inputWrapper?.querySelector('textarea')?.focus();
+    } else if (c.send) {
+      send(c.send);
     }
   }
 
@@ -206,25 +291,6 @@
               </Reasoning>
             {/if}
             <p class="whitespace-pre-wrap">{m.text}</p>
-            {#if i === 0 && m.role === 'assistant' && chips.length}
-              <div class="mt-2">
-                <p class="text-xs text-muted-foreground mb-1.5">Suggested next steps:</p>
-                <Suggestions>
-                  {#each chips as c (c.label)}
-                    {#if c.href}
-                      <Button variant="outline" size="sm" href={c.href} class="rounded-full px-4">
-                        {c.label}
-                        <ArrowUpRight class="size-3.5 ml-1" />
-                      </Button>
-                    {:else}
-                      <Suggestion suggestion={c.send} onclick={(text) => send(text)}>
-                        {c.label}
-                      </Suggestion>
-                    {/if}
-                  {/each}
-                </Suggestions>
-              </div>
-            {/if}
             {#if m.intent}
               <ActionCard
                 intent={m.intent}
@@ -253,7 +319,37 @@
     </ConversationContent>
   </Conversation>
 
-  <div class="border-t border-border p-3">
+  <div class="border-t border-border p-3" bind:this={inputWrapper}>
+    {#if chips.length}
+      <div class="mb-2 flex items-center gap-1.5 overflow-x-auto whitespace-nowrap pb-0.5">
+        {#each chips as c (c.label)}
+          {#if c.href}
+            <Button
+              variant="secondary"
+              size="sm"
+              href={c.href}
+              class="h-7 shrink-0 rounded-full px-3 text-xs font-normal"
+            >
+              {c.label}
+              <ArrowUpRight class="size-3" />
+            </Button>
+          {:else}
+            <Button
+              variant="secondary"
+              size="sm"
+              class="h-7 shrink-0 rounded-full px-3 text-xs font-normal"
+              disabled={busy}
+              onclick={() => applyChip(c)}
+            >
+              {#if c.fill}
+                <PenLine class="size-3 text-muted-foreground" />
+              {/if}
+              {c.label}
+            </Button>
+          {/if}
+        {/each}
+      </div>
+    {/if}
     <PromptInput class="rounded-xl border border-input bg-background shadow-xs" onSubmit={(m) => send(m.text)}>
       <PromptInputBody>
         <PromptInputTextarea

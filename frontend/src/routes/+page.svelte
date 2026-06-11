@@ -94,7 +94,17 @@
   <Handle withHandle />
   <Pane defaultSize={28} minSize={20}>
     <div class="h-full border-l border-border">
-      <ChatPanel onfocus={(id) => canvas?.focusNode(id)} onmutate={refreshAll} />
+      <ChatPanel
+        onfocus={(id) => canvas?.focusNode(id)}
+        onmutate={refreshAll}
+        selected={selected
+          ? {
+              id: selected.id,
+              kind: String(selected.data?.kind ?? ''),
+              label: String(selected.data?.label ?? '')
+            }
+          : null}
+      />
     </div>
   </Pane>
 </PaneGroup>
