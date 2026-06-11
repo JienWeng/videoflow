@@ -1,6 +1,9 @@
 <script lang="ts">
-  import { post } from '$lib/api';
+  import { onMount } from 'svelte';
+  import { get, post } from '$lib/api';
   import ActionCard from '$lib/chat/ActionCard.svelte';
+  import { Suggestion, Suggestions } from '$lib/components/ai-elements/suggestion';
+  import { Button } from '$lib/components/ui/button';
   import {
     Conversation,
     ConversationContent
@@ -20,6 +23,7 @@
     PromptInputToolbar,
     PromptInputTools
   } from '$lib/components/ai-elements/prompt-input';
+  import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right';
   import Brain from '@lucide/svelte/icons/brain';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import MessageSquare from '@lucide/svelte/icons/message-square';
@@ -44,6 +48,89 @@
   ]);
   let input = $state('');
   let busy = $state(false);
+
+  /** Next-step chip: either a chat message to send or a page link. */
+  interface Chip {
+    label: string;
+    send?: string;
+    href?: string;
+  }
+
+  let chips = $state<Chip[]>([]);
+
+  /**
+   * Derive the project state from one /graph call (scenes, shots, storyboards
+   * and render jobs are all nodes) plus /style, and suggest the next steps.
+   */
+  function computeChips(graph: any, style: any): Chip[] {
+    const nodes: any[] = graph?.nodes ?? [];
+    const edges: any[] = graph?.edges ?? [];
+    const byId = new Map<string, any>(nodes.map((n) => [n.id, n]));
+
+    const characters = nodes.filter((n) => n.type === 'character');
+    const scenes = nodes.filter((n) => n.type === 'scene');
+    const shots = nodes.filter((n) => n.type === 'shot');
+
+    const scenesWithShots = new Set(shots.map((sh) => sh.data?.scene_id).filter(Boolean));
+    const shotScene = new Map(shots.map((sh) => [sh.id, sh.data?.scene_id]));
+
+    // Storyboard assets are linked to their scene by a metadata edge.
+    const scenesWithStoryboard = new Set(
+      edges
+        .filter((e) => byId.get(e.target)?.data?.asset_type === 'storyboard')
+        .map((e) => e.source)
+    );
+
+    // A scene counts as rendered when a succeeded render job hangs off it
+    // (directly, or via one of its shots).
+    const renderedScenes = new Set<string>();
+    for (const e of edges) {
+      if (byId.get(e.target)?.type !== 'render_job') continue;
+      if (byId.get(e.target)?.data?.status !== 'succeeded') continue;
+      const sceneId = byId.get(e.source)?.type === 'shot' ? shotScene.get(e.source) : e.source;
+      if (sceneId) renderedScenes.add(sceneId);
+    }
+
+    const out: Chip[] = [];
+    if (!characters.length) out.push({ label: 'Add characters first', href: '/characters' });
+    if (!scenes.length) {
+      out.push({ label: '写一个小故事', send: '帮我写一个一个场景的小故事' });
+    } else {
+      if (!style?.style_prompt) {
+        out.push({ label: 'Ingest style from story', send: 'ingest style from story' });
+      }
+      const noShots = scenes.find((s) => !scenesWithShots.has(s.id));
+      if (noShots) out.push({ label: `给《${noShots.label}》生成分镜头`, send: `给《${noShots.label}》生成分镜头` });
+      const noStoryboard = scenes.find(
+        (s) => scenesWithShots.has(s.id) && !scenesWithStoryboard.has(s.id)
+      );
+      if (noStoryboard)
+        out.push({ label: `给《${noStoryboard.label}》生成分镜图`, send: `给《${noStoryboard.label}》生成分镜图` });
+      const notRendered = scenes.find(
+        (s) => scenesWithStoryboard.has(s.id) && !renderedScenes.has(s.id)
+      );
+      if (notRendered)
+        out.push({ label: `Render《${notRendered.label}》`, send: `render scene 《${notRendered.label}》` });
+      if (scenes.every((s) => renderedScenes.has(s.id))) {
+        out.push({ label: 'Add captions', send: 'add captions' });
+        out.push({ label: '建议一些道具', send: '建议一些道具' });
+      }
+    }
+    return out.slice(0, 4);
+  }
+
+  async function refreshChips() {
+    try {
+      const [graph, style] = await Promise.all([get('/graph'), get('/style').catch(() => null)]);
+      chips = computeChips(graph, style);
+    } catch {
+      chips = [];
+    }
+  }
+
+  onMount(() => {
+    refreshChips();
+  });
 
   function intentSummary(intent: any, options: any): string {
     const lines: string[] = [`action: ${intent.action}`];
@@ -92,6 +179,7 @@
       });
     } finally {
       busy = false;
+      refreshChips();
     }
   }
 </script>
@@ -118,12 +206,34 @@
               </Reasoning>
             {/if}
             <p class="whitespace-pre-wrap">{m.text}</p>
+            {#if i === 0 && m.role === 'assistant' && chips.length}
+              <div class="mt-2">
+                <p class="text-xs text-muted-foreground mb-1.5">Suggested next steps:</p>
+                <Suggestions>
+                  {#each chips as c (c.label)}
+                    {#if c.href}
+                      <Button variant="outline" size="sm" href={c.href} class="rounded-full px-4">
+                        {c.label}
+                        <ArrowUpRight class="size-3.5 ml-1" />
+                      </Button>
+                    {:else}
+                      <Suggestion suggestion={c.send} onclick={(text) => send(text)}>
+                        {c.label}
+                      </Suggestion>
+                    {/if}
+                  {/each}
+                </Suggestions>
+              </div>
+            {/if}
             {#if m.intent}
               <ActionCard
                 intent={m.intent}
                 options={m.options}
                 {onfocus}
-                onran={() => onmutate?.()}
+                onran={() => {
+                  onmutate?.();
+                  refreshChips();
+                }}
                 onsuggest={(text) => send(text)}
               />
             {/if}

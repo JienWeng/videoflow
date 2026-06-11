@@ -315,6 +315,12 @@
     class="mb-4 w-full max-w-sm rounded-md border border-input bg-background px-2 py-1.5 text-sm"
   />
 
+  {#if !assets.length}
+    <p class="text-sm text-muted-foreground">
+      Generated props, reference sheets and rendered videos will appear here.
+    </p>
+  {/if}
+
   <div class="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-4">
     {#each filtered.slice().reverse() as asset (asset.id)}
       <Card>

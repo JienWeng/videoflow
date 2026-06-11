@@ -11,6 +11,7 @@
   let assets: Record<string, any> = $state({});
   let error = $state('');
   let busy = $state('');
+  let loaded = $state(false);
 
   let name = $state('');
   let description = $state('');
@@ -20,7 +21,11 @@
     const all = await get('/assets');
     assets = Object.fromEntries(all.map((a: any) => [a.id, a]));
   }
-  onMount(() => refresh().catch((e) => (error = e.message)));
+  onMount(() =>
+    refresh()
+      .catch((e) => (error = e.message))
+      .finally(() => (loaded = true))
+  );
 
   async function run(key: string, fn: () => Promise<unknown>) {
     busy = key;
@@ -65,6 +70,21 @@
 
 <div class="p-6">
   <h1 class="text-lg font-semibold mb-4">Characters</h1>
+
+  {#if loaded && !characters.length}
+    <Card class="mb-4">
+      <CardContent class="p-4">
+        <div class="flex items-center gap-2 mb-1">
+          <Images class="size-4" />
+          <span class="font-medium text-sm">No characters yet</span>
+        </div>
+        <p class="text-sm text-muted-foreground">
+          Create a character below, then upload 2-4 photos of them — the photos become
+          reference sheets that keep the character identical in every video.
+        </p>
+      </CardContent>
+    </Card>
+  {/if}
 
   <form class="mb-4 rounded-lg border border-border bg-card p-4" onsubmit={createCharacter}>
     <div class="flex flex-wrap gap-4 items-end">

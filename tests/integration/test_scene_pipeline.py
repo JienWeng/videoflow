@@ -719,6 +719,21 @@ def test_plan_scene_assets_endpoint_dedups_existing_names(ctx, monkeypatch):
 
 def test_graph_nodes_carry_canvas_data(ctx):
     client, fake = ctx
+
+    # Seed a succeeded render with a QA'd output so the output node's
+    # canvas data (score / qa_issues / render_job_id) can be asserted.
+    import app.database as _db_mod
+    from app.models import RenderJob, RenderOutput, RenderStatus
+
+    with Session(_db_mod.engine) as s:
+        s.add(RenderJob(id="job_qa", scene_id="scene_1", shot_id="shot_1",
+                        model="atlas/test", status=RenderStatus.succeeded))
+        s.add(RenderOutput(id="out_qa", render_job_id="job_qa",
+                           video_path="/tmp/out_qa.mp4", score=6,
+                           qa_json={"issues": ["hand clipping", "flicker"],
+                                    "recommendation": "retry"}))
+        s.commit()
+
     body = client.get("/graph").json()
     nodes_by_id = {n["id"]: n for n in body["nodes"]}
 
@@ -739,6 +754,14 @@ def test_graph_nodes_carry_canvas_data(ctx):
     shot_node = nodes_by_id["shot_1"]
     assert "scene_id" in shot_node["data"]
     assert "prompt" in shot_node["data"]
+
+    # Output node carries QA info for the canvas side panel
+    out_node = nodes_by_id["out_qa"]
+    assert out_node["data"]["score"] == 6
+    assert out_node["data"]["qa_issues"] == ["hand clipping", "flicker"]
+    assert out_node["data"]["render_job_id"] == "job_qa"
+    assert "video_path" in out_node["data"]
+    assert "captioned_path" in out_node["data"]
 
 
 # ── style guide enforcement ──────────────────────────────────────────────────

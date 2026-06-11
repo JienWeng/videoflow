@@ -19,6 +19,7 @@
   let error = $state('');
   let busy = $state('');
   let ok = $state('');
+  let loaded = $state(false);
   // Long generations run as background ops — per-key so several can run at once.
   let opBusy: Record<string, boolean> = $state({});
 
@@ -62,7 +63,9 @@
     shotsByScene = shotsByScene;
   }
   onMount(() => {
-    refresh().catch((e) => (error = e.message));
+    refresh()
+      .catch((e) => (error = e.message))
+      .finally(() => (loaded = true));
     get('/style').then((s) => (style = s)).catch(() => {});
   });
 
@@ -723,6 +726,21 @@
         </Collapsible.Root>
       </CardContent>
     </Card>
+  {:else}
+    {#if loaded}
+      <Card>
+        <CardContent class="p-4">
+          <div class="flex items-center gap-2 mb-1">
+            <Lightbulb class="size-4" />
+            <span class="font-medium text-sm">No scenes yet</span>
+          </div>
+          <p class="text-sm text-muted-foreground">
+            Write your idea above and generate a script — one scene becomes one video,
+            and each scene then walks through Expand, Shots, Storyboard and Render.
+          </p>
+        </CardContent>
+      </Card>
+    {/if}
   {/each}
 </div>
 

@@ -66,7 +66,9 @@ def graph(session: Session = Depends(get_session)) -> dict:
     for o in session.exec(select(RenderOutput)).all():
         node(o.id, "output", o.video_path.rsplit("/", 1)[-1] if o.video_path else o.id,
              video_path=o.video_path, thumbnail_path=o.thumbnail_path,
-             captioned_path=o.captioned_path)
+             captioned_path=o.captioned_path, score=o.score,
+             qa_issues=(o.qa_json or {}).get("issues", []),
+             render_job_id=o.render_job_id)
         edge(o.render_job_id, o.id, "output")
 
     known = {n["id"] for n in nodes}

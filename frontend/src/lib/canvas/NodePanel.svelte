@@ -1,3 +1,16 @@
+<script lang="ts" module>
+  // Caption config is project-wide — fetch once per app session, lazily on
+  // the first output-node selection, and share across panel instances.
+  type CaptionConfig = {
+    styles: string[];
+    models: string[];
+    default_model: string;
+    default_language: string;
+    default_style: string;
+  };
+  let captionConfigPromise: Promise<CaptionConfig> | null = null;
+</script>
+
 <script lang="ts">
   import type { Node } from '@xyflow/svelte';
   import * as Sheet from '$lib/components/ui/sheet';
@@ -6,9 +19,11 @@
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
   import { Badge } from '$lib/components/ui/badge';
+  import { Separator } from '$lib/components/ui/separator';
   import { toast } from 'svelte-sonner';
-  import { History, Sparkles, Trash2 } from '@lucide/svelte';
+  import { Captions, History, RefreshCw, Sparkles, Trash2 } from '@lucide/svelte';
   import { get, patch, post, del, mediaUrl, isImage } from '$lib/api';
+  import { runBackgroundOp } from '$lib/ops';
 
   let {
     node,
@@ -30,6 +45,15 @@
   let showHistory = $state(false);
   let revisions = $state<any[]>([]);
   let reverting = $state('');
+
+  // Output node actions (QA retry + captions)
+  let retrying = $state(false);
+  let captioning = $state(false);
+  let captionStyles = $state<string[]>([]);
+  let captionModels = $state<string[]>([]);
+  let captionStyle = $state('');
+  let captionModel = $state('');
+  let captionLanguage = $state('zh');
 
   $effect(() => {
     const d = (node?.data ?? {}) as Record<string, any>;
@@ -55,7 +79,62 @@
     } else {
       form = {};
     }
+    if (node && String(d.kind) === 'output') void loadCaptionConfig();
   });
+
+  async function loadCaptionConfig() {
+    captionConfigPromise ??= get('/caption-config');
+    try {
+      const cfg = await captionConfigPromise;
+      captionStyles = cfg.styles ?? [];
+      captionModels = cfg.models ?? [];
+      captionStyle = cfg.default_style || captionStyles[0] || 'kids';
+      captionModel = cfg.default_model || captionModels[0] || '';
+      captionLanguage = cfg.default_language || 'zh';
+    } catch {
+      captionConfigPromise = null; // allow retry on next selection
+    }
+  }
+
+  async function fixAndRerender() {
+    if (!node) return;
+    retrying = true;
+    try {
+      const res = await post(`/outputs/${node.id}/retry`);
+      toast.success(`Corrective re-render started — job ${res.job_id}`);
+      onsaved();
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      retrying = false;
+    }
+  }
+
+  async function addCaptions() {
+    if (!node) return;
+    captioning = true;
+    try {
+      await runBackgroundOp(
+        `/outputs/${node.id}/caption`,
+        {
+          style: captionStyle || undefined,
+          model: captionModel || undefined,
+          language: captionLanguage === 'auto' ? null : captionLanguage
+        },
+        {
+          label: 'Captioning',
+          onDone: () => {
+            captioning = false;
+            onsaved();
+          },
+          onFail: () => (captioning = false)
+        }
+      );
+    } catch (err: any) {
+      captioning = false;
+      toast.error(err.message);
+    }
+  }
 
   async function save() {
     if (!node) return;
@@ -270,6 +349,60 @@
         <div class="text-xs text-muted-foreground">
           {#if data.captioned_path}<p class="truncate">Captioned: {data.captioned_path}</p>{/if}
           {#if data.video_path}<p class="truncate">Video: {data.video_path}</p>{/if}
+        </div>
+
+        <Separator />
+
+        <div class="grid gap-1.5">
+          <Label>Quality check</Label>
+          <p class="text-sm">QA: {data.score ?? '—'}{data.score != null ? '/10' : ''}</p>
+          {#if data.qa_issues?.length}
+            <ul class="text-xs text-muted-foreground space-y-0.5">
+              {#each data.qa_issues.slice(0, 3) as issue (issue)}
+                <li class="truncate" title={issue}>- {issue}</li>
+              {/each}
+            </ul>
+            <Button variant="secondary" size="sm" disabled={retrying} onclick={fixAndRerender}>
+              <RefreshCw class="size-4 mr-1 {retrying ? 'animate-spin' : ''}" />
+              {retrying ? 'Submitting…' : 'Fix & re-render'}
+            </Button>
+          {/if}
+        </div>
+
+        <Separator />
+
+        <div class="grid gap-1.5">
+          <Label>Captions</Label>
+          <div class="flex flex-wrap items-center gap-1">
+            {#if captionStyles.length}
+              <select
+                bind:value={captionStyle}
+                class="rounded border border-input bg-background px-1.5 py-1 text-xs"
+              >
+                {#each captionStyles as st (st)}<option value={st}>{st}</option>{/each}
+              </select>
+            {/if}
+            {#if captionModels.length}
+              <select
+                bind:value={captionModel}
+                class="rounded border border-input bg-background px-1.5 py-1 text-xs"
+              >
+                {#each captionModels as m (m)}<option value={m}>{m}</option>{/each}
+              </select>
+            {/if}
+            <select
+              bind:value={captionLanguage}
+              class="rounded border border-input bg-background px-1.5 py-1 text-xs w-16"
+            >
+              <option value="zh">zh</option>
+              <option value="en">en</option>
+              <option value="auto">auto</option>
+            </select>
+          </div>
+          <Button variant="outline" size="sm" disabled={captioning} onclick={addCaptions}>
+            <Captions class="size-4 mr-1" />
+            {captioning ? 'Transcribing…' : data.captioned_path ? 'Re-caption' : 'Auto captions'}
+          </Button>
         </div>
       {:else if kind === 'asset'}
         {#if imageSrc}
