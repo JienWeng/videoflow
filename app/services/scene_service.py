@@ -27,6 +27,62 @@ DIALOGUE_FIX_INSTRUCTION = (
 )
 
 
+def _norm_name(name: str) -> str:
+    """Case-insensitive, whitespace-normalized form ("Red  Cup" == "red cup").
+    Local copy of asset_gen_service._norm_name — importing it at module level
+    would create a circular import (asset_gen_service imports scene_service)."""
+    return " ".join(name.split()).casefold()
+
+
+# Name-like prefixes the agents tend to invent ("asset_教室", "char_乐乐",
+# "character_Grace"). Longest first so "character_" wins over "char_".
+_ENTITY_ID_PREFIXES = ("character_", "char_", "asset_")
+
+
+def resolve_entity_ids(session: Session, ids: list[str], *, kind: str) -> list[str]:
+    """Map LLM-supplied ids onto REAL rows. kind: 'asset' | 'character'.
+
+    Deterministic enforcement for hallucinated ids: the scene/shot agents are
+    told to use real ids from the context, but sometimes invent name-like ids
+    ("asset_教室") instead. Resolution:
+    - ids that exist in the DB pass through;
+    - unknown ids are treated as names: strip a leading 'asset_'/'char_'/
+      'character_' prefix, then match (whitespace-normalized, casefolded)
+      against Asset.name / Character.name — the matching row's REAL id is used;
+    - irrecoverable ids are dropped with a warning.
+    Order preserved, deduplicated."""
+    model = Asset if kind == "asset" else Character
+    by_name: dict[str, str] | None = None  # lazy: only built on a miss
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in ids or []:
+        rid = raw
+        if session.get(model, rid) is None:
+            if by_name is None:
+                by_name = {
+                    _norm_name(row.name): row.id
+                    for row in session.exec(select(model))
+                    if row.name
+                }
+            candidate = rid
+            for prefix in _ENTITY_ID_PREFIXES:
+                if candidate.casefold().startswith(prefix):
+                    candidate = candidate[len(prefix):]
+                    break
+            real = by_name.get(_norm_name(candidate))
+            if real is None:
+                logger.warning(
+                    "dropping unknown %s id %r (no row and no name match)", kind, raw
+                )
+                continue
+            logger.info("resolved hallucinated %s id %r -> %s", kind, raw, real)
+            rid = real
+        if rid not in seen:
+            seen.add(rid)
+            out.append(rid)
+    return out
+
+
 def _character_catalog(
     session: Session, exclude_ids: set[str] | None = None
 ) -> list[dict]:
@@ -197,6 +253,17 @@ async def expand_scene(session: Session, scene_id: str, character_ids: list[str]
         style=style_service.style_context(style_service.get_style(session)),
         story=story_context(session, scene),
     )
+    # Deterministic enforcement: the agent's id lists may contain hallucinated
+    # name-like ids — resolve them onto real rows (or drop them) BEFORE they
+    # are persisted anywhere (columns AND scene_json).
+    spec = spec.model_copy(
+        update={
+            "character_ids": resolve_entity_ids(
+                session, spec.character_ids, kind="character"
+            ),
+            "asset_ids": resolve_entity_ids(session, spec.asset_ids, kind="asset"),
+        }
+    )
     scene.title = spec.title
     scene.summary = spec.summary
     scene.duration = spec.duration
@@ -337,7 +404,8 @@ async def create_shots(
             prompt=shot.prompt,
             camera=shot.camera,
             movement=shot.movement,
-            asset_ids_json=shot.asset_ids,
+            # Hallucinated ids resolved to real rows / dropped before persisting.
+            asset_ids_json=resolve_entity_ids(session, shot.asset_ids, kind="asset"),
             shot_json=shot.model_dump(),
         )
         session.add(row)

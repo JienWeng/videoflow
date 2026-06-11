@@ -1777,3 +1777,100 @@ def test_develop_ideas_rejects_empty_idea(ctx):
     client, _ = ctx
     resp = client.post("/ideas/develop", json={"idea": ""})
     assert resp.status_code == 422
+
+
+# --- Hallucinated entity ids: resolved by name at persist time, tolerated at
+# --- render time (a missing prop must never 404 a whole render) -------------
+
+
+def _seed_classroom_asset():
+    """Insert a global asset NAMED 教室 (the LLM tends to invent 'asset_教室')."""
+    import app.database
+    from app.models import Asset
+
+    with Session(app.database.engine) as s:
+        s.add(Asset(id="asset_room1", type="background", name="教室",
+                    description="a classroom", file_path="/tmp/classroom.png"))
+        s.commit()
+
+
+def test_expand_scene_resolves_hallucinated_ids_to_real_rows(ctx, monkeypatch):
+    """The scene agent returns name-like ids ('asset_教室', 'char_Grace') that
+    don't exist as rows — persist-time resolution maps them onto the REAL rows
+    by name and drops irrecoverable ones, so render never sees a bogus id."""
+    client, _ = ctx
+    _seed_classroom_asset()
+
+    class HallucinatingLLM(FakeLLM):
+        async def generate(self, *, response_model, **kw):
+            from app.schemas import SceneSpec
+
+            if response_model is SceneSpec:
+                return SceneSpec(
+                    scene_id="scene_1", title="t", summary="sum", duration=5,
+                    character_ids=["char_Grace"],          # name-like, not a row id
+                    asset_ids=["asset_教室", "asset_nonexistent_prop"],
+                )
+            return await super().generate(response_model=response_model, **kw)
+
+    monkeypatch.setattr("app.agents.base.get_llm_client", lambda: HallucinatingLLM())
+
+    resp = client.post("/scenes/scene_1/generate", json={"character_ids": []})
+    assert resp.status_code == 200, resp.text
+    scene = resp.json()
+    assert scene["character_ids_json"] == ["char_grace"]   # Grace's REAL id
+    assert "asset_room1" in scene["asset_ids_json"]        # 教室's REAL id
+    assert "asset_教室" not in scene["asset_ids_json"]
+    assert "asset_nonexistent_prop" not in scene["asset_ids_json"]
+
+
+def test_create_shots_resolves_hallucinated_shot_asset_ids(ctx, monkeypatch):
+    client, _ = ctx
+    _seed_classroom_asset()
+
+    class HallucinatingLLM(FakeLLM):
+        async def generate(self, *, response_model, **kw):
+            if response_model is ShotList:
+                return ShotList(
+                    scene_id="scene_1",
+                    shots=[
+                        ShotSpec(shot_id="gen_sh1", duration=3,
+                                 prompt="@Grace waves and says, 「Hi!」",
+                                 camera="mid", movement="static",
+                                 asset_ids=["asset_教室", "asset_nonexistent_prop"]),
+                    ],
+                )
+            return await super().generate(response_model=response_model, **kw)
+
+    monkeypatch.setattr("app.agents.base.get_llm_client", lambda: HallucinatingLLM())
+
+    resp = client.post("/scenes/scene_1/shots/generate", json={"auto_assets": False})
+    assert resp.status_code == 200, resp.text
+    shot = client.get("/scenes/scene_1/shots").json()[0]
+    assert "asset_room1" in shot["asset_ids_json"]
+    assert "asset_教室" not in shot["asset_ids_json"]
+    assert "asset_nonexistent_prop" not in shot["asset_ids_json"]
+
+
+def test_render_scene_skips_unknown_asset_ids_instead_of_404(ctx):
+    """Self-healing for rows already poisoned with hallucinated ids: a scene
+    whose asset_ids_json contains a nonexistent id still renders (202) and the
+    bogus reference simply never reaches the provider payload."""
+    client, fake = ctx
+    import app.database
+    from app.models import Scene
+
+    with Session(app.database.engine) as s:
+        scene = s.get(Scene, "scene_1")
+        scene.asset_ids_json = ["asset_bg", "asset_教室", "asset_玩具"]
+        s.add(scene)
+        s.commit()
+
+    resp = client.post("/scenes/scene_1/render")
+    assert resp.status_code == 202, resp.text
+
+    payload = fake.video_payloads[0]
+    # The real background made it through; the bogus ids were skipped, so the
+    # payload has exactly char + bg (no storyboard generated in this test).
+    assert "https://static.atlascloud.ai/up/bg.png" in payload["images"]
+    assert len(payload["images"]) == 2

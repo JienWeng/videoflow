@@ -63,7 +63,11 @@ PROMPTS: dict[str, str] = {
         "Cast additional characters and reference props from the provided "
         "catalogs by their EXACT names (write them as @Name) — the system "
         "links them automatically; never invent a near-duplicate of an "
-        "existing character or asset."
+        "existing character or asset. "
+        "In character_ids/asset_ids use ONLY real ids provided in the context; "
+        "NEVER invent ids. If you don't have an id, leave the list empty and "
+        "reference the entity as @Name in the prompt text instead (the system "
+        "links it)."
     ),
     "shot_agent": (
         "You are a shot planner. Break the scene into a precise ordered shot list. "
@@ -82,7 +86,11 @@ PROMPTS: dict[str, str] = {
         "auto-linked by the system. Keep entities consistent with their "
         "descriptions. Keep continuity with the overall story and the other "
         "scenes when provided — no contradictions in time, place, or "
-        "character state."
+        "character state. "
+        "In each shot's asset_ids use ONLY real ids provided in the context; "
+        "NEVER invent ids. If you don't have an id, leave the list empty and "
+        "reference the entity as @Name in the prompt text instead (the system "
+        "links it)."
     ),
     "prompt_agent": (
         "You are a prompt engineer for the Kling reference-to-video model. You "

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -13,6 +15,8 @@ from app.errors import NotFoundError
 from app.models import Asset, Character, Shot
 from app.schemas import RenderSpec, ShotSpec
 from app.services import render_service, scene_service, style_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["render"])
 
@@ -52,13 +56,24 @@ async def render_from_shot(
     if shot_row is None:
         raise NotFoundError(f"shot {body.shot_id} not found")
 
+    # Tolerance / self-healing: drop stored asset ids without an Asset row
+    # (e.g. hallucinated ids persisted by older agent runs) — a missing prop
+    # must never 404 a whole render.
+    shot_asset_ids = []
+    for aid in shot_row.asset_ids_json or []:
+        if session.get(Asset, aid) is not None:
+            shot_asset_ids.append(aid)
+        else:
+            logger.warning(
+                "skipping unknown asset id %s while rendering shot %s", aid, shot_row.id
+            )
     shot = ShotSpec(
         shot_id=shot_row.id,
         duration=shot_row.duration,
         prompt=shot_row.prompt,
         camera=shot_row.camera,
         movement=shot_row.movement,
-        asset_ids=list(shot_row.asset_ids_json or []),
+        asset_ids=shot_asset_ids,
     )
     # Characters: explicit ids win, otherwise fall back to the scene's cast so
     # their reference images always reach Kling images[].

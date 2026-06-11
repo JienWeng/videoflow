@@ -186,6 +186,18 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
     asset_ids = list(scene.asset_ids_json or [])
     for shot in shots:
         asset_ids.extend(shot.asset_ids_json or [])
+    # Tolerance / self-healing: ids without an Asset row (e.g. hallucinated ids
+    # persisted before resolve_entity_ids existed) are skipped — a missing prop
+    # must never 404 a whole render.
+    known_ids = []
+    for aid in asset_ids:
+        if session.get(Asset, aid) is not None:
+            known_ids.append(aid)
+        else:
+            logger.warning(
+                "skipping unknown asset id %s while rendering scene %s", aid, scene_id
+            )
+    asset_ids = known_ids
     asset_names = {
         aid: a.name for aid in asset_ids
         if (a := session.get(Asset, aid)) and a.name
