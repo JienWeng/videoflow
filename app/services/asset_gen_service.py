@@ -43,7 +43,7 @@ REFERENCE_STYLE_PREFIX = (
 # Global library shown to the planner for cross-scene reuse: asset types that
 # can't serve as image references for new scenes are excluded, and the catalog
 # is capped to keep the prompt compact.
-LIBRARY_EXCLUDED_TYPES = frozenset({"video", "storyboard", "character_reference"})
+LIBRARY_EXCLUDED_TYPES = frozenset({"video", "storyboard", "character_reference", "frame"})
 LIBRARY_CAP = 30
 
 

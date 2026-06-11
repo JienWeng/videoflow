@@ -51,7 +51,7 @@ def pick_previous_scene(current: Scene, scenes: list[Scene]) -> Scene | None:
     candidates = [
         s for s in pool if s.id != current.id and s.created_at < current.created_at
     ]
-    return max(candidates, key=lambda s: s.created_at) if candidates else None
+    return max(candidates, key=lambda s: (s.created_at, s.id)) if candidates else None
 
 
 def _latest_succeeded_output(session: Session, scene_id: str) -> RenderOutput | None:
