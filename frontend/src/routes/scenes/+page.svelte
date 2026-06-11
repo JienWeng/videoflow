@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { get, patch, post, del, mediaUrl } from '$lib/api';
+  import { runBackgroundOp } from '$lib/ops';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Card, CardContent } from '$lib/components/ui/card';
@@ -16,6 +17,8 @@
   let error = $state('');
   let busy = $state('');
   let ok = $state('');
+  // Long generations run as background ops — per-key so several can run at once.
+  let opBusy: Record<string, boolean> = $state({});
 
   let idea = $state('');
   let targetDuration: number | '' = $state('');
@@ -92,8 +95,23 @@
       post(`/scenes/${s.id}/shots/generate`, { auto_assets: autoProps[s.id] ?? true })
     );
 
-  const generateStoryboard = (s: any) =>
-    run(`sb-${s.id}`, () => post(`/scenes/${s.id}/storyboard`), 'Storyboard generated.');
+  async function generateStoryboard(s: any) {
+    const key = `sb-${s.id}`;
+    opBusy[key] = true;
+    try {
+      await runBackgroundOp(`/scenes/${s.id}/storyboard`, undefined, {
+        label: 'Storyboard',
+        onDone: async () => {
+          opBusy[key] = false;
+          await refresh();
+        },
+        onFail: () => (opBusy[key] = false)
+      });
+    } catch (e: any) {
+      opBusy[key] = false;
+      toast.error(e.message);
+    }
+  }
 
   const renderScene = (s: any) =>
     run(
@@ -182,24 +200,35 @@
     }
   }
 
-  async function generateAssets(s: any) {
-    busy = `assets-${s.id}`;
+  async function startAssetGeneration(s: any, instruction: string, maxAssets: number) {
+    const key = `assets-${s.id}`;
+    opBusy[key] = true;
     try {
-      const created = await post(`/scenes/${s.id}/assets/generate`, {
-        instruction: (assetInstr[s.id] ?? '').trim(),
-        max_assets: assetMax[s.id] ?? 4
-      });
-      generatedAssets[s.id] = created;
-      assetPlans[s.id] = null; // any pending suggestion plan is now out of date
-      toast.success(`Generated ${created.length} asset${created.length === 1 ? '' : 's'}.`);
-      // Generation auto-attaches assets and @-tags shot prompts — refresh the shot table.
-      shotsByScene[s.id] = await get(`/scenes/${s.id}/shots`);
+      await runBackgroundOp(
+        `/scenes/${s.id}/assets/generate`,
+        { instruction, max_assets: maxAssets },
+        {
+          label: 'Asset generation',
+          onDone: async (op) => {
+            opBusy[key] = false;
+            const ids: string[] = op.result_json?.asset_ids ?? [];
+            const all = await get('/assets');
+            generatedAssets[s.id] = all.filter((a: any) => ids.includes(a.id));
+            assetPlans[s.id] = null; // any pending suggestion plan is now out of date
+            // Generation auto-attaches assets and @-tags shot prompts — refresh the shot table.
+            shotsByScene[s.id] = await get(`/scenes/${s.id}/shots`);
+          },
+          onFail: () => (opBusy[key] = false)
+        }
+      );
     } catch (e: any) {
+      opBusy[key] = false;
       toast.error(e.message);
-    } finally {
-      busy = '';
     }
   }
+
+  const generateAssets = (s: any) =>
+    startAssetGeneration(s, (assetInstr[s.id] ?? '').trim(), assetMax[s.id] ?? 4);
 
   async function suggestAssets(s: any) {
     busy = `plan-${s.id}`;
@@ -229,22 +258,7 @@
       'Generate exactly these assets: ' +
       selected.map((a) => `${a.name} — ${a.description}`).join('; ') +
       (userInstruction ? `. ${userInstruction}` : '');
-    busy = `assets-${s.id}`;
-    try {
-      const created = await post(`/scenes/${s.id}/assets/generate`, {
-        instruction,
-        max_assets: selected.length
-      });
-      generatedAssets[s.id] = created;
-      assetPlans[s.id] = null;
-      toast.success(`Generated ${created.length} asset${created.length === 1 ? '' : 's'}.`);
-      // Prompts were @-tagged with the new assets — refresh the shot table.
-      shotsByScene[s.id] = await get(`/scenes/${s.id}/shots`);
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      busy = '';
-    }
+    await startAssetGeneration(s, instruction, selected.length);
   }
 
   const saveShot = (shot: any) =>
@@ -369,8 +383,8 @@
               auto props
             </label>
           </div>
-          <Button variant="outline" size="sm" disabled={!!busy || !(shotsByScene[s.id]?.length)} onclick={() => generateStoryboard(s)}>
-            <Images class="size-3 mr-1" />{busy === `sb-${s.id}` ? 'Generating…' : '3. Generate storyboard (ERNIE)'}
+          <Button variant="outline" size="sm" disabled={opBusy[`sb-${s.id}`] || !(shotsByScene[s.id]?.length)} onclick={() => generateStoryboard(s)}>
+            <Images class="size-3 mr-1" />{opBusy[`sb-${s.id}`] ? 'Generating…' : '3. Generate storyboard (ERNIE)'}
           </Button>
           <Button size="sm" disabled={!!busy || !(shotsByScene[s.id]?.length)} onclick={() => renderScene(s)}>
             <Video class="size-3 mr-1" />{busy === `render-${s.id}` ? 'Submitting…' : '4. Render scene (Kling)'}
@@ -476,8 +490,8 @@
             <Button variant="outline" size="sm" disabled={!!busy} onclick={() => suggestAssets(s)}>
               <Lightbulb class="size-3 mr-1" />{busy === `plan-${s.id}` ? 'Suggesting…' : 'Suggest'}
             </Button>
-            <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateAssets(s)}>
-              <ImagePlus class="size-3 mr-1" />{busy === `assets-${s.id}` ? 'Generating…' : 'Generate assets'}
+            <Button variant="outline" size="sm" disabled={opBusy[`assets-${s.id}`]} onclick={() => generateAssets(s)}>
+              <ImagePlus class="size-3 mr-1" />{opBusy[`assets-${s.id}`] ? 'Generating…' : 'Generate assets'}
             </Button>
             {#if style?.style_prompt}
               <Badge variant="secondary" class="text-muted-foreground max-w-[260px]" title={style.style_prompt}>
@@ -515,10 +529,10 @@
               {#if plan.reasoning}
                 <p class="text-xs text-muted-foreground">{plan.reasoning}</p>
               {/if}
-              <Button size="sm" disabled={!!busy || !planSelected[s.id]?.some(Boolean)}
+              <Button size="sm" disabled={opBusy[`assets-${s.id}`] || !planSelected[s.id]?.some(Boolean)}
                 onclick={() => generateSelectedAssets(s)}>
                 <ImagePlus class="size-3 mr-1" />
-                {busy === `assets-${s.id}`
+                {opBusy[`assets-${s.id}`]
                   ? 'Generating…'
                   : `Generate selected (${planSelected[s.id]?.filter(Boolean).length ?? 0})`}
               </Button>

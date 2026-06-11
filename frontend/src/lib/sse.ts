@@ -1,9 +1,19 @@
 import { API_BASE } from '$lib/api';
 
-export type JobEvent = { job_id: string; status: string; output_id?: string; error?: string };
+/** Any event from /events: render-job events carry job_id, background-op events carry op_id. */
+export type StreamEvent = {
+  job_id?: string;
+  op_id?: string;
+  kind?: string;
+  status?: string;
+  scene_id?: string;
+  output_id?: string;
+  error?: string;
+};
+export type JobEvent = StreamEvent;
 
-/** Subscribe to job events; falls back to polling via onFallback after repeated failures. */
-export function subscribeJobs(onEvent: (e: JobEvent) => void, onFallback?: () => void): () => void {
+/** Subscribe to job/op events; falls back to polling via onFallback after repeated failures. */
+export function subscribeJobs(onEvent: (e: StreamEvent) => void, onFallback?: () => void): () => void {
   let es: EventSource | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let retries = 0;

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { get, post } from '$lib/api';
+  import { runBackgroundOp } from '$lib/ops';
   import { subscribeJobs } from '$lib/sse';
   import VideoPreview from '$lib/components/VideoPreview.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -27,7 +28,8 @@
   let captionStyle: Record<string, string> = $state({});
   let captionModel: Record<string, string> = $state({});
   let captionLanguage: Record<string, string> = $state({});
-  let captioning = $state('');
+  // Captioning runs as a background op — per-output so several can run at once.
+  let captioning: Record<string, boolean> = $state({});
   let retrying = $state('');
 
 
@@ -63,21 +65,32 @@
   });
 
   async function addCaptions(jobId: string, out: any) {
-    captioning = out.id;
+    captioning[out.id] = true;
     error = '';
+    const lang = captionLanguage[out.id] ?? captionDefaultLanguage ?? 'zh';
     try {
-      const lang = captionLanguage[out.id] ?? captionDefaultLanguage ?? 'zh';
-      const updated = await post(`/outputs/${out.id}/caption`, {
-        style: captionStyle[out.id] ?? captionStyles[0] ?? 'kids',
-        model: captionModel[out.id] ?? (captionDefaultModel || undefined),
-        language: lang === 'auto' ? null : lang
-      });
-      outputs[jobId] = outputs[jobId].map((o) => (o.id === out.id ? updated : o));
-      outputs = outputs;
+      await runBackgroundOp(
+        `/outputs/${out.id}/caption`,
+        {
+          style: captionStyle[out.id] ?? captionStyles[0] ?? 'kids',
+          model: captionModel[out.id] ?? (captionDefaultModel || undefined),
+          language: lang === 'auto' ? null : lang
+        },
+        {
+          label: 'Captioning',
+          onDone: async () => {
+            captioning[out.id] = false;
+            // Refetch the job detail so the output row picks up captioned_path.
+            const detail = await get(`/render-jobs/${jobId}`);
+            outputs[jobId] = detail.outputs;
+            outputs = outputs;
+          },
+          onFail: () => (captioning[out.id] = false)
+        }
+      );
     } catch (e: any) {
+      captioning[out.id] = false;
       toast.error(e.message);
-    } finally {
-      captioning = '';
     }
   }
 
@@ -228,11 +241,11 @@
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={!!captioning}
+                        disabled={captioning[out.id]}
                         onclick={() => addCaptions(j.id, out)}
                       >
                         <Captions class="size-3 mr-1" />
-                        {captioning === out.id ? 'transcribing…' : out.captioned_path ? 'Re-caption' : 'Auto captions'}
+                        {captioning[out.id] ? 'transcribing…' : out.captioned_path ? 'Re-caption' : 'Auto captions'}
                       </Button>
                     </div>
                   </div>

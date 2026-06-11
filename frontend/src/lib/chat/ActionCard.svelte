@@ -1,5 +1,6 @@
 <script lang="ts">
   import { del, get, post } from '$lib/api';
+  import { runBackgroundOp, type Op } from '$lib/ops';
   import { Suggestion, Suggestions } from '$lib/components/ai-elements/suggestion';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
@@ -155,7 +156,59 @@
     return file ?? o.id;
   }
 
+  /** Long generations run as background ops: busy holds until the op is terminal. */
+  async function runInBackground(
+    path: string,
+    body: unknown,
+    label: string,
+    focus: (op: Op) => string | undefined
+  ) {
+    busy = true;
+    try {
+      await runBackgroundOp(path, body, {
+        label,
+        onDone: async (op) => {
+          busy = false;
+          await onran?.(op.result_json ?? op); // let the canvas refresh before zooming to the new node
+          const focusId = focus(op);
+          if (focusId) onfocus?.(focusId);
+        },
+        onFail: () => (busy = false)
+      });
+    } catch (e) {
+      busy = false;
+      toast.error((e as Error).message);
+    }
+  }
+
   async function run() {
+    switch (intent.action) {
+      case 'storyboard':
+        return runInBackground(
+          `/scenes/${sceneId}/storyboard`,
+          undefined,
+          'Storyboard',
+          (op) => op.result_json?.asset_id ?? op.scene_id ?? sceneId
+        );
+      case 'generate_assets':
+        return runInBackground(
+          `/scenes/${sceneId}/assets/generate`,
+          { instruction: idea.trim(), max_assets: maxAssets },
+          'Asset generation',
+          (op) => op.result_json?.asset_ids?.[0]
+        );
+      case 'caption':
+        return runInBackground(
+          `/outputs/${outputId}/caption`,
+          {
+            style: captionStyle,
+            model: captionModel || null,
+            language: captionLanguage === 'auto' ? null : captionLanguage
+          },
+          'Captioning',
+          (op) => op.result_json?.output_id ?? op.output_id ?? outputId
+        );
+    }
     busy = true;
     try {
       let result: any;
@@ -179,11 +232,6 @@
           focusId = sceneId;
           toast.success(`Shots generated (${Array.isArray(result) ? result.length : '?'})`);
           break;
-        case 'storyboard':
-          result = await post(`/scenes/${sceneId}/storyboard`);
-          focusId = result.id ?? sceneId;
-          toast.success('Storyboard generated');
-          break;
         case 'render_scene':
           result = await post(`/scenes/${sceneId}/render`);
           focusId = result.job_id;
@@ -193,14 +241,6 @@
           result = await post('/render/from-shot', { scene_id: sceneId, shot_id: shotId });
           focusId = result.job_id;
           toast.success(`Render started — job ${result.job_id}`);
-          break;
-        case 'generate_assets':
-          result = await post(`/scenes/${sceneId}/assets/generate`, {
-            instruction: idea.trim(),
-            max_assets: maxAssets
-          });
-          focusId = Array.isArray(result) ? result[0]?.id : undefined;
-          toast.success(`Generated ${Array.isArray(result) ? result.length : 0} assets`);
           break;
         case 'refine_scene':
           result = await post(`/scenes/${sceneId}/refine`, { instruction: idea.trim() });
@@ -228,15 +268,6 @@
           plannedAssets = result.assets ?? [];
           focusId = sceneId;
           toast.success(`${result.assets?.length ?? 0} asset suggestions`);
-          break;
-        case 'caption':
-          result = await post(`/outputs/${outputId}/caption`, {
-            style: captionStyle,
-            model: captionModel || null,
-            language: captionLanguage === 'auto' ? null : captionLanguage
-          });
-          focusId = result.id ?? outputId;
-          toast.success('Captions added');
           break;
         case 'retry_render':
           result = await post(`/outputs/${outputId}/retry`);

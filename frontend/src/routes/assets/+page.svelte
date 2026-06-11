@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { get, post, patch, del, upload, mediaUrl, isImage, isVideo } from '$lib/api';
+  import { runBackgroundOp } from '$lib/ops';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Card, CardContent } from '$lib/components/ui/card';
@@ -51,14 +52,18 @@
     styleBusy = 'ingest';
     reingestOpen = false;
     try {
-      style = await post('/style/ingest');
-      seedStyleForm(style);
-      styleEditing = false;
-      toast.success('Style derived from the story.');
+      await runBackgroundOp('/style/ingest', undefined, {
+        label: 'Style ingest',
+        onDone: async () => {
+          styleBusy = '';
+          await loadStyle(); // reloads the panel and reseeds the form
+          styleEditing = false;
+        },
+        onFail: () => (styleBusy = '')
+      });
     } catch (e: any) {
-      toast.error(e.message);
-    } finally {
       styleBusy = '';
+      toast.error(e.message);
     }
   }
 
