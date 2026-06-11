@@ -5,6 +5,7 @@
     Background,
     Controls,
     MiniMap,
+    Panel,
     useSvelteFlow,
     type Node,
     type Edge,
@@ -12,9 +13,11 @@
   } from '@xyflow/svelte';
   import '@xyflow/svelte/dist/style.css';
   import { toast } from 'svelte-sonner';
+  import { LayoutGrid } from '@lucide/svelte';
+  import { Button } from '$lib/components/ui/button';
   import { get, post, del } from '$lib/api';
-  import { toFlow, loadPositions, savePositions, type ApiGraph } from './transform';
-  import { layout } from './layout';
+  import { toFlow, loadPositions, savePositions, clearPositions, type ApiGraph } from './transform';
+  import { layout, layoutFresh } from './layout';
   import EntityNode from './EntityNode.svelte';
   import FlowHelper from './FlowHelper.svelte';
 
@@ -30,15 +33,20 @@
     try {
       const g: ApiGraph = await get('/graph');
       const { nodes: n, edges: e } = toFlow(g);
-      const laidOut = layout(n, e);
-      const saved = loadPositions();
-      nodes = laidOut.map((node) =>
-        saved[node.id] ? { ...node, position: saved[node.id] } : node
-      );
+      // Pinned (saved) nodes keep their spots; fresh nodes get collision-free
+      // dagre positions. After autoArrange clears the saved store, this is a
+      // pure dagre layout until the user drags a node again.
+      nodes = layoutFresh(n, e, loadPositions());
       edges = e;
     } catch (err: any) {
       toast.error(`Failed to load graph: ${err.message}`);
     }
+  }
+
+  export function autoArrange() {
+    clearPositions();
+    nodes = layout(nodes, edges);
+    flow?.fitView({ duration: 400 });
   }
 
   export function focusNode(id: string) {
@@ -132,6 +140,11 @@
     onnodedragstop={() => savePositions(nodes)}
   >
     <FlowHelper register={(f) => (flow = f)} />
+    <Panel position="top-right" class="z-10">
+      <Button variant="secondary" size="icon" title="Auto-arrange" onclick={autoArrange}>
+        <LayoutGrid />
+      </Button>
+    </Panel>
     <Background />
     <Controls />
     <MiniMap />

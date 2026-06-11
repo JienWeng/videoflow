@@ -35,3 +35,7 @@ export function savePositions(nodes: Node[]) {
   const pos = Object.fromEntries(nodes.map((n) => [n.id, n.position]));
   localStorage.setItem(POS_KEY, JSON.stringify(pos));
 }
+
+export function clearPositions() {
+  localStorage.removeItem(POS_KEY);
+}

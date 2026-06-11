@@ -1,10 +1,15 @@
 <script lang="ts">
   import '../app.css';
   import { page } from '$app/state';
+  import { onMount } from 'svelte';
   import { Clapperboard, Image, Users, ListVideo, Film } from '@lucide/svelte';
   import { Toaster } from '$lib/components/ui/sonner';
+  import ActivityTray from '$lib/components/ActivityTray.svelte';
+  import { initActivity } from '$lib/activity.svelte';
 
   let { children } = $props();
+
+  onMount(() => initActivity());
 
   const nav = [
     { href: '/', label: 'Studio', icon: Clapperboard },
@@ -28,6 +33,9 @@
         {item.label}
       </a>
     {/each}
+    <div class="mt-auto">
+      <ActivityTray />
+    </div>
   </aside>
   <main class="flex-1 overflow-auto">
     {@render children?.()}
