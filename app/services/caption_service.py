@@ -72,6 +72,37 @@ def extract_script_lines(spec: dict | None) -> list[str]:
     return lines
 
 
+def timed_script_lines(spec: dict | None) -> list[dict]:
+    """[{'text': line, 'start': s, 'end': e}] from multi_prompt entries that
+    contain a 「」 line.
+
+    Windows are cumulative durations in entry order (the 1-based ``index``
+    field if present, else list order). Entries without a quoted line still
+    contribute their duration to the timeline but yield no line. Returns []
+    when there is no multi_prompt or any entry lacks a positive duration —
+    callers then fall back to untimed matching.
+    """
+    if not spec:
+        return []
+    entries = spec.get("multi_prompt") or []
+    if not entries:
+        return []
+    if any(not isinstance(e.get("duration"), (int, float)) or e["duration"] <= 0 for e in entries):
+        return []
+    if all(isinstance(e.get("index"), int) for e in entries):
+        entries = sorted(entries, key=lambda e: e["index"])
+    lines: list[dict] = []
+    t = 0.0
+    for e in entries:
+        start, t = t, t + float(e["duration"])
+        m = QUOTE_RE.search(e.get("prompt") or "")
+        if m:
+            line = m.group(1).strip()
+            if line:
+                lines.append({"text": line, "start": start, "end": t})
+    return lines
+
+
 def _normalize(text: str) -> str:
     """Strip whitespace and CJK/ASCII punctuation for fuzzy matching."""
     return _NORM_RE.sub("", text)
@@ -121,6 +152,45 @@ def correct_segments(
         else:
             result.append(seg)
 
+    return result
+
+
+def correct_segments_timed(
+    segments: list[CaptionSegment], timed_lines: list[dict], min_ratio: float = 0.35
+) -> list[CaptionSegment]:
+    """Replace each segment's text with the best-matching script line among
+    those whose shot window overlaps the segment in time (timings kept).
+
+    Overlap semantics: ANY overlap — a line window [ws, we) is a candidate for
+    segment [ss, se) when ``ws < se and ss < we``. This is deliberately more
+    forgiving than midpoint-in-window because whisper timings (and rendered
+    shot boundaries) drift by fractions of a second; a segment straddling a cut
+    still sees both neighbouring lines and the fuzzy ratio picks the right one.
+
+    Among overlapping lines the best fuzzy ratio wins (earliest window on a
+    tie). Since time already disambiguates, the acceptance threshold (0.35) is
+    lower than the pure-text matcher's 0.5. Segments with no overlapping line
+    or below the threshold keep their whisper text.
+    """
+    if not timed_lines:
+        return segments
+
+    result: list[CaptionSegment] = []
+    for seg in segments:
+        norm_seg = _normalize(seg.text)
+        best_text: str | None = None
+        best_ratio = 0.0
+        for line in timed_lines:
+            if not (line["start"] < seg.end and seg.start < line["end"]):
+                continue
+            ratio = difflib.SequenceMatcher(None, norm_seg, _normalize(line["text"])).ratio()
+            if ratio > best_ratio:  # strict > keeps the earliest window on a tie
+                best_ratio = ratio
+                best_text = line["text"]
+        if best_text is not None and best_ratio >= min_ratio:
+            result.append(dataclasses.replace(seg, text=best_text))
+        else:
+            result.append(seg)
     return result
 
 
@@ -251,9 +321,16 @@ async def caption_output(
         raise ValidationFailedError("no speech detected in the video")
 
     job = session.get(RenderJob, output.render_job_id)
-    script_lines = extract_script_lines(job.request_json if job else None)
-    if script_lines:
-        segments = correct_segments(segments, script_lines)
+    request_json = job.request_json if job else None
+    timed = timed_script_lines(request_json)
+    if timed:
+        # Shot durations give each script line a time window — align by time
+        # first, fuzzy ratio as tiebreak/validation.
+        segments = correct_segments_timed(segments, timed)
+    else:
+        script_lines = extract_script_lines(request_json)
+        if script_lines:
+            segments = correct_segments(segments, script_lines)
 
     base = video_path.with_suffix("")
     ass_path = Path(f"{base}.ass")

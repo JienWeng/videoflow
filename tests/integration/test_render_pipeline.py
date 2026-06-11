@@ -156,7 +156,16 @@ def test_caption_output_endpoint(client, monkeypatch, tmp_path):
 
     with Session(db_engine) as s:
         job = s.get(RenderJob, job_id)
-        job.request_json = {**job.request_json, "prompt": '@Image says 「我是乐乐 乐乐是我」 cheerfully'}
+        job.request_json = {
+            **job.request_json,
+            "prompt": '@Image says 「我是乐乐 乐乐是我」 cheerfully',
+            # multi_prompt entries carry durations (as the live payload does), so
+            # the duration-windowed alignment path is exercised end-to-end.
+            "multi_prompt": [
+                {"index": 1, "prompt": '@Image says 「我是乐乐 乐乐是我」 cheerfully', "duration": 3},
+                {"index": 2, "prompt": "The kitten just meows", "duration": 2},
+            ],
+        }
         s.add(job)
         s.commit()
 

@@ -126,3 +126,82 @@ def test_correct_segments_line_can_repeat_across_segments():
     lines = ["我是乐乐", "乐乐是我"]
     out = correct_segments(segs, lines)
     assert [s.text for s in out] == ["我是乐乐", "乐乐是我"]
+
+
+# ---------------------------------------------------------------------------
+# Shot-duration-aware (timed) caption alignment
+# ---------------------------------------------------------------------------
+
+from app.services.caption_service import correct_segments_timed, timed_script_lines
+
+
+class TestTimedScriptLines:
+    def test_windows_are_cumulative_and_silent_entries_keep_timeline(self):
+        """3 entries (3s/2s/3s); lines in entries 1 and 3, entry 2 silent.
+        Entry 2 contributes its duration to the timeline but no line, so the
+        windows are [0,3] and [5,8]."""
+        spec = {
+            "prompt": "whole-scene prompt without quotes",
+            "multi_prompt": [
+                {"index": 1, "prompt": "乐乐 says 「我是乐乐 乐乐是我」", "duration": 3},
+                {"index": 2, "prompt": "The kitten just meows", "duration": 2},
+                {"index": 3, "prompt": "天天 says 「我是天天 天天是我」", "duration": 3},
+            ],
+        }
+        assert timed_script_lines(spec) == [
+            {"text": "我是乐乐 乐乐是我", "start": 0.0, "end": 3.0},
+            {"text": "我是天天 天天是我", "start": 5.0, "end": 8.0},
+        ]
+
+    def test_empty_or_missing_spec(self):
+        assert timed_script_lines(None) == []
+        assert timed_script_lines({}) == []
+        assert timed_script_lines({"prompt": "「有台词」 but no multi_prompt"}) == []
+
+    def test_entries_without_durations_yield_nothing(self):
+        spec = {"multi_prompt": [{"prompt": "「我是乐乐」"}]}
+        assert timed_script_lines(spec) == []
+
+    def test_index_field_orders_entries(self):
+        spec = {
+            "multi_prompt": [
+                {"index": 2, "prompt": "「第二句」", "duration": 2},
+                {"index": 1, "prompt": "「第一句」", "duration": 3},
+            ],
+        }
+        assert timed_script_lines(spec) == [
+            {"text": "第一句", "start": 0.0, "end": 3.0},
+            {"text": "第二句", "start": 3.0, "end": 5.0},
+        ]
+
+
+class TestCorrectSegmentsTimed:
+    # Windows: line A in [0,3], line B in [5,8] (homophone-tie pair).
+    TIMED = [
+        {"text": "我是天天 天天是我", "start": 0.0, "end": 3.0},
+        {"text": "我是田田 田田是我", "start": 5.0, "end": 8.0},
+    ]
+
+    def test_window_overlap_disambiguates_fuzzy_tie(self):
+        """天天/田田 are homophones: the misheard text fuzzy-ties against BOTH
+        lines, but only window 1 overlaps the 0.5-2.5s segment — so the
+        window-1 line wins purely on time."""
+        segs = [CaptionSegment(start=0.5, end=2.5, text="我是甜甜 甜甜是我")]
+        out = correct_segments_timed(segs, self.TIMED)
+        assert out[0].text == "我是天天 天天是我"
+        assert (out[0].start, out[0].end) == (0.5, 2.5)
+
+    def test_segment_outside_all_windows_keeps_whisper_text(self):
+        segs = [CaptionSegment(start=10.0, end=12.0, text="窗外的喵喵叫")]
+        out = correct_segments_timed(segs, self.TIMED)
+        assert out[0].text == "窗外的喵喵叫"
+
+    def test_below_threshold_mismatch_keeps_whisper_text(self):
+        # Overlaps window 1 but shares nothing with its line -> below 0.35.
+        segs = [CaptionSegment(start=1.0, end=2.0, text="completely unrelated english")]
+        out = correct_segments_timed(segs, self.TIMED)
+        assert out[0].text == "completely unrelated english"
+
+    def test_no_timed_lines_is_noop(self):
+        segs = [CaptionSegment(start=0, end=1, text="hello")]
+        assert correct_segments_timed(segs, []) == segs
