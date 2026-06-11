@@ -11,7 +11,11 @@ import logging
 
 from sqlmodel import Session, select
 
-from app.agents.prompt_agent import NO_TEXT_NEGATIVE, collect_named_references
+from app.agents.prompt_agent import (
+    NO_CLONE_NEGATIVE,
+    NO_TEXT_NEGATIVE,
+    collect_named_references,
+)
 from app.errors import NotFoundError, ValidationFailedError
 from app.jobs import worker
 from app.models import Asset, Character, RenderJob, RenderOutput, RenderStatus
@@ -106,7 +110,7 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
            "continuity and lighting. " if storyboard else "")
         + "Spoken dialogue, clear and natural. Negative: "
         f"{NO_TEXT_NEGATIVE}, no watermark, no outfit changes, no extra "
-        "characters, no distorted faces."
+        f"characters, no distorted faces, {NO_CLONE_NEGATIVE}."
     )
     # Deterministic style enforcement on the whole-scene video prompt.
     prompt = style_service.apply_style(prompt, style_service.get_style(session))

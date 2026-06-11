@@ -232,6 +232,10 @@ def test_scene_render_uses_shots_storyboard_and_references(ctx):
     assert "https://static.atlascloud.ai/up/bg.png" in payload["images"]
     assert len(payload["images"]) == 3  # char + bg + storyboard
     assert payload["sound"] is True
+    # The whole-scene negative line forbids duplicated/cloned characters.
+    from app.agents.prompt_agent import NO_CLONE_NEGATIVE
+
+    assert NO_CLONE_NEGATIVE in payload["prompt"]
 
 
 def test_scene_render_without_shots_rejected(ctx):

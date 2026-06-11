@@ -77,6 +77,10 @@ async def run_qa(
             for i, s in enumerate(shots)
         )
         requirements += "\nEvery shot must contain a short spoken line (「」)."
+    requirements += (
+        "\nEach character must appear exactly once per shot — flag any "
+        "duplicated/cloned characters."
+    )
     if style_line := _style_requirements_line(session):
         requirements += f"\n{style_line}"
     description = (

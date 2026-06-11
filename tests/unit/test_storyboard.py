@@ -48,6 +48,8 @@ class TestBuildStoryboardPrompt:
         assert "sunny kindergarten playroom" in prompt
         assert "warm soft morning daylight" in prompt
         assert "same characters" in prompt.lower()
+        # No-clone rule: a character must not appear twice within one panel.
+        assert "exactly once per panel" in prompt
         assert "no text" in prompt.lower()
 
 

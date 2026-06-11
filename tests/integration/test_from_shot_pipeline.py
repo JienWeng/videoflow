@@ -80,22 +80,29 @@ def ctx(monkeypatch, tmp_path):
 
     from app.models import Asset, Character, Scene, Shot
 
-    for name in ("char.png", "bg.png"):
+    for name in ("char.png", "char2.png", "grace_photo.png", "bg.png"):
         (tmp_path / name).write_bytes(b"img")
     with Session(engine) as s:
+        # Grace has TWO reference sheets, and the shot carries ANOTHER photo of
+        # her ("Grace" asset) — only the first sheet may reach Kling, or the
+        # model renders her twice (clone bug).
         s.add(Character(
             id="char_grace", name="Grace",
-            reference_asset_ids_json=["asset_char"],
+            reference_asset_ids_json=["asset_char", "asset_char2"],
         ))
         s.add(Asset(id="asset_char", type="character_reference", name="Grace",
                     file_path=str(tmp_path / "char.png")))
+        s.add(Asset(id="asset_char2", type="character_reference", name="Grace",
+                    file_path=str(tmp_path / "char2.png")))
+        s.add(Asset(id="asset_grace_photo", type="prop", name="Grace",
+                    file_path=str(tmp_path / "grace_photo.png")))
         s.add(Asset(id="asset_bg", type="background", name="Meadow",
                     file_path=str(tmp_path / "bg.png")))
         s.add(Scene(id="scene_1", title="t", summary="sum", duration=5,
                     character_ids_json=["char_grace"]))
         s.add(Shot(id="shot_1", scene_id="scene_1", shot_order=0, duration=5,
                    prompt="Grace waves", camera="mid-shot", movement="static",
-                   asset_ids_json=["asset_bg"]))
+                   asset_ids_json=["asset_bg", "asset_grace_photo"]))
         s.commit()
 
     from app.main import create_app
@@ -112,18 +119,22 @@ def ctx(monkeypatch, tmp_path):
 
 
 def test_from_shot_sends_characters_and_assets_with_multishot_voice(ctx):
-    client, fake_atlas, _ = ctx
+    client, fake_atlas, fake_llm = ctx
     resp = client.post(
         "/render/from-shot", json={"scene_id": "scene_1", "shot_id": "shot_1"}
     )
     assert resp.status_code == 202, resp.text
 
     payload = fake_atlas.video_payloads[0]
-    # Character reference image AND the shot's own asset both reach images[].
+    # Exactly ONE image for Grace (first sheet only) plus the background:
+    # her second sheet and the shot's extra photo of her are dropped so Kling
+    # never sees two named refs of the same person (clone bug).
     assert payload["images"] == [
         "https://static.atlascloud.ai/up/char.png",
         "https://static.atlascloud.ai/up/bg.png",
     ]
+    # No "Grace 2" reference was ever shown to the prompt agent.
+    assert "Grace 2" not in fake_llm.render_prompts[0]
     # Voice + multi-shot enforced even though the LLM turned them off.
     assert payload["sound"] is True
     assert payload["keep_original_sound"] is True

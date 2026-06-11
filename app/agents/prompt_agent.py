@@ -17,6 +17,14 @@ from app.schemas import CharacterBible, ReferenceImage, RenderSpec, ShotSpec
 # render_service so the wording can't drift between the two render paths.
 NO_TEXT_NEGATIVE = "no subtitles, no on-screen text, no captions"
 
+# Kling renders a clone whenever it suspects two named images are two people —
+# enforced in every render path (prompt agent + whole-scene) alongside the
+# one-image-per-character rule in collect_named_references.
+NO_CLONE_NEGATIVE = (
+    "exactly one instance of each character, no duplicated characters, "
+    "no clones or twins"
+)
+
 
 def collect_named_references(
     *,
@@ -26,16 +34,28 @@ def collect_named_references(
     asset_names: dict[str, str],
 ) -> list[dict]:
     """Merge every available reference image into one named list for Kling:
-    caller-supplied refs first (verbatim), then character bible reference images
-    (named after the character, "@Name 2" for extras), then shot/scene assets
-    (named after the asset). Asset ids are de-duplicated (first name wins) and
-    @names are kept unique so prompt tokens resolve unambiguously."""
+    caller-supplied refs first (verbatim), then ONE reference image per
+    character bible (named after the character), then shot/scene assets (named
+    after the asset). Asset ids are de-duplicated (first name wins).
+
+    Each character maps to exactly ONE named image: Kling treats two named
+    images of the same person ("@乐乐" and "@乐乐 2") as two distinct people
+    and renders clones. So extra character sheets are never sent, and any
+    later entry whose name collides with an already-added character (e.g. a
+    shot asset that is another photo of them) is SKIPPED entirely. Only
+    non-character names (two different props sharing a name) keep the " 2"
+    uniquification so their prompt tokens stay unambiguous."""
+    character_names = {bible.name for bible in character_bibles}
     seen_ids: set[str] = set()
     seen_names: set[str] = set()
     refs: list[dict] = []
 
     def add(name: str, asset_id: str) -> None:
         if asset_id in seen_ids:
+            return
+        if name in character_names and name in seen_names:
+            # Another image of a character we already reference — a second
+            # named ref would make Kling render them twice. Drop it.
             return
         unique = name
         n = 2
@@ -49,7 +69,7 @@ def collect_named_references(
     for ref in named_references:
         add(ref["name"], ref["asset_id"])
     for bible in character_bibles:
-        for aid in bible.reference_asset_ids:
+        for aid in bible.reference_asset_ids[:1]:  # one image per character
             add(bible.name, aid)
     for aid in shot_asset_ids:
         add(asset_names.get(aid) or aid, aid)
@@ -68,6 +88,8 @@ def enforce_render_defaults(spec: RenderSpec, *, named_references: list[dict]) -
         spec.multi_prompt = []
     if "no subtitles" not in spec.prompt.lower():
         spec.prompt = f"{spec.prompt} — {NO_TEXT_NEGATIVE} (added in post)."
+    if "no clones" not in spec.prompt.lower():
+        spec.prompt = f"{spec.prompt} — {NO_CLONE_NEGATIVE}."
     present = {r.asset_id for r in spec.reference_images}
     for ref in named_references:
         if ref["asset_id"] not in present:

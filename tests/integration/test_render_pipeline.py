@@ -248,6 +248,11 @@ def test_render_job_succeeds(client):
     # No StyleGuide seeded -> the QA requirements carry no style line.
     assert client.fake_llm.qa_prompts
     assert all("Style guide:" not in p for p in client.fake_llm.qa_prompts)
+    # QA must check for the clone bug: duplicated characters in a shot.
+    assert all(
+        "Each character must appear exactly once per shot" in p
+        for p in client.fake_llm.qa_prompts
+    )
 
     # The rendered video must appear in the Assets library.
     assets = client.get("/assets").json()

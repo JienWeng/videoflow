@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.agents.prompt_agent import (
+    NO_CLONE_NEGATIVE,
     NO_TEXT_NEGATIVE,
     collect_named_references,
     enforce_render_defaults,
@@ -31,18 +32,40 @@ class TestCollectNamedReferences:
         )
         assert refs == [{"name": "Kling Lipstick", "asset_id": "asset_a"}]
 
-    def test_character_reference_images_are_added_by_character_name(self):
+    def test_character_gets_exactly_one_reference_image(self):
+        # CONTRACT CHANGE: previously every sheet was added ("Shirt Boy 2" for
+        # extras), but Kling treats two named images of the same person as two
+        # distinct people and renders clones. Only the FIRST sheet is sent now.
         refs = collect_named_references(
             named_references=[],
             character_bibles=[bible("Shirt Boy", ["asset_c1", "asset_c2"])],
             shot_asset_ids=[],
             asset_names={},
         )
-        # First image is @Shirt Boy; extras get numeric suffixes like Kling's @image1.
-        assert refs == [
-            {"name": "Shirt Boy", "asset_id": "asset_c1"},
-            {"name": "Shirt Boy 2", "asset_id": "asset_c2"},
-        ]
+        assert refs == [{"name": "Shirt Boy", "asset_id": "asset_c1"}]
+
+    def test_shot_asset_named_like_a_character_is_skipped_not_uniquified(self):
+        # A shot asset that is just another photo of a cast character must NOT
+        # become "乐乐 2" — that names a second person and clones the character.
+        refs = collect_named_references(
+            named_references=[],
+            character_bibles=[bible("乐乐", ["asset_c1"])],
+            shot_asset_ids=["asset_extra_photo"],
+            asset_names={"asset_extra_photo": "乐乐"},
+        )
+        assert refs == [{"name": "乐乐", "asset_id": "asset_c1"}]
+        assert all("乐乐 2" != r["name"] for r in refs)
+
+    def test_caller_ref_then_character_extra_photo_is_skipped(self):
+        # Caller already supplied @Grace; the bible's sheet for Grace would be
+        # a second image of the same person — skip it, don't emit "Grace 2".
+        refs = collect_named_references(
+            named_references=[{"name": "Grace", "asset_id": "asset_a"}],
+            character_bibles=[bible("Grace", ["asset_b"])],
+            shot_asset_ids=[],
+            asset_names={},
+        )
+        assert refs == [{"name": "Grace", "asset_id": "asset_a"}]
 
     def test_shot_assets_are_added_by_asset_name(self):
         refs = collect_named_references(
@@ -74,7 +97,9 @@ class TestCollectNamedReferences:
         )
         assert refs == [{"name": "Hero", "asset_id": "asset_1"}]
 
-    def test_clashing_names_get_unique_suffixes(self):
+    def test_clashing_non_character_names_get_unique_suffixes(self):
+        # Two genuinely different PROPS sharing a name are still uniquified —
+        # the skip rule applies only to character names (same-person photos).
         refs = collect_named_references(
             named_references=[{"name": "Image", "asset_id": "asset_1"}],
             character_bibles=[],
@@ -84,6 +109,7 @@ class TestCollectNamedReferences:
         names = [r["name"] for r in refs]
         assert len(set(names)) == 2
         assert names[0] == "Image"
+        assert names[1] == "Image 2"
 
     def test_all_sources_combined_in_order(self):
         refs = collect_named_references(
@@ -245,6 +271,23 @@ class TestEnforceRenderDefaults:
         assert spec.prompt.lower().count("no subtitles") == 1
         assert NO_TEXT_NEGATIVE not in spec.prompt
 
+    def test_no_clone_negative_appended_when_missing(self):
+        spec = self.spec()
+        enforce_render_defaults(spec, named_references=[])
+        assert NO_CLONE_NEGATIVE in spec.prompt
+
+    def test_no_clone_negative_appended_only_once_on_rerun(self):
+        spec = self.spec()
+        enforce_render_defaults(spec, named_references=[])
+        enforce_render_defaults(spec, named_references=[])
+        assert spec.prompt.lower().count("no clones") == 1
+
+    def test_no_clone_negative_respects_existing_wording(self):
+        spec = self.spec(prompt="@Grace waves. Negative: NO CLONES or twins.")
+        enforce_render_defaults(spec, named_references=[])
+        assert spec.prompt.lower().count("no clones") == 1
+        assert NO_CLONE_NEGATIVE not in spec.prompt
+
 
 class TestPromptRules:
     """The planning prompts must teach the two production rules: captions are
@@ -265,3 +308,7 @@ class TestPromptRules:
 
     def test_every_multi_prompt_entry_speaks_rule_in_prompt_agent(self):
         assert "EVERY multi_prompt entry" in PROMPTS["prompt_agent"]
+
+    def test_no_clone_rule_in_prompt_agent_negative_guidance(self):
+        assert "no duplicated characters" in PROMPTS["prompt_agent"]
+        assert "no clones or twins" in PROMPTS["prompt_agent"]

@@ -104,8 +104,9 @@ PROMPTS: dict[str, str] = {
         "- NEVER ask for on-screen text, subtitles, captions, lyrics, or titles "
         "— captions are added in post-production from the 「」 dialogue lines.\n"
         "- End with negative guidance: no random outfit changes, no extra "
-        "characters, no distorted faces, and NO subtitles / on-screen text / "
-        "captions / words / watermark."
+        "characters, no distorted faces, exactly one instance of each character "
+        "(no duplicated characters, no clones or twins), and NO subtitles / "
+        "on-screen text / captions / words / watermark."
     ),
     "qa_agent": (
         "You are a strict QA reviewer for generated video. Compare the described "
