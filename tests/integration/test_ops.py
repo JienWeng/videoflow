@@ -93,6 +93,47 @@ def test_storyboard_background_failure_sets_failed(ctx, monkeypatch):
     assert op["result_json"] == {}
 
 
+# ── shots generation ──────────────────────────────────────────────────────────
+
+def test_shots_generate_background(ctx):
+    client, fake = ctx
+    resp = client.post(
+        "/scenes/scene_1/shots/generate?background=true",
+        json={"auto_assets": False},
+    )
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["op_id"].startswith("op_")
+    assert body["status"] == "running"
+
+    op = _wait_op(client, body["op_id"])
+    assert op["status"] == "succeeded", op
+    assert op["kind"] == "shots"
+    assert op["scene_id"] == "scene_1"
+    assert op["result_json"]["shot_ids"]
+    assert op["result_json"]["count"] == len(op["result_json"]["shot_ids"])
+    assert op["result_json"]["scene_id"] == "scene_1"
+
+    # Shots really persisted on the scene.
+    shots = client.get("/scenes/scene_1/shots").json()
+    shot_ids = {s["id"] for s in shots}
+    assert set(op["result_json"]["shot_ids"]) <= shot_ids
+
+
+def test_shots_generate_background_failure_sets_failed(ctx, monkeypatch):
+    client, fake = ctx
+
+    async def boom(session, scene_id, **kw):
+        raise RuntimeError("shot agent exploded")
+
+    monkeypatch.setattr("app.services.scene_service.create_shots", boom)
+    resp = client.post("/scenes/scene_1/shots/generate?background=true")
+    assert resp.status_code == 202, resp.text  # never a 500
+    op = _wait_op(client, resp.json()["op_id"])
+    assert op["status"] == "failed"
+    assert "shot agent exploded" in op["error"]
+
+
 # ── scene asset generation ────────────────────────────────────────────────────
 
 def test_assets_generate_background(ctx):

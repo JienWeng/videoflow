@@ -97,9 +97,19 @@ class ShotsGenRequest(BaseModel):
 async def generate_shots(
     scene_id: str,
     body: ShotsGenRequest | None = None,
+    background: bool = False,
     session: Session = Depends(get_session),
 ):
+    """Generate the scene's shots (and, with auto_assets, its missing props).
+    With ?background=true the work runs as a tracked op (202 + /ops polling)."""
     auto_assets = body.auto_assets if body else True
+    if background:
+        op = op_service.start_op(
+            "shots",
+            lambda s: scene_service.create_shots(s, scene_id, auto_assets=auto_assets),
+            scene_id=scene_id,
+        )
+        return _op_response(op)
     return await scene_service.create_shots(session, scene_id, auto_assets=auto_assets)
 
 

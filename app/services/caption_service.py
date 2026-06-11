@@ -52,6 +52,25 @@ STYLES: dict[str, dict] = {
 }
 
 
+# Audience keywords (case-insensitive) that mark a project as child-oriented,
+# so caption defaults pick the big bouncy "kids" preset.
+_CHILD_AUDIENCE_KEYWORDS = ("child", "kid", "儿童", "幼儿", "小朋友")
+
+
+def default_caption_style(style) -> str:
+    """Default caption preset derived from the project StyleGuide.
+
+    No style guide -> "kids" (the historical de-facto default). With a guide:
+    a child-ish audience keeps "kids"; any other audience (including none
+    stated) means a general project -> "clean"."""
+    if style is None:
+        return "kids"
+    audience = (getattr(style, "audience", None) or "").lower()
+    if any(kw in audience for kw in _CHILD_AUDIENCE_KEYWORDS):
+        return "kids"
+    return "clean"
+
+
 QUOTE_RE = re.compile(r'[「『"“]([^」』"”]{1,80})[」』"”]')
 
 _NORM_RE = re.compile(r"[\s，。！？、,.!?…~～]")

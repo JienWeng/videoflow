@@ -205,3 +205,42 @@ class TestCorrectSegmentsTimed:
     def test_no_timed_lines_is_noop(self):
         segs = [CaptionSegment(start=0, end=1, text="hello")]
         assert correct_segments_timed(segs, []) == segs
+
+
+class TestDefaultCaptionStyle:
+    """default_caption_style derives the caption preset from the StyleGuide."""
+
+    class _Style:
+        def __init__(self, audience):
+            self.audience = audience
+
+    def test_no_style_guide_keeps_kids_default(self):
+        from app.services.caption_service import default_caption_style
+
+        assert default_caption_style(None) == "kids"
+
+    @pytest.mark.parametrize(
+        "audience",
+        ["children aged 3-6", "Kids learning Mandarin", "儿童", "幼儿园小班", "面向小朋友的科普"],
+    )
+    def test_child_audience_picks_kids(self, audience):
+        from app.services.caption_service import default_caption_style
+
+        assert default_caption_style(self._Style(audience)) == "kids"
+
+    @pytest.mark.parametrize("audience", ["young adults", "tech professionals", "", None])
+    def test_general_audience_picks_clean(self, audience):
+        from app.services.caption_service import default_caption_style
+
+        assert default_caption_style(self._Style(audience)) == "clean"
+
+    def test_keyword_match_is_case_insensitive(self):
+        from app.services.caption_service import default_caption_style
+
+        assert default_caption_style(self._Style("CHILDREN and parents")) == "kids"
+
+    def test_default_is_a_known_style(self):
+        from app.services.caption_service import default_caption_style
+
+        assert default_caption_style(None) in STYLES
+        assert default_caption_style(self._Style("adults")) in STYLES

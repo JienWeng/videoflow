@@ -25,6 +25,10 @@
   let captionModels: string[] = $state([]);
   let captionDefaultModel = $state('');
   let captionDefaultLanguage = $state('zh');
+  let captionDefaultStyle = $state('');
+  // Effective style for an output: per-output pick, else the style-guide-derived default.
+  const styleFor = (outId: string) =>
+    captionStyle[outId] ?? (captionDefaultStyle || captionStyles[0] || 'kids');
   let captionStyle: Record<string, string> = $state({});
   let captionModel: Record<string, string> = $state({});
   let captionLanguage: Record<string, string> = $state({});
@@ -53,6 +57,7 @@
         captionModels = cfg.models ?? [];
         captionDefaultModel = cfg.default_model ?? '';
         captionDefaultLanguage = cfg.default_language ?? 'zh';
+        captionDefaultStyle = cfg.default_style ?? '';
       })
       .catch(() => {
         // Fallback to legacy endpoint
@@ -72,7 +77,7 @@
       await runBackgroundOp(
         `/outputs/${out.id}/caption`,
         {
-          style: captionStyle[out.id] ?? captionStyles[0] ?? 'kids',
+          style: styleFor(out.id),
           model: captionModel[out.id] ?? (captionDefaultModel || undefined),
           language: lang === 'auto' ? null : lang
         },
@@ -216,7 +221,8 @@
                     <div class="flex flex-wrap items-center gap-1 mt-1">
                       {#if captionStyles.length}
                         <select
-                          bind:value={captionStyle[out.id]}
+                          value={styleFor(out.id)}
+                          onchange={(e) => (captionStyle[out.id] = (e.currentTarget as HTMLSelectElement).value)}
                           class="rounded border border-input bg-background px-1.5 py-1 text-xs"
                         >
                           {#each captionStyles as st}<option value={st}>{st}</option>{/each}

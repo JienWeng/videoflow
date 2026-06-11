@@ -118,6 +118,7 @@
         captionModels = cfg.models ?? [];
         captionModel = cfg.default_model ?? captionModels[0] ?? '';
         if (!intent.language) captionLanguage = cfg.default_language ?? 'zh';
+        if (!intent.style && cfg.default_style) captionStyle = cfg.default_style;
       })
       .catch(() => {});
   }
@@ -190,6 +191,13 @@
           'Storyboard',
           (op) => op.result_json?.asset_id ?? op.scene_id ?? sceneId
         );
+      case 'generate_shots':
+        return runInBackground(
+          `/scenes/${sceneId}/shots/generate`,
+          { auto_assets: autoAssets },
+          'Shot generation',
+          (op) => op.result_json?.scene_id ?? op.scene_id ?? sceneId
+        );
       case 'generate_assets':
         return runInBackground(
           `/scenes/${sceneId}/assets/generate`,
@@ -226,11 +234,6 @@
           result = await post(`/scenes/${sceneId}/generate`, { character_ids: [] });
           focusId = result.id ?? sceneId;
           toast.success('Scene expanded');
-          break;
-        case 'generate_shots':
-          result = await post(`/scenes/${sceneId}/shots/generate`, { auto_assets: autoAssets });
-          focusId = sceneId;
-          toast.success(`Shots generated (${Array.isArray(result) ? result.length : '?'})`);
           break;
         case 'render_scene':
           result = await post(`/scenes/${sceneId}/render`);

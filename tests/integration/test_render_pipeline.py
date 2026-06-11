@@ -208,6 +208,23 @@ def test_caption_config_endpoint(client):
     assert "large-v3" in body["models"]
     assert body["default_model"] == "small"
     assert body["default_language"] == "zh"
+    # No StyleGuide seeded -> the historical "kids" default.
+    assert body["default_style"] == "kids"
+
+
+def test_caption_config_default_style_follows_style_guide(client):
+    from app.database import engine as db_engine
+    from app.models import StyleGuide
+
+    with Session(db_engine) as s:
+        s.add(StyleGuide(style_prompt="3D cartoon", audience="children aged 3-6"))
+        s.commit()
+    assert client.get("/caption-config").json()["default_style"] == "kids"
+
+    with Session(db_engine) as s:
+        s.add(StyleGuide(style_prompt="cinematic", audience="young adults"))
+        s.commit()
+    assert client.get("/caption-config").json()["default_style"] == "clean"
 
 
 def test_caption_unknown_style_rejected(client):

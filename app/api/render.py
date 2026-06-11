@@ -137,15 +137,16 @@ def caption_styles():
 
 
 @router.get("/caption-config")
-def caption_config():
+def caption_config(session: Session = Depends(get_session)):
     from app.config import get_settings
-    from app.services.caption_service import STYLES, WHISPER_MODELS
+    from app.services.caption_service import STYLES, WHISPER_MODELS, default_caption_style
 
     return {
         "styles": list(STYLES),
         "models": WHISPER_MODELS,
         "default_model": get_settings().whisper_model,
         "default_language": "zh",
+        "default_style": default_caption_style(style_service.get_style(session)),
     }
 
 

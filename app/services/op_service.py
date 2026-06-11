@@ -32,6 +32,11 @@ _SUMMARIZERS: dict[str, Callable[[object], dict]] = {
         "asset_ids": [a.id for a in rows],
         "names": [a.name for a in rows],
     },
+    "shots": lambda rows: {
+        "shot_ids": [s.id for s in rows],
+        "count": len(rows),
+        "scene_id": rows[0].scene_id if rows else None,
+    },
     "caption": lambda o: {"output_id": o.id, "captioned_path": o.captioned_path},
     "style_ingest": lambda s: {"style_guide_id": s.id, "name": s.name},
 }

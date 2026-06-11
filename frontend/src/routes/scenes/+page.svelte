@@ -90,10 +90,30 @@
       post(`/scenes/${s.id}/generate`, { character_ids: castSelection[s.id] ?? [] })
     );
 
-  const generateShots = (s: any) =>
-    run(`shots-${s.id}`, () =>
-      post(`/scenes/${s.id}/shots/generate`, { auto_assets: autoProps[s.id] ?? true })
-    );
+  async function generateShots(s: any) {
+    const key = `shots-${s.id}`;
+    opBusy[key] = true;
+    try {
+      await runBackgroundOp(
+        `/scenes/${s.id}/shots/generate`,
+        { auto_assets: autoProps[s.id] ?? true },
+        {
+          label: 'Shot generation',
+          onDone: async () => {
+            opBusy[key] = false;
+            // Shots changed (and auto props may have generated assets) — refetch
+            // this scene's shots and drop any now-stale suggestion plan.
+            shotsByScene[s.id] = await get(`/scenes/${s.id}/shots`);
+            assetPlans[s.id] = null;
+          },
+          onFail: () => (opBusy[key] = false)
+        }
+      );
+    } catch (e: any) {
+      opBusy[key] = false;
+      toast.error(e.message);
+    }
+  }
 
   async function generateStoryboard(s: any) {
     const key = `sb-${s.id}`;
@@ -370,8 +390,8 @@
             <Wand2 class="size-3 mr-1" />{busy === `expand-${s.id}` ? 'Expanding…' : '1. Expand scene (AI)'}
           </Button>
           <div class="inline-flex items-center gap-1.5">
-            <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateShots(s)}>
-              <LayoutGrid class="size-3 mr-1" />{busy === `shots-${s.id}` ? 'Generating…' : '2. Generate shots (AI)'}
+            <Button variant="outline" size="sm" disabled={opBusy[`shots-${s.id}`]} onclick={() => generateShots(s)}>
+              <LayoutGrid class="size-3 mr-1" />{opBusy[`shots-${s.id}`] ? 'Generating…' : '2. Generate shots (AI)'}
             </Button>
             <label class="inline-flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
               <input
@@ -505,6 +525,9 @@
           </div>
           {#if assetPlans[s.id]?.assets?.length}
             {@const plan = assetPlans[s.id]!}
+            {@const selectedItems = plan.assets.filter((_, i) => planSelected[s.id]?.[i])}
+            {@const reuseCount = selectedItems.filter((a) => a.reuse).length}
+            {@const genCount = selectedItems.length - reuseCount}
             <div class="mt-2 rounded-md border border-border p-2 space-y-2">
               <div class="text-xs font-medium">Suggested assets</div>
               <div class="flex flex-wrap gap-2">
@@ -515,6 +538,9 @@
                       <span class="flex items-center gap-1.5">
                         <span class="font-medium truncate">{a.name}</span>
                         <Badge variant="secondary" class="text-[10px] px-1.5 py-0">{a.asset_type}</Badge>
+                        {#if a.reuse}
+                          <Badge variant="secondary" class="text-[10px] px-1.5 py-0 text-muted-foreground">reuses existing</Badge>
+                        {/if}
                       </span>
                       <span class="block text-muted-foreground mt-0.5">{a.description}</span>
                       {#if a.shot_orders?.length}
@@ -529,12 +555,14 @@
               {#if plan.reasoning}
                 <p class="text-xs text-muted-foreground">{plan.reasoning}</p>
               {/if}
-              <Button size="sm" disabled={opBusy[`assets-${s.id}`] || !planSelected[s.id]?.some(Boolean)}
+              <Button size="sm" disabled={opBusy[`assets-${s.id}`] || !selectedItems.length}
                 onclick={() => generateSelectedAssets(s)}>
                 <ImagePlus class="size-3 mr-1" />
                 {opBusy[`assets-${s.id}`]
                   ? 'Generating…'
-                  : `Generate selected (${planSelected[s.id]?.filter(Boolean).length ?? 0})`}
+                  : reuseCount
+                    ? `Generate ${genCount} + reuse ${reuseCount}`
+                    : `Generate selected (${genCount})`}
               </Button>
             </div>
           {/if}
