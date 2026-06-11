@@ -18,8 +18,12 @@ class FakeLLM:
     """Prompt agent returns the worst-case drifting spec (voice off, ALL refs
     dropped) so the test proves the pipeline restores them itself; QA passes."""
 
+    def __init__(self):
+        self.render_prompts: list[str] = []
+
     async def generate(self, *, agent, response_model, user_prompt, context=None, images=None):
         if response_model is RenderSpec:
+            self.render_prompts.append(user_prompt)
             return RenderSpec(
                 scene_id="ignored",
                 duration=5,
@@ -59,7 +63,8 @@ def ctx(monkeypatch, tmp_path):
     fake_atlas = FakeAtlas()
     monkeypatch.setattr("app.services.render_service.get_atlas_client", lambda: fake_atlas)
     monkeypatch.setattr("app.providers.atlascloud_video.get_atlas_client", lambda: fake_atlas)
-    monkeypatch.setattr("app.agents.base.get_llm_client", lambda: FakeLLM())
+    fake_llm = FakeLLM()
+    monkeypatch.setattr("app.agents.base.get_llm_client", lambda: fake_llm)
 
     async def fake_download(url, dest):
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -103,11 +108,11 @@ def ctx(monkeypatch, tmp_path):
 
     app.dependency_overrides[get_session] = _session
     with TestClient(app) as c:
-        yield c, fake_atlas
+        yield c, fake_atlas, fake_llm
 
 
 def test_from_shot_sends_characters_and_assets_with_multishot_voice(ctx):
-    client, fake_atlas = ctx
+    client, fake_atlas, _ = ctx
     resp = client.post(
         "/render/from-shot", json={"scene_id": "scene_1", "shot_id": "shot_1"}
     )
@@ -124,3 +129,22 @@ def test_from_shot_sends_characters_and_assets_with_multishot_voice(ctx):
     assert payload["keep_original_sound"] is True
     assert payload["multi_shot"] is True
     assert payload["shot_type"] == "intelligence"
+
+
+def test_from_shot_passes_story_context_to_prompt_agent(ctx, monkeypatch):
+    """The from-shot endpoint must feed scene_service.story_context into the
+    prompt agent: a sentinel story dict must land in the LLM's user prompt."""
+    client, _, fake_llm = ctx
+    sentinel = {"story": {"idea": "STORY-SENTINEL-7", "title": "t", "summary": "s"}}
+    monkeypatch.setattr(
+        "app.services.scene_service.story_context", lambda session, scene: sentinel
+    )
+
+    resp = client.post(
+        "/render/from-shot", json={"scene_id": "scene_1", "shot_id": "shot_1"}
+    )
+    assert resp.status_code == 202, resp.text
+    assert fake_llm.render_prompts
+    prompt = fake_llm.render_prompts[-1]
+    assert "Overall story and sibling scenes (keep continuity)" in prompt
+    assert "STORY-SENTINEL-7" in prompt

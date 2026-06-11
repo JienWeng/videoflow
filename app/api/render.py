@@ -83,6 +83,7 @@ async def render_from_shot(
         asset_names=asset_names,
         video_asset_id=body.video_asset_id,
         style=style_service.style_context(style_service.get_style(session)),
+        story=scene_service.story_context(session, scene),
     )
     job = await render_service.start_render(session, spec)
     return _job_response(job)

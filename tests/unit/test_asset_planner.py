@@ -104,6 +104,37 @@ async def test_plan_assets_without_shots_omits_shots_block():
     assert "Scene shots" not in llm.user_prompt
 
 
+async def test_plan_assets_characters_and_story_blocks_reach_prompt():
+    from app.agents.asset_planner import plan_assets
+
+    llm = FakeLLM(AssetPlan())
+    await plan_assets(
+        scene_summary="s",
+        scene_json={},
+        existing_assets=[],
+        characters=[{"name": "Grace", "appearance": "small girl in a pink dress"}],
+        story={
+            "story": {"idea": "a cat learns to fly", "title": "Sky Cat", "summary": "x"},
+            "other_scenes": [{"title": "Takeoff", "summary": "the cat jumps"}],
+        },
+        client=llm,
+    )
+    assert "Cast (props must fit these characters)" in llm.user_prompt
+    assert "Grace" in llm.user_prompt
+    assert "small girl in a pink dress" in llm.user_prompt
+    assert "Overall story and sibling scenes (keep continuity)" in llm.user_prompt
+    assert "a cat learns to fly" in llm.user_prompt
+
+
+async def test_plan_assets_omits_characters_and_story_blocks_when_absent():
+    from app.agents.asset_planner import plan_assets
+
+    llm = FakeLLM(AssetPlan())
+    await plan_assets(scene_summary="s", scene_json={}, existing_assets=[], client=llm)
+    assert "Cast (props must fit these characters)" not in llm.user_prompt
+    assert "Overall story and sibling scenes" not in llm.user_prompt
+
+
 def test_planned_asset_shot_orders_defaults_empty():
     assert PlannedAsset(name="Cup", image_prompt="a cup").shot_orders == []
 

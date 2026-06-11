@@ -18,17 +18,21 @@ from app.database import get_session
 
 
 class FakeLLM:
-    """QA reviewer stub; `qa` is mutable so tests can simulate failing reviews."""
+    """QA reviewer stub; `qa` is mutable so tests can simulate failing reviews.
+    Captures each QA call's user_prompt so tests can assert on the requirements
+    text built by qa_service."""
 
     def __init__(self):
         from app.schemas import QAResult
 
         self.qa = QAResult(score=8, passed=True, issues=[], recommendation="accept")
+        self.qa_prompts: list[str] = []
 
-    async def generate(self, *, response_model, **kw):
+    async def generate(self, *, response_model, user_prompt=None, **kw):
         from app.schemas import QAResult
 
         assert response_model is QAResult
+        self.qa_prompts.append(user_prompt or "")
         return self.qa
 
 
@@ -241,6 +245,9 @@ def test_render_job_succeeds(client):
     # QA ran automatically and persisted a score + recommendation.
     assert outputs[0]["score"] == 8
     assert outputs[0]["qa_json"]["recommendation"] == "accept"
+    # No StyleGuide seeded -> the QA requirements carry no style line.
+    assert client.fake_llm.qa_prompts
+    assert all("Style guide:" not in p for p in client.fake_llm.qa_prompts)
 
     # The rendered video must appear in the Assets library.
     assets = client.get("/assets").json()
@@ -250,6 +257,33 @@ def test_render_job_succeeds(client):
     assert a["file_path"].endswith(".mp4")
     assert a["metadata_json"]["render_job_id"]
     assert a["metadata_json"]["render_output_id"]
+
+
+def test_qa_prompt_carries_style_line_when_guide_seeded(client):
+    """With a project StyleGuide on file, the QA requirements include a style
+    line so the vision reviewer judges style adherence too."""
+    from app.database import engine as db_engine
+    from app.models import StyleGuide
+
+    with Session(db_engine) as s:
+        s.add(StyleGuide(style_prompt="3D cartoon", palette="soft pastel", lighting="warm sun"))
+        s.commit()
+
+    spec = {
+        "scene_id": "scene_x",
+        "duration": 5,
+        "prompt": "@Image styled pass",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+    }
+    job_id = client.post("/render", json=spec).json()["job_id"]
+    body = _wait_for_job(client, job_id)
+    assert body["job"]["status"] == "succeeded", body
+
+    assert client.fake_llm.qa_prompts
+    assert any(
+        "Style guide: 3D cartoon; palette: soft pastel; lighting: warm sun." in p
+        for p in client.fake_llm.qa_prompts
+    )
 
 
 def test_qa_retry_corrective_rerender(client):

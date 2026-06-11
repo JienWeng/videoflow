@@ -18,7 +18,7 @@ from app.agents.qa_agent import review_output
 from app.config import get_settings
 from app.models import Character, RenderJob, RenderOutput, Scene
 from app.models.base import utcnow
-from app.services import media
+from app.services import media, style_service
 
 logger = logging.getLogger("videoflow.qa")
 
@@ -46,6 +46,21 @@ def _reference_image_paths(session: Session, job: RenderJob) -> list[str]:
     return paths[:MAX_REFERENCE_IMAGES]
 
 
+def _style_requirements_line(session: Session) -> str:
+    """One-line style expectation for the QA requirements; '' when there is no
+    style guide (or it carries no visual fields)."""
+    style = style_service.get_style(session)
+    if style is None:
+        return ""
+    parts = [
+        style.style_prompt,
+        f"palette: {style.palette}" if style.palette else "",
+        f"lighting: {style.lighting}" if style.lighting else "",
+    ]
+    joined = "; ".join(p for p in parts if p)
+    return f"Style guide: {joined}." if joined else ""
+
+
 async def run_qa(
     session: Session, job: RenderJob, output: RenderOutput, video_path: Path
 ) -> RenderOutput:
@@ -62,6 +77,8 @@ async def run_qa(
             for i, s in enumerate(shots)
         )
         requirements += "\nEvery shot must contain a short spoken line (「」)."
+    if style_line := _style_requirements_line(session):
+        requirements += f"\n{style_line}"
     description = (
         f"Generated video at {video_path.name}. "
         f"Multi-shot={ (job.request_json or {}).get('multi_shot') }. "

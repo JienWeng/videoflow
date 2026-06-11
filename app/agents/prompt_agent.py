@@ -89,6 +89,7 @@ async def build_render_spec(
     video_asset_id: str | None = None,
     dialogue_language: str = "English",
     style: dict | None = None,
+    story: dict | None = None,
     client=None,
 ) -> RenderSpec:
     """`named_references` is a list of {"name": str, "asset_id": str} the model
@@ -105,6 +106,11 @@ async def build_render_spec(
     )
     aspect_ratio = aspect_ratio or get_settings().default_aspect_ratio
     style_blocks = [as_block("Project style guide", style)] if style else []
+    story_blocks = (
+        [as_block("Overall story and sibling scenes (keep continuity)", story)]
+        if story
+        else []
+    )
     prompt = "\n\n".join(
         [
             as_block("Scene id", scene_id),
@@ -112,6 +118,7 @@ async def build_render_spec(
             as_block("Shot", shot),
             as_block("Aspect ratio", aspect_ratio),
             *style_blocks,
+            *story_blocks,
             as_block("DIALOGUE LANGUAGE (write all spoken 「」 lines in this language)", dialogue_language),
             as_block("Named reference images (use @name, echo into reference_images)", named_references),
             as_block("Character bibles", [b.model_dump() for b in character_bibles]),

@@ -122,6 +122,14 @@ async def plan_scene_assets(
                 {"name": asset.name, "type": asset.type, "description": asset.description}
             )
 
+    # Cast one-liners so planned props fit the characters (e.g. child-sized
+    # props for kids), plus the overall story for cross-scene continuity.
+    characters = [
+        {"name": c.name, "appearance": (c.appearance or "")[:160]}
+        for cid in scene.character_ids_json or []
+        if (c := session.get(Character, cid))
+    ]
+
     plan = await plan_assets(
         scene_summary=scene.summary,
         scene_json=scene.scene_json or {},
@@ -129,6 +137,8 @@ async def plan_scene_assets(
         instruction=instruction,
         shots=[{"shot_order": s.shot_order, "prompt": s.prompt} for s in shots],
         style=style_service.style_context(style_service.get_style(session)),
+        characters=characters or None,
+        story=scene_service.story_context(session, scene),
     )
     # Dedup FIRST, then truncate — dropped duplicates must not consume
     # max_assets slots. Shared path, so /assets/plan and /assets/generate

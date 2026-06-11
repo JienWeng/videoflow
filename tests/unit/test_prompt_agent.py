@@ -153,6 +153,32 @@ class TestBuildRenderSpec:
         # The LLM was shown both named references.
         assert "Meadow" in llm.user_prompt and "bg_img" in llm.user_prompt
 
+    async def test_story_block_included_when_passed(self):
+        from app.agents.prompt_agent import build_render_spec
+        from app.schemas import ShotSpec
+
+        llm = FakeLLM(RenderSpec(scene_id="s1", duration=5, prompt="p"))
+        shot = ShotSpec(shot_id="sh1", duration=5, prompt="Grace waves")
+        story = {
+            "story": {"idea": "a cat learns to fly", "title": "Sky Cat", "summary": "x"},
+            "other_scenes": [{"title": "Takeoff", "summary": "the cat jumps off the fence"}],
+        }
+        await build_render_spec(
+            scene_id="s1", scene_summary="sum", shot=shot, story=story, client=llm
+        )
+        assert "Overall story and sibling scenes (keep continuity)" in llm.user_prompt
+        assert "a cat learns to fly" in llm.user_prompt
+        assert "the cat jumps off the fence" in llm.user_prompt
+
+    async def test_story_block_omitted_when_absent(self):
+        from app.agents.prompt_agent import build_render_spec
+        from app.schemas import ShotSpec
+
+        llm = FakeLLM(RenderSpec(scene_id="s1", duration=5, prompt="p"))
+        shot = ShotSpec(shot_id="sh1", duration=5, prompt="Grace waves")
+        await build_render_spec(scene_id="s1", scene_summary="sum", shot=shot, client=llm)
+        assert "Overall story and sibling scenes" not in llm.user_prompt
+
 
 class TestEnforceRenderDefaults:
     def spec(self, **overrides) -> RenderSpec:

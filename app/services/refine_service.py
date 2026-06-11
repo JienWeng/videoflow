@@ -7,7 +7,7 @@ from sqlmodel import Session
 from app.agents import refine_agent
 from app.errors import NotFoundError
 from app.models import Scene, Shot
-from app.services import linking_service, scene_service
+from app.services import linking_service, scene_service, style_service
 from app.services.dialogue import DIALOGUE_RE, has_dialogue
 
 
@@ -33,7 +33,12 @@ async def refine_scene(session: Session, scene_id: str, instruction: str) -> dic
         "duration": scene.duration,
         "aspect_ratio": scene.aspect_ratio,
     }
-    refinement = await refine_agent.refine_scene(scene=current, instruction=instruction)
+    refinement = await refine_agent.refine_scene(
+        scene=current,
+        instruction=instruction,
+        style=style_service.style_context(style_service.get_style(session)),
+        story=scene_service.story_context(session, scene),
+    )
     changes = refinement.model_dump(exclude_none=True)
     changes.pop("note", None)
     if changes:
@@ -61,6 +66,8 @@ async def refine_shot(session: Session, shot_id: str, instruction: str) -> dict:
         shot=current,
         scene_summary=parent.summary if parent else "",
         instruction=instruction,
+        style=style_service.style_context(style_service.get_style(session)),
+        story=scene_service.story_context(session, parent) if parent else None,
     )
     changes = refinement.model_dump(exclude_none=True)
     changes.pop("note", None)

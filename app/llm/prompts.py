@@ -187,7 +187,8 @@ PROMPTS: dict[str, str] = {
         "Keep changes minimal and faithful to the instruction. Production rules: "
         "never request on-screen text, subtitles, captions, or titles — captions "
         "are added in post-production; write spoken dialogue inside 「」 quotes "
-        "verbatim; a scene renders as exactly ONE multi-shot video."
+        "verbatim; a scene renders as exactly ONE multi-shot video. Respect the "
+        "project style guide and overall story when provided."
     ),
 }
 

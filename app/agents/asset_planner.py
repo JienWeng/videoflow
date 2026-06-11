@@ -16,6 +16,8 @@ async def plan_assets(
     instruction: str = "",
     shots: list[dict] | None = None,
     style: dict | None = None,
+    characters: list[dict] | None = None,
+    story: dict | None = None,
     client: StructuredLLMClient | None = None,
 ) -> AssetPlan:
     parts = [
@@ -23,6 +25,12 @@ async def plan_assets(
         as_block("Scene spec", scene_json or {}),
         as_block("Existing assets (do NOT duplicate)", existing_assets or []),
     ]
+    if characters:
+        parts.append(as_block("Cast (props must fit these characters)", characters))
+    if story:
+        parts.append(
+            as_block("Overall story and sibling scenes (keep continuity)", story)
+        )
     if style:
         parts.append(as_block("Style guide", style))
     if shots:
