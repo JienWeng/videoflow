@@ -1456,3 +1456,140 @@ def test_revisions_pruned_to_20(ctx):
     assert len(revs) <= 20
     # The newest revision survives pruning.
     assert revs[0]["fields_json"] == {"prompt": "prompt v23"}
+
+
+# ── frame anchoring: previous scene's final frame steers the next render ──────
+
+def _seed_prev_scene_with_render(monkeypatch, *, video_bytes: bytes = b"vid"):
+    """scene_prev (same script as scene_1, earlier created_at) with a succeeded
+    render; media.extract_last_frame is faked to write a png."""
+    from datetime import timedelta
+
+    import app.database as _db_mod
+    from app.models import RenderJob, RenderOutput, RenderStatus, Scene, Script
+
+    with Session(_db_mod.engine) as s:
+        s.add(Script(id="script_anchor", idea="anchored story"))
+        scene1 = s.get(Scene, "scene_1")
+        scene1.script_id = "script_anchor"
+        s.add(scene1)
+
+        video = Path(_db_mod.engine.url.database).parent / "prev_render.mp4"
+        video.write_bytes(video_bytes)
+        s.add(Scene(id="scene_prev", script_id="script_anchor", title="prev",
+                    summary="the scene before", duration=5, aspect_ratio="9:16",
+                    created_at=scene1.created_at - timedelta(minutes=5)))
+        s.add(RenderJob(id="job_prev", scene_id="scene_prev", model="atlas/test",
+                        status=RenderStatus.succeeded))
+        s.add(RenderOutput(id="out_prev", render_job_id="job_prev",
+                           video_path=str(video)))
+        s.commit()
+
+    async def fake_extract(video_path, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"png")
+        return dest
+
+    monkeypatch.setattr("app.services.media.extract_last_frame", fake_extract)
+
+
+def _anchor_assets(scene_id: str):
+    import app.database as _db_mod
+    from app.models import Asset
+
+    with Session(_db_mod.engine) as s:
+        return [
+            a for a in s.exec(select(Asset).where(Asset.type == "frame")).all()
+            if (a.metadata_json or {}).get("anchor")
+            and (a.metadata_json or {}).get("scene_id") == scene_id
+        ]
+
+
+def test_scene_render_anchors_previous_scenes_final_frame(ctx, monkeypatch):
+    client, fake = ctx
+    _seed_prev_scene_with_render(monkeypatch)
+
+    assert client.post("/scenes/scene_1/render").status_code == 202
+
+    # The anchor Asset exists with the linkage metadata.
+    anchors = _anchor_assets("scene_1")
+    assert len(anchors) == 1
+    anchor = anchors[0]
+    assert anchor.name == "上一场景"
+    assert anchor.metadata_json["source_output_id"] == "out_prev"
+    assert anchor.metadata_json["anchor"] is True
+
+    # The anchor frame reaches Kling images[] — appended LAST.
+    payload = fake.video_payloads[0]
+    anchor_url = f"https://static.atlascloud.ai/up/{Path(anchor.file_path).name}"
+    assert payload["images"][-1] == anchor_url
+    # char + bg + anchor (no storyboard generated in this test).
+    assert len(payload["images"]) == 3
+    # The prompt instructs Kling to match the previous scene's final frame.
+    assert "@上一场景" in payload["prompt"]
+    assert "previous scene's final frame" in payload["prompt"]
+
+
+def test_scene_render_anchor_is_idempotent(ctx, monkeypatch):
+    client, fake = ctx
+    _seed_prev_scene_with_render(monkeypatch)
+
+    assert client.post("/scenes/scene_1/render").status_code == 202
+    assert client.post("/scenes/scene_1/render").status_code == 202
+
+    # Same source output -> the anchor asset is reused, never duplicated.
+    anchors = _anchor_assets("scene_1")
+    assert len(anchors) == 1
+    anchor_url = f"https://static.atlascloud.ai/up/{Path(anchors[0].file_path).name}"
+    for payload in fake.video_payloads:
+        assert payload["images"].count(anchor_url) == 1
+
+
+def test_scene_render_anchor_relinks_on_newer_source_render(ctx, monkeypatch):
+    client, fake = ctx
+    _seed_prev_scene_with_render(monkeypatch)
+    assert client.post("/scenes/scene_1/render").status_code == 202
+    first_anchor = _anchor_assets("scene_1")[0]
+
+    # A newer succeeded render of scene_prev appears.
+    from datetime import timedelta
+
+    import app.database as _db_mod
+    from app.models import RenderJob, RenderOutput, RenderStatus
+    from app.models.base import utcnow
+
+    with Session(_db_mod.engine) as s:
+        video = Path(_db_mod.engine.url.database).parent / "prev_render_v2.mp4"
+        video.write_bytes(b"vid2")
+        s.add(RenderJob(id="job_prev2", scene_id="scene_prev", model="atlas/test",
+                        status=RenderStatus.succeeded,
+                        created_at=utcnow() + timedelta(seconds=1)))
+        s.add(RenderOutput(id="out_prev2", render_job_id="job_prev2",
+                           video_path=str(video)))
+        s.commit()
+
+    assert client.post("/scenes/scene_1/render").status_code == 202
+    anchors = _anchor_assets("scene_1")
+    # Relinked: a NEW anchor asset for the newer output; the old row remains.
+    assert len(anchors) == 2
+    newest = next(a for a in anchors if a.id != first_anchor.id)
+    assert newest.metadata_json["source_output_id"] == "out_prev2"
+    new_url = f"https://static.atlascloud.ai/up/{Path(newest.file_path).name}"
+    assert fake.video_payloads[1]["images"][-1] == new_url
+
+
+def test_scene_render_without_previous_render_has_no_anchor(ctx, monkeypatch):
+    """First scene / no previous successful render -> behavior identical to
+    before: no anchor asset, no anchor reference, no prompt mention."""
+    client, fake = ctx
+
+    async def boom(video_path, dest):  # must never even be called
+        raise AssertionError("extract_last_frame called without a previous render")
+
+    monkeypatch.setattr("app.services.media.extract_last_frame", boom)
+
+    assert client.post("/scenes/scene_1/render").status_code == 202
+    payload = fake.video_payloads[0]
+    assert len(payload["images"]) == 2  # char + bg only
+    assert "上一场景" not in payload["prompt"]
+    assert _anchor_assets("scene_1") == []
