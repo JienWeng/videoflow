@@ -107,7 +107,8 @@ def gather_library(session: Session, exclude_ids: set[str]) -> list[Asset]:
     already linked to the scene (exclude_ids), excluding non-reusable types,
     capped at LIBRARY_CAP."""
     out: list[Asset] = []
-    for asset in session.exec(select(Asset)):
+    # Deterministic cap: oldest assets win the LIBRARY_CAP slots.
+    for asset in session.exec(select(Asset).order_by(Asset.created_at, Asset.id)):
         if asset.id in exclude_ids or asset.type in LIBRARY_EXCLUDED_TYPES:
             continue
         out.append(asset)
