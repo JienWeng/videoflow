@@ -22,9 +22,17 @@ async def lifespan(app: FastAPI):
         settings.worker_concurrency, settings.max_concurrent_polls
     )
     worker.reconcile_pending()  # re-enqueue jobs left in-flight by a prior run
+    from app.services import op_service
+
+    op_service.reconcile_stuck_ops()  # ops can't resume; mark them failed
     try:
         yield
     finally:
+        # Let in-flight background ops finish writing their terminal status.
+        if op_service._live_tasks:
+            import asyncio
+
+            await asyncio.gather(*op_service._live_tasks, return_exceptions=True)
         await worker.stop_workers()
 
 

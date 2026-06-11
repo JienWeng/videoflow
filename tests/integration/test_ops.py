@@ -179,3 +179,22 @@ def test_ops_list_and_missing_404(ctx):
 
     listed = client.get("/ops").json()
     assert any(o["id"] == r1.json()["op_id"] for o in listed)
+
+
+def test_reconcile_stuck_ops(ctx):
+    """Ops left running by a dead process are failed on startup reconciliation."""
+    from sqlmodel import Session
+
+    import app.database as _db
+    from app.models import Op
+    from app.services import op_service
+
+    with Session(_db.engine) as s:
+        s.add(Op(id="op_stuck", kind="storyboard", status="running"))
+        s.commit()
+
+    assert op_service.reconcile_stuck_ops() == 1
+    with Session(_db.engine) as s:
+        op = s.get(Op, "op_stuck")
+        assert op.status == "failed"
+        assert "restarted" in op.error

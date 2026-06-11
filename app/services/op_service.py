@@ -118,3 +118,23 @@ def get_op(session: Session, op_id: str) -> Op:
 def list_ops(session: Session, limit: int = 50) -> list[Op]:
     stmt = select(Op).order_by(Op.created_at.desc()).limit(limit)
     return list(session.exec(stmt).all())
+
+
+def reconcile_stuck_ops() -> int:
+    """Fail ops left 'running' by a previous process (their asyncio tasks died
+    with it — unlike render jobs, ops cannot be resumed). Returns the count."""
+    from app import database
+
+    count = 0
+    with Session(database.engine) as session:
+        for op in session.exec(select(Op).where(Op.status == "running")).all():
+            op.status = "failed"
+            op.error = "server restarted before the operation finished"
+            op.updated_at = utcnow()
+            session.add(op)
+            count += 1
+        if count:
+            session.commit()
+    if count:
+        logger.info("reconciled %d stuck ops as failed", count)
+    return count
