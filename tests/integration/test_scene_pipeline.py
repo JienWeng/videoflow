@@ -199,8 +199,13 @@ def test_scene_storyboard_endpoint(ctx):
     assert "girl in pink dress" in prompt
     # True image references: the cast's sheets are inputs to the edit model,
     # and the panel aspect matches the scene's video aspect.
+    # The scene's background asset is also included as a prop reference.
     assert payload["model"] == "google/nano-banana-2/edit"
-    assert payload["images"] == ["https://static.atlascloud.ai/up/char.png"]
+    assert "https://static.atlascloud.ai/up/char.png" in payload["images"]
+    assert "https://static.atlascloud.ai/up/bg.png" in payload["images"]
+    # Cast sheet comes before scene assets.
+    assert payload["images"].index("https://static.atlascloud.ai/up/char.png") < \
+           payload["images"].index("https://static.atlascloud.ai/up/bg.png")
     assert payload["aspect_ratio"] == "9:16"
 
 
@@ -602,11 +607,13 @@ def test_storyboard_prepends_style_reference_assets(ctx):
     resp = client.post("/scenes/scene_1/storyboard")
     assert resp.status_code == 200, resp.text
     payload = fake.image_payloads[0]
-    # Style guide refs first, then the cast's sheet.
-    assert payload["images"] == [
-        "https://static.atlascloud.ai/up/style_ref.png",
-        "https://static.atlascloud.ai/up/char.png",
-    ]
+    images = payload["images"]
+    # Style guide refs first, then the cast's sheet, then scene prop/bg assets.
+    assert images[0] == "https://static.atlascloud.ai/up/style_ref.png"
+    assert images[1] == "https://static.atlascloud.ai/up/char.png"
+    # scene_1 has asset_bg (background), which is now included as a prop ref.
+    assert "https://static.atlascloud.ai/up/bg.png" in images
+    assert images.index(images[1]) < images.index("https://static.atlascloud.ai/up/bg.png")
 
 
 def test_asset_generation_without_refs_or_style_uses_plain_ernie(ctx):
@@ -943,3 +950,75 @@ def test_delete_asset_detaches_references(ctx):
     g = client.get("/graph").json()
     ids = {n["id"] for n in g["nodes"]}
     assert all(e["source"] in ids and e["target"] in ids for e in g["edges"])
+
+
+# ── storyboard: prop/asset image references ───────────────────────────────────
+
+def test_storyboard_includes_prop_asset_from_shot(ctx):
+    """A prop asset attached to shot_1 is included in the storyboard image refs
+    AFTER the cast character sheet, and a video-type asset on the scene is NOT."""
+    client, fake = ctx
+    import app.database as _db_mod
+    from app.models import Asset
+
+    prop_img = Path(_db_mod.engine.url.database).parent / "prop_cup.png"
+    prop_img.write_bytes(b"img")
+    with Session(_db_mod.engine) as s:
+        # A renderable prop asset linked to shot_1.
+        s.add(Asset(id="asset_prop_cup", type="prop", name="Red Cup",
+                    file_path=str(prop_img)))
+        # A video asset attached to the scene — should be excluded.
+        s.add(Asset(id="asset_vid", type="video", name="Clip",
+                    file_path=str(prop_img)))
+        s.commit()
+
+    # Attach prop to shot_1 and video to scene.
+    assert client.post("/shots/shot_1/assets/asset_prop_cup").status_code == 200
+    assert client.patch("/scenes/scene_1", json={
+        "asset_ids": ["asset_bg", "asset_vid"]
+    }).status_code == 200
+
+    resp = client.post("/scenes/scene_1/storyboard")
+    assert resp.status_code == 200, resp.text
+    payload = fake.image_payloads[0]
+    images = payload["images"]
+
+    # Cast character sheet must come before the prop URL.
+    cast_url = "https://static.atlascloud.ai/up/char.png"
+    prop_url = "https://static.atlascloud.ai/up/prop_cup.png"
+    assert cast_url in images
+    assert prop_url in images
+    assert images.index(cast_url) < images.index(prop_url)
+
+    # video-type asset is NOT included.
+    assert "https://static.atlascloud.ai/up/prop_img.png" not in images
+    video_urls = [u for u in images if "vid" in u]
+    assert video_urls == []
+
+    # The storyboard prompt mentions that references include EXACT props.
+    prompt = payload["prompt"]
+    assert "prop" in prompt.lower() or "reference" in prompt.lower()
+
+
+def test_storyboard_cap_respected_with_props(ctx):
+    """Total reference images never exceed 10 even when many props are attached."""
+    client, fake = ctx
+    import app.database as _db_mod
+    from app.models import Asset
+
+    with Session(_db_mod.engine) as s:
+        for i in range(12):
+            img = Path(_db_mod.engine.url.database).parent / f"prop_{i}.png"
+            img.write_bytes(b"img")
+            s.add(Asset(id=f"asset_many_{i}", type="prop", name=f"Prop {i}",
+                        file_path=str(img)))
+        s.commit()
+
+    # Attach all 12 props to shot_1.
+    for i in range(12):
+        client.post(f"/shots/shot_1/assets/asset_many_{i}")
+
+    resp = client.post("/scenes/scene_1/storyboard")
+    assert resp.status_code == 200, resp.text
+    images = fake.image_payloads[0]["images"]
+    assert len(images) <= 10

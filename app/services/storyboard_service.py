@@ -23,6 +23,58 @@ from app.services import media, style_service
 MIN_GRID = 2
 MAX_GRID = 4
 
+# Types that are never useful as storyboard visual reference inputs.
+_EXCLUDED_ASSET_TYPES = {"video", "storyboard", "character_reference"}
+
+# Provider hard cap: nano-banana-2/edit accepts at most 10 reference images.
+_PROVIDER_IMAGE_CAP = 10
+
+
+def collect_prop_reference_ids(
+    *,
+    scene,
+    shots: list,
+    assets_by_id: dict,
+    already_in: set[str],
+) -> list[str]:
+    """Return an ordered, deduped list of asset ids to append as prop references.
+
+    Ordering: scene-level assets first, then each shot's assets in shot order.
+    Excluded types: video, storyboard, character_reference (sheets already in cast).
+    Assets with no file_path are skipped (nothing to upload).
+    IDs already in `already_in` are skipped.
+    Total slots available = _PROVIDER_IMAGE_CAP - len(already_in); result capped.
+    """
+    seen: set[str] = set(already_in)
+    result: list[str] = []
+    remaining = _PROVIDER_IMAGE_CAP - len(already_in)
+    if remaining <= 0:
+        return result
+
+    candidate_ids: list[str] = list(scene.asset_ids_json or [])
+    for shot in shots:
+        candidate_ids.extend(shot.asset_ids_json or [])
+
+    for aid in candidate_ids:
+        if remaining <= 0:
+            break
+        if aid in seen:
+            continue
+        asset = assets_by_id.get(aid)
+        if asset is None:
+            continue
+        if asset.type in _EXCLUDED_ASSET_TYPES:
+            seen.add(aid)
+            continue
+        if not asset.file_path:
+            seen.add(aid)
+            continue
+        seen.add(aid)
+        result.append(aid)
+        remaining -= 1
+
+    return result
+
 
 def pick_grid(n_beats: int) -> int:
     """Smallest grid in [2, 4] whose NxN panels fit every beat."""
@@ -87,7 +139,9 @@ async def generate_storyboard(
     if reference_image_urls:
         prompt = (
             "Using the attached reference images as the EXACT appearance of the "
-            "characters (faces, outfits, proportions must match), draw: " + prompt
+            "characters (faces, outfits, proportions must match) and the EXACT "
+            "look of any depicted props (replicate every prop reference precisely), "
+            "draw: " + prompt
         )
         payload = await provider.build_reference_payload(
             prompt=prompt, images=reference_image_urls, aspect_ratio=aspect_ratio
@@ -151,6 +205,25 @@ async def generate_storyboard_for_scene(
         reference_ids.extend((char.reference_asset_ids_json or [])[:1])
     seen: set[str] = set()
     reference_ids = [i for i in reference_ids if not (i in seen or seen.add(i))]
+
+    # Collect prop/asset images from the scene and its shots (excluding types
+    # already captured via cast sheets or unsuitable for visual reference).
+    all_assets_by_id: dict[str, Asset] = {}
+    candidate_ids = list(scene.asset_ids_json or [])
+    for shot in shots:
+        candidate_ids.extend(shot.asset_ids_json or [])
+    for aid in candidate_ids:
+        asset_row = session.get(Asset, aid)
+        if asset_row is not None:
+            all_assets_by_id[aid] = asset_row
+
+    prop_ids = collect_prop_reference_ids(
+        scene=scene,
+        shots=shots,
+        assets_by_id=all_assets_by_id,
+        already_in=set(reference_ids),
+    )
+    reference_ids.extend(prop_ids)
 
     resolver = AtlasCloudUploadResolver(session, get_atlas_client())
     reference_urls = await resolver.resolve(reference_ids) if reference_ids else []
