@@ -10,11 +10,16 @@ from sqlmodel import Session
 from app.database import get_session
 from app.services import (
     asset_gen_service,
+    op_service,
     refine_service,
     render_service,
     scene_service,
     storyboard_service,
 )
+
+
+def _op_response(op) -> JSONResponse:
+    return JSONResponse(status_code=202, content={"op_id": op.id, "status": op.status})
 
 router = APIRouter(tags=["scenes"])
 
@@ -146,8 +151,18 @@ def delete_shot(shot_id: str, session: Session = Depends(get_session)):
 
 
 @router.post("/scenes/{scene_id}/storyboard")
-async def generate_storyboard(scene_id: str, session: Session = Depends(get_session)):
-    """Generate the scene's 分镜图 (ERNIE NxN contact sheet) from its shots."""
+async def generate_storyboard(
+    scene_id: str, background: bool = False, session: Session = Depends(get_session)
+):
+    """Generate the scene's 分镜图 (ERNIE NxN contact sheet) from its shots.
+    With ?background=true the work runs as a tracked op (202 + /ops polling)."""
+    if background:
+        op = op_service.start_op(
+            "storyboard",
+            lambda s: storyboard_service.generate_storyboard_for_scene(s, scene_id),
+            scene_id=scene_id,
+        )
+        return _op_response(op)
     return await storyboard_service.generate_storyboard_for_scene(session, scene_id)
 
 
@@ -158,9 +173,22 @@ class AssetGenRequest(BaseModel):
 
 @router.post("/scenes/{scene_id}/assets/generate")
 async def generate_scene_assets(
-    scene_id: str, body: AssetGenRequest, session: Session = Depends(get_session)
+    scene_id: str,
+    body: AssetGenRequest,
+    background: bool = False,
+    session: Session = Depends(get_session),
 ):
-    """Plan + generate the scene's missing props/assets (ERNIE images)."""
+    """Plan + generate the scene's missing props/assets (ERNIE images).
+    With ?background=true the work runs as a tracked op (202 + /ops polling)."""
+    if background:
+        op = op_service.start_op(
+            "assets",
+            lambda s: asset_gen_service.generate_scene_assets(
+                s, scene_id, instruction=body.instruction, max_assets=body.max_assets
+            ),
+            scene_id=scene_id,
+        )
+        return _op_response(op)
     return await asset_gen_service.generate_scene_assets(
         session, scene_id, instruction=body.instruction, max_assets=body.max_assets
     )

@@ -35,6 +35,16 @@ def edit_style(body: StyleEdit, session: Session = Depends(get_session)):
 
 
 @router.post("/style/ingest")
-async def ingest_style(session: Session = Depends(get_session)):
-    """Derive the project style guide from the story's scenes/characters/assets."""
+async def ingest_style(background: bool = False, session: Session = Depends(get_session)):
+    """Derive the project style guide from the story's scenes/characters/assets.
+    With ?background=true the work runs as a tracked op (202 + /ops polling)."""
+    if background:
+        from fastapi.responses import JSONResponse
+
+        from app.services import op_service
+
+        op = op_service.start_op(
+            "style_ingest", lambda s: style_service.ingest_style(s)
+        )
+        return JSONResponse(status_code=202, content={"op_id": op.id, "status": op.status})
     return await style_service.ingest_style(session)

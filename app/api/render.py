@@ -105,12 +105,25 @@ class CaptionRequest(BaseModel):
 
 @router.post("/outputs/{output_id}/caption")
 async def caption_output(
-    output_id: str, body: CaptionRequest, session: Session = Depends(get_session)
+    output_id: str,
+    body: CaptionRequest,
+    background: bool = False,
+    session: Session = Depends(get_session),
 ):
     """Auto-captions: transcribe the Kling voice track (faster-whisper) and burn
-    styled subtitles into a copy of the video."""
-    from app.services import caption_service
+    styled subtitles into a copy of the video. With ?background=true the work
+    runs as a tracked op (202 + /ops polling)."""
+    from app.services import caption_service, op_service
 
+    if background:
+        op = op_service.start_op(
+            "caption",
+            lambda s: caption_service.caption_output(
+                s, output_id, style=body.style, language=body.language, model=body.model
+            ),
+            output_id=output_id,
+        )
+        return JSONResponse(status_code=202, content={"op_id": op.id, "status": op.status})
     return await caption_service.caption_output(
         session, output_id, style=body.style, language=body.language, model=body.model
     )
