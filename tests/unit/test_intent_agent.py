@@ -38,6 +38,28 @@ async def test_catalog_and_message_reach_the_prompt():
 
 
 @pytest.mark.asyncio
+async def test_retry_render_intent_round_trip():
+    fake = FakeLLM(Intent(action=IntentAction.retry_render, output_id="out_1",
+                          confidence=0.9, reply="ok"))
+    out = await classify_intent(
+        message="这个视频脸崩了，帮我修一下重新渲染",
+        scenes=[],
+        characters=[],
+        outputs=[{"id": "out_1", "video": "scene_1.mp4"}],
+        client=fake,
+    )
+    assert out.action == IntentAction.retry_render
+    assert out.output_id == "out_1"
+    assert "out_1" in fake.calls[0]["user_prompt"]
+
+
+def test_intent_prompt_mentions_retry_render():
+    from app.llm.prompts import PROMPTS
+
+    assert "retry_render" in PROMPTS["intent_agent"]
+
+
+@pytest.mark.asyncio
 async def test_intent_defaults_are_safe():
     intent = Intent()
     assert intent.action == IntentAction.unknown

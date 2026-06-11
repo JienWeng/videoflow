@@ -88,6 +88,14 @@ async def render_from_shot(
     return _job_response(job)
 
 
+@router.post("/outputs/{output_id}/retry")
+async def retry_output(output_id: str, session: Session = Depends(get_session)):
+    """Corrective re-render: resubmit the output's original RenderSpec with the
+    QA issues folded into the prompt. Manual trigger only."""
+    job = await render_service.retry_output(session, output_id)
+    return _job_response(job)
+
+
 class CaptionRequest(BaseModel):
     style: str = "kids"
     language: str | None = "zh"  # None -> auto-detect

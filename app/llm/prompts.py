@@ -120,6 +120,8 @@ PROMPTS: dict[str, str] = {
         "Actions: generate_script (new story idea -> put the idea text in `idea`), "
         "generate_scenes, generate_shots, storyboard (分镜图), render_scene, "
         "render_shot, caption (subtitles; styles: kids/clean/minimal), "
+        "retry_render (user is unhappy with a rendered video / wants it fixed or "
+        "re-rendered with the QA corrections -> set `output_id`), "
         "generate_assets (create/replace props or scene assets; put the user's "
         "wish in `idea`), unknown.\n"
         "Render requests default to render_scene — the whole scene becomes ONE "

@@ -80,6 +80,7 @@
     render_scene: 'Render scene',
     render_shot: 'Render shot',
     caption: 'Add captions',
+    retry_render: 'Fix & re-render',
     generate_assets: 'Generate assets'
   };
 
@@ -123,6 +124,8 @@
         return !!sceneId && !!shotId;
       case 'caption':
         return !!outputId && !!captionStyle;
+      case 'retry_render':
+        return !!outputId;
       default:
         return false;
     }
@@ -189,6 +192,11 @@
           focusId = result.id ?? outputId;
           toast.success('Captions added');
           break;
+        case 'retry_render':
+          result = await post(`/outputs/${outputId}/retry`);
+          focusId = result.job_id;
+          toast.success(`Corrective re-render started — job ${result.job_id}`);
+          break;
       }
       await onran?.(result); // let the canvas refresh before zooming to the new node
       if (focusId) onfocus?.(focusId);
@@ -215,6 +223,7 @@
           <li>create a storyboard (分镜图)</li>
           <li>render a scene or a single shot</li>
           <li>add captions to a rendered video</li>
+          <li>fix &amp; re-render a video using its QA review feedback</li>
           <li>generate props/assets for a scene (生成场景道具)</li>
         </ul>
         <p>Scenes can be deleted from the Scenes page.</p>
@@ -285,7 +294,7 @@
         </div>
       {/if}
 
-      {#if intent.action === 'caption'}
+      {#if ['caption', 'retry_render'].includes(intent.action)}
         <div>
           <label class={labelClass} for="output-{intent.action}">Output</label>
           <select id="output-{intent.action}" bind:value={outputId} class={selectClass}>
@@ -293,6 +302,9 @@
             {#each options.outputs as o (o.id)}<option value={o.id}>{videoLabel(o)}</option>{/each}
           </select>
         </div>
+      {/if}
+
+      {#if intent.action === 'caption'}
         <div class="grid grid-cols-3 gap-2">
           <div>
             <label class={labelClass} for="style-{intent.action}">Style</label>

@@ -38,7 +38,9 @@ async def start_render(session: Session, spec: RenderSpec) -> RenderJob:
         model=spec.model,
         provider_job_id=provider_job_id,
         status=RenderStatus.pending,
-        request_json=payload,
+        # Provider payload plus the originating spec, so QA-driven retries can
+        # rebuild and resubmit the exact RenderSpec (asset ids, not URLs).
+        request_json={**payload, "spec": spec.model_dump(mode="json")},
     )
     session.add(job)
     session.commit()
@@ -122,6 +124,52 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
             StoryboardShot(prompt=s.prompt, duration=max(1, s.duration)) for s in shots
         ],
     )
+    return await start_render(session, spec)
+
+
+# Marks (and locates) the corrective suffix appended by retry_output, so a
+# retry of a retry replaces it instead of stacking suffixes.
+CORRECTIONS_MARKER = "Corrections from review:"
+MAX_CORRECTION_ISSUES = 5
+
+
+async def retry_output(session: Session, output_id: str) -> RenderJob:
+    """Submit a corrective re-render for a QA'd output.
+
+    Rebuilds the original job's RenderSpec (stored under request_json["spec"])
+    and appends the QA issues to the main prompt as
+    ' Corrections from review: <issue1>; <issue2>.' — multi_prompt entries stay
+    as authored. Any previous corrections suffix is stripped first, so only the
+    LATEST QA issues are carried. Manual trigger only; renders cost money.
+    """
+    output = session.get(RenderOutput, output_id)
+    if output is None:
+        raise NotFoundError(f"output {output_id} not found")
+    job = session.get(RenderJob, output.render_job_id)
+    if job is None:
+        raise NotFoundError(f"render job {output.render_job_id} not found")
+
+    issues = [
+        text for i in (output.qa_json or {}).get("issues") or []
+        if (text := str(i).strip())
+    ]
+    if not issues:
+        raise ValidationFailedError(
+            f"output {output_id} has no QA issues recorded — nothing to correct"
+        )
+
+    spec_dict = (job.request_json or {}).get("spec")
+    if not spec_dict:
+        raise ValidationFailedError(
+            f"job {job.id} did not store its render spec — cannot rebuild it for a retry"
+        )
+    spec = RenderSpec.model_validate(spec_dict)
+
+    base = spec.prompt.split(CORRECTIONS_MARKER, 1)[0].rstrip()
+    corrections = "; ".join(issues[:MAX_CORRECTION_ISSUES])
+    spec.prompt = f"{base} {CORRECTIONS_MARKER} {corrections}."
+
+    logger.info("corrective re-render for output %s (job %s)", output_id, job.id)
     return await start_render(session, spec)
 
 

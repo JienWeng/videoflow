@@ -7,7 +7,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
   import { toast } from 'svelte-sonner';
-  import { Play, Captions } from '@lucide/svelte';
+  import { Play, Captions, RefreshCw } from '@lucide/svelte';
 
   let jobs: any[] = $state([]);
   let scenes: any[] = $state([]);
@@ -28,6 +28,7 @@
   let captionModel: Record<string, string> = $state({});
   let captionLanguage: Record<string, string> = $state({});
   let captioning = $state('');
+  let retrying = $state('');
 
 
   async function refresh() {
@@ -77,6 +78,19 @@
       toast.error(e.message);
     } finally {
       captioning = '';
+    }
+  }
+
+  async function fixAndRerender(out: any) {
+    retrying = out.id;
+    try {
+      const res = await post(`/outputs/${out.id}/retry`);
+      toast.success(`Corrective re-render started — job ${res.job_id}`);
+      await refresh();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      retrying = '';
     }
   }
 
@@ -168,6 +182,24 @@
                       QA: {out.score ?? '—'} {out.qa_json?.recommendation ?? ''}
                       {#if out.captioned_path}<Badge class="ml-1">captioned</Badge>{/if}
                     </div>
+                    {#if out.qa_json?.issues?.length}
+                      <ul class="text-xs text-muted-foreground mt-0.5 max-w-56 space-y-0.5">
+                        {#each out.qa_json.issues.slice(0, 3) as issue (issue)}
+                          <li class="truncate" title={issue}>- {issue}</li>
+                        {/each}
+                      </ul>
+                      <div class="mt-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={!!retrying}
+                          onclick={() => fixAndRerender(out)}
+                        >
+                          <RefreshCw class="size-3 mr-1 {retrying === out.id ? 'animate-spin' : ''}" />
+                          {retrying === out.id ? 'submitting…' : 'Fix & re-render'}
+                        </Button>
+                      </div>
+                    {/if}
                     <div class="flex flex-wrap items-center gap-1 mt-1">
                       {#if captionStyles.length}
                         <select

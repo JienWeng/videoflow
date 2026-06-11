@@ -18,22 +18,31 @@ from app.database import get_session
 
 
 class FakeLLM:
+    """QA reviewer stub; `qa` is mutable so tests can simulate failing reviews."""
+
+    def __init__(self):
+        from app.schemas import QAResult
+
+        self.qa = QAResult(score=8, passed=True, issues=[], recommendation="accept")
+
     async def generate(self, *, response_model, **kw):
         from app.schemas import QAResult
 
         assert response_model is QAResult
-        return QAResult(score=8, passed=True, issues=[], recommendation="accept")
+        return self.qa
 
 
 class FakeAtlas:
     def __init__(self):
         self.videos = 0
+        self.payloads: list[dict] = []
 
     async def upload_media(self, file_path: str) -> str:
         return f"https://static.atlascloud.ai/up/{Path(file_path).name}"
 
     async def generate_video(self, payload: dict) -> str:
         self.videos += 1
+        self.payloads.append(payload)
         return f"pred_{self.videos}"
 
     async def get_prediction(self, pid: str) -> dict:
@@ -67,7 +76,8 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr("app.services.poll_service.media.download", fake_download)
     monkeypatch.setattr("app.services.poll_service.media.make_thumbnail", fake_thumb)
     # QA runs automatically after a successful render; mock its LLM.
-    monkeypatch.setattr("app.agents.base.get_llm_client", lambda: FakeLLM())
+    fake_llm = FakeLLM()
+    monkeypatch.setattr("app.agents.base.get_llm_client", lambda: fake_llm)
 
     # Seed a reference asset to resolve.
     from app.models import Asset
@@ -87,7 +97,19 @@ def client(monkeypatch, tmp_path):
 
     app.dependency_overrides[get_session] = _session
     with TestClient(app) as c:  # context form runs lifespan (starts workers)
+        c.fake_atlas = fake
+        c.fake_llm = fake_llm
         yield c
+
+
+def _wait_for_job(client, job_id: str) -> dict:
+    body: dict = {}
+    for _ in range(50):
+        body = client.get(f"/render-jobs/{job_id}").json()
+        if body["job"]["status"] in ("succeeded", "failed"):
+            break
+        time.sleep(0.1)
+    return body
 
 
 def test_caption_output_endpoint(client, monkeypatch, tmp_path):
@@ -219,3 +241,84 @@ def test_render_job_succeeds(client):
     assert a["file_path"].endswith(".mp4")
     assert a["metadata_json"]["render_job_id"]
     assert a["metadata_json"]["render_output_id"]
+
+
+def test_qa_retry_corrective_rerender(client):
+    """A failing QA review can be turned into a corrective re-render: the new
+    job's prompt carries the QA issues, multi_prompt entries stay as authored,
+    and a retry of the retry replaces (never stacks) the corrections suffix."""
+    from app.schemas import QAResult
+
+    client.fake_llm.qa = QAResult(
+        score=3, passed=False,
+        issues=["face distorted", "wrong outfit"],
+        recommendation="regenerate",
+    )
+    spec = {
+        "scene_id": "scene_x",
+        "duration": 5,
+        "prompt": "@Image hero crosses the bridge",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+        "multi_shot": True,
+        "shot_type": "customize",
+        "multi_prompt": [
+            {"prompt": "shot one 「你好」", "duration": 2},
+            {"prompt": "shot two 「再见」", "duration": 3},
+        ],
+    }
+    job_id = client.post("/render", json=spec).json()["job_id"]
+    body = _wait_for_job(client, job_id)
+    assert body["job"]["status"] == "succeeded", body
+    out = body["outputs"][0]
+    assert out["qa_json"]["issues"] == ["face distorted", "wrong outfit"]
+
+    # Manual corrective re-render (no automatic retries — renders cost money).
+    # The second render's QA finds a NEW issue; set it before its QA runs.
+    client.fake_llm.qa = QAResult(
+        score=4, passed=False, issues=["lighting too dark"], recommendation="regenerate"
+    )
+    resp = client.post(f"/outputs/{out['id']}/retry")
+    assert resp.status_code == 202, resp.text
+    new_job_id = resp.json()["job_id"]
+    assert new_job_id != job_id
+
+    body2 = _wait_for_job(client, new_job_id)
+    assert body2["job"]["status"] == "succeeded", body2
+    assert body2["job"]["scene_id"] == "scene_x"  # lineage: same scene
+
+    payload2 = client.fake_atlas.payloads[1]
+    assert "Corrections from review: face distorted; wrong outfit" in payload2["prompt"]
+    # Storyboard entries stay exactly as authored.
+    assert [p["prompt"] for p in payload2["multi_prompt"]] == [
+        "shot one 「你好」", "shot two 「再见」",
+    ]
+
+    # Retry of the retry: previous suffix is stripped, only the LATEST issues remain.
+    out2 = body2["outputs"][0]
+    resp3 = client.post(f"/outputs/{out2['id']}/retry")
+    assert resp3.status_code == 202, resp3.text
+    payload3 = client.fake_atlas.payloads[2]
+    assert payload3["prompt"].count("Corrections from review:") == 1
+    assert "lighting too dark" in payload3["prompt"]
+    assert "face distorted" not in payload3["prompt"]
+    _wait_for_job(client, resp3.json()["job_id"])
+
+
+def test_qa_retry_without_issues_rejected(client):
+    """An output whose QA recorded no issues has nothing to correct -> 4xx."""
+    spec = {
+        "scene_id": "scene_x",
+        "duration": 5,
+        "prompt": "@Image clean pass",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+    }
+    job_id = client.post("/render", json=spec).json()["job_id"]
+    body = _wait_for_job(client, job_id)
+    assert body["job"]["status"] == "succeeded", body
+    out_id = body["outputs"][0]["id"]
+
+    resp = client.post(f"/outputs/{out_id}/retry")
+    assert resp.status_code == 422, resp.text
+
+    # Unknown output -> 404.
+    assert client.post("/outputs/out_nope/retry").status_code == 404
