@@ -13,7 +13,7 @@ from app.agents.shot_agent import generate_shots
 from app.errors import NotFoundError
 from app.models import Asset, Character, Scene, Script, Shot
 from app.models.base import new_id, utcnow
-from app.schemas import CharacterBible, SceneSpec, ScriptDraft
+from app.schemas import CharacterBible, SceneSpec, ScriptDraft, ShotSpec
 from app.services import style_service
 from app.services.dialogue import has_dialogue
 
@@ -162,9 +162,49 @@ def _auto_link(session: Session, scene_id: str) -> None:
     linking_service.auto_link_scene(session, scene_id)
 
 
-def _scene_to_spec(scene: Scene) -> SceneSpec:
+def _scene_to_spec(scene: Scene, session: Session) -> SceneSpec:
+    """Build a SceneSpec for *scene*.
+
+    Shot rows are the single source of truth: when Shot rows exist for this
+    scene they are used (ordered by shot_order) and any shots embedded in
+    scene_json are ignored.  The scene_json["shots"] fallback is only used in
+    the post-expand, pre-create_shots window when no rows exist yet.
+    """
+    shot_rows = list_shots(session, scene.id)
+
+    if shot_rows:
+        shots = [
+            ShotSpec(
+                shot_id=row.id,
+                duration=row.duration,
+                prompt=row.prompt,
+                camera=row.camera,
+                movement=row.movement,
+                asset_ids=list(row.asset_ids_json or []),
+            )
+            for row in shot_rows
+        ]
+        # Build the spec from scene fields + live shot rows; merge in any extra
+        # top-level fields that may live in scene_json (e.g. character/asset lists
+        # set by expand_scene) but always override the "shots" key.
+        base: dict = {}
+        if scene.scene_json:
+            base = {k: v for k, v in scene.scene_json.items() if k != "shots"}
+        base.update(
+            scene_id=scene.id,
+            title=scene.title,
+            summary=scene.summary,
+            duration=scene.duration,
+            aspect_ratio=scene.aspect_ratio,
+            character_ids=list(scene.character_ids_json or []),
+            asset_ids=list(scene.asset_ids_json or []),
+        )
+        return SceneSpec.model_validate({**base, "shots": [s.model_dump() for s in shots]})
+
+    # No shot rows yet: fall back to scene_json shots if present.
     if scene.scene_json and "shots" in scene.scene_json:
         return SceneSpec.model_validate(scene.scene_json)
+
     return SceneSpec(
         scene_id=scene.id,
         title=scene.title,
@@ -203,7 +243,7 @@ async def create_shots(
     automatically; asset-generation failures are logged and never fail the
     shots request."""
     scene = get_scene(session, scene_id)
-    spec = _scene_to_spec(scene)
+    spec = _scene_to_spec(scene, session)
 
     bibles = []
     for cid in scene.character_ids_json or []:

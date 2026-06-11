@@ -1064,3 +1064,135 @@ def test_storyboard_cap_respected_with_props(ctx):
     assert resp.status_code == 200, resp.text
     images = fake.image_payloads[0]["images"]
     assert len(images) <= 10
+
+
+# ── _scene_to_spec: Shot rows are the source of truth ────────────────────────
+
+def test_scene_to_spec_prefers_shot_rows_over_scene_json(monkeypatch, tmp_path):
+    """When Shot rows exist, _scene_to_spec must compose spec.shots from
+    those rows (ordered by shot_order), ignoring stale scene_json["shots"].
+
+    After a shot prompt is updated via update_shot, a fresh call to
+    _scene_to_spec must reflect the edited prompt — not the old snapshot
+    embedded in scene_json.
+    """
+    from sqlmodel import Session, SQLModel, create_engine
+
+    import app.models  # noqa: F401 — registers all tables
+    from app.models import Scene, Shot
+    from app.schemas.scene_schema import SceneSpec
+    from app.services.scene_service import _scene_to_spec, update_shot
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 't.db'}", connect_args={"check_same_thread": False}
+    )
+    SQLModel.metadata.create_all(engine)
+
+    stale_shot_prompt = "STALE prompt from scene_json"
+    fresh_shot_prompt = "FRESH edited prompt"
+
+    with Session(engine) as s:
+        scene = Scene(
+            id="sc_test",
+            title="Test Scene",
+            summary="A test",
+            duration=6,
+            aspect_ratio="9:16",
+        )
+        # Embed a stale shot inside scene_json (simulates post-expand state).
+        scene.scene_json = {
+            "scene_id": "sc_test",
+            "title": "Test Scene",
+            "summary": "A test",
+            "duration": 6,
+            "aspect_ratio": "9:16",
+            "character_ids": [],
+            "asset_ids": [],
+            "shots": [
+                {
+                    "shot_id": "sj_1",
+                    "duration": 3,
+                    "prompt": stale_shot_prompt,
+                    "camera": "mid",
+                    "movement": "static",
+                    "asset_ids": [],
+                }
+            ],
+        }
+        s.add(scene)
+        s.add(Shot(
+            id="row_sh1",
+            scene_id="sc_test",
+            shot_order=0,
+            duration=3,
+            prompt=fresh_shot_prompt,
+            camera="mid",
+            movement="static",
+        ))
+        s.commit()
+        s.refresh(scene)
+
+        # _scene_to_spec must prefer the Shot row over scene_json["shots"].
+        spec = _scene_to_spec(scene, s)
+        assert len(spec.shots) == 1
+        assert spec.shots[0].prompt == fresh_shot_prompt, (
+            f"Expected prompt from Shot row, got: {spec.shots[0].prompt!r}"
+        )
+
+        # Editing the shot row and re-calling _scene_to_spec shows the new prompt.
+        update_shot(s, "row_sh1", prompt="UPDATED prompt")
+        s.refresh(scene)
+        spec2 = _scene_to_spec(scene, s)
+        assert spec2.shots[0].prompt == "UPDATED prompt"
+
+
+def test_scene_to_spec_falls_back_to_scene_json_when_no_rows(tmp_path):
+    """When NO Shot rows exist for the scene, _scene_to_spec falls back to
+    scene_json["shots"] (the post-expand, pre-create_shots window)."""
+    from sqlmodel import Session, SQLModel, create_engine
+
+    import app.models  # noqa: F401
+    from app.models import Scene
+    from app.services.scene_service import _scene_to_spec
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'fb.db'}", connect_args={"check_same_thread": False}
+    )
+    SQLModel.metadata.create_all(engine)
+
+    fallback_prompt = "Fallback prompt from scene_json"
+
+    with Session(engine) as s:
+        scene = Scene(
+            id="sc_fb",
+            title="Fallback Scene",
+            summary="B test",
+            duration=5,
+            aspect_ratio="16:9",
+        )
+        scene.scene_json = {
+            "scene_id": "sc_fb",
+            "title": "Fallback Scene",
+            "summary": "B test",
+            "duration": 5,
+            "aspect_ratio": "16:9",
+            "character_ids": [],
+            "asset_ids": [],
+            "shots": [
+                {
+                    "shot_id": "sj_fb1",
+                    "duration": 3,
+                    "prompt": fallback_prompt,
+                    "camera": "wide",
+                    "movement": "static",
+                    "asset_ids": [],
+                }
+            ],
+        }
+        s.add(scene)
+        s.commit()
+        s.refresh(scene)
+
+        spec = _scene_to_spec(scene, s)
+        assert len(spec.shots) == 1
+        assert spec.shots[0].prompt == fallback_prompt
