@@ -715,6 +715,47 @@ def test_shots_generate_tolerates_asset_failure(ctx, monkeypatch):
     assert any(s["prompt"].startswith("@Grace lifts the Red Cup") for s in persisted)
 
 
+def test_shots_generate_is_idempotent(ctx):
+    """Calling /shots/generate twice replaces — not appends — the scene's shots.
+
+    After the second call the scene must have exactly the agent's shot count
+    (2), with shot_order == [0, 1], and NONE of the round-one shot ids must
+    survive in the DB.
+    """
+    client, fake = ctx
+
+    # ── Round 1 ──────────────────────────────────────────────────────────────
+    resp1 = client.post("/scenes/scene_1/shots/generate", json={"auto_assets": False})
+    assert resp1.status_code == 200, resp1.text
+    round1_ids = {s["id"] for s in resp1.json()}
+    # The seeded shots (shot_1, shot_2) should already be gone after round 1.
+    assert "shot_1" not in round1_ids
+    assert "shot_2" not in round1_ids
+
+    # ── Round 2 ──────────────────────────────────────────────────────────────
+    resp2 = client.post("/scenes/scene_1/shots/generate", json={"auto_assets": False})
+    assert resp2.status_code == 200, resp2.text
+    round2_shots = resp2.json()
+
+    # Exactly the agent's count — not doubled.
+    assert len(round2_shots) == 2
+
+    # Orders are contiguous from 0.
+    orders = [s["shot_order"] for s in round2_shots]
+    assert orders == [0, 1]
+
+    # Round-1 ids are gone.
+    all_shots = client.get("/scenes/scene_1/shots").json()
+    surviving_ids = {s["id"] for s in all_shots}
+    assert surviving_ids.isdisjoint(round1_ids), (
+        f"Round-1 shot ids still present after round 2: "
+        f"{surviving_ids & round1_ids}"
+    )
+
+    # DB count matches agent count.
+    assert len(all_shots) == 2
+
+
 # ── /scripts/generate scene_count tests ──────────────────────────────────────
 
 @pytest.fixture

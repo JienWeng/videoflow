@@ -178,6 +178,14 @@ async def create_shots(
         style=style_service.style_context(style_service.get_style(session)),
     )
 
+    # Replace: delete all existing shots for this scene BEFORE persisting the
+    # new ones.  Asset context was already gathered above (before this point),
+    # so the agent received the full historical context even though the rows are
+    # now removed.  Render-history FK references are non-enforced and the /graph
+    # endpoint already filters dangling edges, so deletion is safe.
+    for old_shot in list_shots(session, scene_id):
+        session.delete(old_shot)
+
     rows: list[Shot] = []
     for order, shot in enumerate(shot_list.shots):
         row = Shot(
