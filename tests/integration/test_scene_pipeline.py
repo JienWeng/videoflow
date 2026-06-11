@@ -44,6 +44,24 @@ class FakeLLM:
     refinement_prompt = (
         "Grace waves at camera under warm dusk light and says, 「What a lovely evening!」"
     )
+    # Returned by the AssetPlan branch; tests may monkeypatch this on the class
+    # to simulate a planner that duplicates an existing asset.
+    planned_assets = [
+        PlannedAsset(
+            name="Red Cup",
+            asset_type="prop",
+            description="a shiny red cup",
+            image_prompt="a shiny red ceramic cup, warm daylight, 3D cartoon",
+            shot_orders=[0],
+        ),
+        PlannedAsset(
+            name="Picnic Blanket",
+            asset_type="prop",
+            description="a checkered blanket",
+            image_prompt="a checkered picnic blanket on grass, warm daylight",
+            shot_orders=[0],
+        ),
+    ]
 
     async def generate(self, *, response_model, **kw):
         if response_model is SceneRefinement:
@@ -55,22 +73,7 @@ class FakeLLM:
             )
         if response_model is AssetPlan:
             return AssetPlan(
-                assets=[
-                    PlannedAsset(
-                        name="Red Cup",
-                        asset_type="prop",
-                        description="a shiny red cup",
-                        image_prompt="a shiny red ceramic cup, warm daylight, 3D cartoon",
-                        shot_orders=[0],
-                    ),
-                    PlannedAsset(
-                        name="Picnic Blanket",
-                        asset_type="prop",
-                        description="a checkered blanket",
-                        image_prompt="a checkered picnic blanket on grass, warm daylight",
-                        shot_orders=[0],
-                    ),
-                ],
+                assets=[a.model_copy(deep=True) for a in self.planned_assets],
                 reasoning="scene needs props",
             )
         if response_model is ShotList:
@@ -509,6 +512,83 @@ def test_refine_unknown_ids_404(ctx):
     client, fake = ctx
     assert client.post("/scenes/nope/refine", json={"instruction": "x"}).status_code == 404
     assert client.post("/shots/nope/refine", json={"instruction": "x"}).status_code == 404
+
+
+def test_refine_shot_preserves_original_dialogue(ctx, monkeypatch):
+    """If the original shot prompt speaks (「」) and the refined prompt lost the
+    line, the original quoted line is deterministically re-appended — refine
+    must never silently silence a shot."""
+    client, fake = ctx
+    # Give shot_1 a spoken line, then refine with a rewrite that drops it.
+    resp = client.patch(
+        "/shots/shot_1", json={"prompt": "Grace waves at camera and says, 「Hello!」"}
+    )
+    assert resp.status_code == 200, resp.text
+    monkeypatch.setattr(
+        FakeLLM, "refinement_prompt", "Grace waves at camera under warm dusk light"
+    )
+
+    resp = client.post("/shots/shot_1/refine", json={"instruction": "warmer lighting"})
+    assert resp.status_code == 200, resp.text
+    prompt = resp.json()["shot"]["prompt"]
+    assert prompt == "Grace waves at camera under warm dusk light 「Hello!」"
+    # Persisted too.
+    shots = client.get("/scenes/scene_1/shots").json()
+    assert shots[0]["prompt"] == prompt
+
+
+def test_refine_shot_with_own_dialogue_unchanged(ctx):
+    """A refinement that keeps its own 「」 line is applied verbatim (no
+    re-appending of the original line)."""
+    client, fake = ctx
+    resp = client.patch(
+        "/shots/shot_1", json={"prompt": "Grace waves at camera and says, 「Hello!」"}
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = client.post("/shots/shot_1/refine", json={"instruction": "warmer lighting"})
+    assert resp.status_code == 200, resp.text
+    # FakeLLM's default refinement already speaks — applied as-is.
+    assert resp.json()["shot"]["prompt"] == FakeLLM.refinement_prompt
+    assert "「Hello!」" not in resp.json()["shot"]["prompt"]
+
+
+def test_generate_scene_assets_dedups_existing_names(ctx, monkeypatch):
+    """A planned asset whose name matches an existing scene asset (case/space
+    twisted) is dropped in code — only the novel asset is generated."""
+    client, fake = ctx
+    monkeypatch.setattr(FakeLLM, "planned_assets", [
+        PlannedAsset(name="  MEADOW ", asset_type="background",
+                     description="dup of the seeded background",
+                     image_prompt="a sunny meadow"),
+        PlannedAsset(name="Red Cup", asset_type="prop",
+                     description="a shiny red cup",
+                     image_prompt="a shiny red ceramic cup", shot_orders=[0]),
+    ])
+    resp = client.post("/scenes/scene_1/assets/generate", json={})
+    assert resp.status_code == 200, resp.text
+    assets = resp.json()
+    assert [a["name"] for a in assets] == ["Red Cup"]
+    assert len(fake.image_payloads) == 1  # the duplicate was never rendered
+
+
+def test_plan_scene_assets_endpoint_dedups_existing_names(ctx, monkeypatch):
+    """The plan-only endpoint reports deduped suggestions too (shared filter),
+    and dropped dupes don't consume max_assets slots."""
+    client, fake = ctx
+    monkeypatch.setattr(FakeLLM, "planned_assets", [
+        PlannedAsset(name="meadow", asset_type="background",
+                     description="dup", image_prompt="a sunny meadow"),
+        PlannedAsset(name="Red Cup", asset_type="prop",
+                     description="a shiny red cup",
+                     image_prompt="a shiny red ceramic cup"),
+    ])
+    resp = client.post("/scenes/scene_1/assets/plan", json={"max_assets": 1})
+    assert resp.status_code == 200, resp.text
+    plan = resp.json()
+    # Dedup runs BEFORE truncation: the dupe doesn't eat the single slot.
+    assert [a["name"] for a in plan["assets"]] == ["Red Cup"]
+    assert fake.image_payloads == []  # plan-only: nothing rendered
 
 
 def test_graph_nodes_carry_canvas_data(ctx):

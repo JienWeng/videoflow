@@ -8,6 +8,20 @@ from app.agents import refine_agent
 from app.errors import NotFoundError
 from app.models import Scene, Shot
 from app.services import linking_service, scene_service
+from app.services.dialogue import DIALOGUE_RE, has_dialogue
+
+
+def _preserve_dialogue(original: str, refined: str) -> str:
+    """Every shot must speak: the captions pipeline extracts the 「」 line and
+    Kling voices it, so a refine pass that drops the line would silently render
+    the shot mute. If the original prompt spoke and the refined one doesn't,
+    deterministically re-append the original's FIRST 「」 line. A refinement
+    that carries its own 「」 line is trusted as-is. Shots only — scenes have
+    no dialogue requirement."""
+    if has_dialogue(original) and not has_dialogue(refined):
+        match = DIALOGUE_RE.search(original)
+        return refined.rstrip() + " " + match.group(0)
+    return refined
 
 
 async def refine_scene(session: Session, scene_id: str, instruction: str) -> dict:
@@ -50,6 +64,8 @@ async def refine_shot(session: Session, shot_id: str, instruction: str) -> dict:
     )
     changes = refinement.model_dump(exclude_none=True)
     changes.pop("note", None)
+    if "prompt" in changes:
+        changes["prompt"] = _preserve_dialogue(shot.prompt, changes["prompt"])
     if changes:
         shot = scene_service.update_shot(session, shot_id, **changes)
     if shot.scene_id:

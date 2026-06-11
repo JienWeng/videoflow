@@ -12,6 +12,7 @@ which the render pipeline turns into Kling named references.
 
 from __future__ import annotations
 
+import logging
 import re
 
 from sqlmodel import Session
@@ -24,8 +25,10 @@ from app.providers.atlascloud_client import get_atlas_client
 from app.providers.atlascloud_image import AtlasCloudImageProvider
 from app.providers.polling import poll_until_terminal
 from app.providers.url_resolver import AtlasCloudUploadResolver
-from app.schemas import AssetPlan
+from app.schemas import AssetPlan, PlannedAsset
 from app.services import media, scene_service, style_service
+
+logger = logging.getLogger("videoflow.assets")
 
 # Prefix for reference-guided asset generation (nano-banana edit model) so the
 # new asset matches the project's existing look.
@@ -47,6 +50,28 @@ def collect_style_reference_ids(
             ids.extend((char.reference_asset_ids_json or [])[:1])
     seen: set[str] = set()
     return [i for i in ids if not (i in seen or seen.add(i))]
+
+
+def _norm_name(name: str) -> str:
+    """Case-insensitive, whitespace-normalized form ("Red  Cup" == "red cup")."""
+    return " ".join(name.split()).casefold()
+
+
+def dedup_planned(
+    assets: list[PlannedAsset], existing_names: list[str]
+) -> list[PlannedAsset]:
+    """Drop planned assets whose name already exists (case-insensitively, after
+    whitespace normalization), preserving order. The planner prompt asks the
+    LLM not to duplicate existing assets, but this is enforced in code — a
+    duplicate would waste an image render and double-link on the graph."""
+    existing = {_norm_name(n) for n in existing_names}
+    kept: list[PlannedAsset] = []
+    for asset in assets:
+        if _norm_name(asset.name) in existing:
+            logger.info("planner dedup: dropping duplicate asset %r", asset.name)
+        else:
+            kept.append(asset)
+    return kept
 
 
 def tag_prompt(prompt: str, name: str) -> str:
@@ -77,16 +102,26 @@ async def plan_scene_assets(
     DB writes) and return the truncated AssetPlan."""
     scene = scene_service.get_scene(session, scene_id)  # 404 via NotFoundError
 
+    if shots is None:
+        shots = scene_service.list_shots(session, scene_id)
+
+    # Every asset already linked to the scene OR any of its shots: shown to the
+    # planner AND used for the code-level dedup below.
     existing = []
-    for aid in scene.asset_ids_json or []:
+    seen_ids: set[str] = set()
+    linked_ids = list(scene.asset_ids_json or [])
+    for shot in shots:
+        linked_ids.extend(shot.asset_ids_json or [])
+    for aid in linked_ids:
+        if aid in seen_ids:
+            continue
+        seen_ids.add(aid)
         asset = session.get(Asset, aid)
         if asset:
             existing.append(
                 {"name": asset.name, "type": asset.type, "description": asset.description}
             )
 
-    if shots is None:
-        shots = scene_service.list_shots(session, scene_id)
     plan = await plan_assets(
         scene_summary=scene.summary,
         scene_json=scene.scene_json or {},
@@ -95,7 +130,11 @@ async def plan_scene_assets(
         shots=[{"shot_order": s.shot_order, "prompt": s.prompt} for s in shots],
         style=style_service.style_context(style_service.get_style(session)),
     )
-    return AssetPlan(assets=plan.assets[:max_assets], reasoning=plan.reasoning)
+    # Dedup FIRST, then truncate — dropped duplicates must not consume
+    # max_assets slots. Shared path, so /assets/plan and /assets/generate
+    # both get the deduped view.
+    deduped = dedup_planned(plan.assets, [e["name"] for e in existing])
+    return AssetPlan(assets=deduped[:max_assets], reasoning=plan.reasoning)
 
 
 async def generate_scene_assets(

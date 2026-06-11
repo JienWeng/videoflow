@@ -140,3 +140,46 @@ class TestTagPrompt:
         from app.services.asset_gen_service import tag_prompt
 
         assert tag_prompt("小红帽走进森林", "红帽") == "小红帽走进森林, featuring @红帽"
+
+
+class TestDedupPlanned:
+    """Code-level planner dedup: the LLM is asked not to duplicate existing
+    assets, but we never trust it — dedup_planned enforces it deterministically."""
+
+    @staticmethod
+    def _planned(*names: str):
+        return [PlannedAsset(name=n, image_prompt=f"an image of {n}") for n in names]
+
+    def test_exact_duplicate_dropped(self):
+        from app.services.asset_gen_service import dedup_planned
+
+        out = dedup_planned(self._planned("Meadow", "Red Cup"), ["Meadow"])
+        assert [a.name for a in out] == ["Red Cup"]
+
+    def test_case_insensitive_duplicate_dropped(self):
+        from app.services.asset_gen_service import dedup_planned
+
+        out = dedup_planned(self._planned("MEADOW", "Red Cup"), ["meadow"])
+        assert [a.name for a in out] == ["Red Cup"]
+
+    def test_whitespace_normalized_duplicate_dropped(self):
+        from app.services.asset_gen_service import dedup_planned
+
+        out = dedup_planned(self._planned("Red  Cup"), ["red cup"])
+        assert out == []
+        out2 = dedup_planned(self._planned("  red cup "), ["Red\tCup"])
+        assert out2 == []
+
+    def test_novel_assets_kept_order_preserved(self):
+        from app.services.asset_gen_service import dedup_planned
+
+        out = dedup_planned(
+            self._planned("Red Cup", "Meadow", "Picnic Blanket"), ["Meadow"]
+        )
+        assert [a.name for a in out] == ["Red Cup", "Picnic Blanket"]
+
+    def test_no_existing_names_keeps_everything(self):
+        from app.services.asset_gen_service import dedup_planned
+
+        planned = self._planned("Red Cup", "Picnic Blanket")
+        assert dedup_planned(planned, []) == planned
