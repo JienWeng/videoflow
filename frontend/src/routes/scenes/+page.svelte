@@ -58,7 +58,8 @@
     renderedScenes = rendered;
     await Promise.all(
       scenes.map(async (s) => {
-        shotsByScene[s.id] = await get(`/scenes/${s.id}/shots`);
+        // One scene's shots failing must not blank the whole list.
+        shotsByScene[s.id] = await get(`/scenes/${s.id}/shots`).catch(() => []);
       })
     );
     shotsByScene = shotsByScene;
@@ -728,7 +729,21 @@
       </CardContent>
     </Card>
   {:else}
-    {#if loaded}
+    {#if loaded && error}
+      <Card>
+        <CardContent class="p-4">
+          <p class="text-sm text-destructive mb-2">Could not load scenes: {error}</p>
+          <Button
+            size="sm"
+            variant="secondary"
+            onclick={() => {
+              error = '';
+              refresh().catch((e) => (error = e.message));
+            }}>Retry</Button
+          >
+        </CardContent>
+      </Card>
+    {:else if loaded}
       <Card>
         <CardContent class="p-4">
           <div class="flex items-center gap-2 mb-1">

@@ -46,7 +46,9 @@ def create_app() -> FastAPI:
     # Local-first SvelteKit dev/preview frontend.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://localhost:4173"],
+        # The dev/preview frontend may be opened via localhost OR 127.0.0.1 —
+        # browsers treat those as different origins, so allow both.
+        allow_origin_regex=r"http://(localhost|127\.0\.0\.1):(5173|4173)",
         allow_methods=["*"],
         allow_headers=["*"],
     )

@@ -1,6 +1,12 @@
 /** Thin client for the FastAPI backend. */
 
-export const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
+// Follow the page's hostname (localhost vs 127.0.0.1 are different origins —
+// using the same host keeps CORS consistent however the app was opened).
+export const API_BASE =
+  import.meta.env.VITE_API_BASE ??
+  (typeof window !== 'undefined'
+    ? `http://${window.location.hostname}:8000`
+    : 'http://localhost:8000');
 
 async function handle(resp: Response) {
   if (!resp.ok) {
