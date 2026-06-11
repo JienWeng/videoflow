@@ -41,6 +41,9 @@
 
   async function refresh() {
     [scenes, characters] = await Promise.all([get('/scenes'), get('/characters')]);
+    // Svelte 5 throws props_invalid_value when bind:open receives undefined
+    // (Collapsible's open prop has a fallback) — seed every scene's entry.
+    for (const s of scenes) detailsOpen[s.id] ??= false;
     const [allAssets, jobs] = await Promise.all([
       get('/assets'),
       get('/render-jobs').catch(() => [])
@@ -449,7 +452,7 @@
         </div>
 
         <!-- Everything else lives behind the Details expander -->
-        <Collapsible.Root bind:open={detailsOpen[s.id]}>
+        <Collapsible.Root open={detailsOpen[s.id] ?? false} onOpenChange={(v) => (detailsOpen[s.id] = v)}>
           <Collapsible.Trigger
             class="flex w-full items-center gap-1 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
             <ChevronDown class="size-3.5 transition-transform {detailsOpen[s.id] ? 'rotate-180' : ''}" />
