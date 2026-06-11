@@ -52,7 +52,8 @@
     }
     const rendered: Record<string, boolean> = {};
     for (const j of jobs) {
-      if (j.status === 'succeeded' && j.scene_id) rendered[j.scene_id] = true;
+      // Whole-scene renders only — a from-shot job (has shot_id) must not mark the scene done.
+      if (j.status === 'succeeded' && j.scene_id && !j.shot_id) rendered[j.scene_id] = true;
     }
     renderedScenes = rendered;
     await Promise.all(
