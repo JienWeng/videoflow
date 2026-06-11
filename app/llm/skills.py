@@ -42,6 +42,9 @@ SKILLS: dict[str, AgentSkill] = {
     "script_agent": AgentSkill(
         "script_agent", PROMPTS["script_agent"], provider=_P, model=_M, temperature=0.8
     ),
+    "idea_agent": AgentSkill(
+        "idea_agent", PROMPTS["idea_agent"], provider=_P, model=_M, temperature=0.8
+    ),
     "scene_agent": AgentSkill("scene_agent", PROMPTS["scene_agent"], provider=_P, model=_M, temperature=0.6),
     "shot_agent": AgentSkill("shot_agent", PROMPTS["shot_agent"], provider=_P, model=_M, temperature=0.5),
     "prompt_agent": AgentSkill("prompt_agent", PROMPTS["prompt_agent"], provider=_P, model=_M, temperature=0.6),

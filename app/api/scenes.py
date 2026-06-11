@@ -30,6 +30,10 @@ class ScriptRequest(BaseModel):
     scene_count: int | None = Field(default=None, ge=1, le=20)
 
 
+class IdeaRequest(BaseModel):
+    idea: str = Field(min_length=1)
+
+
 class SceneExpandRequest(BaseModel):
     character_ids: list[str] = []
 
@@ -54,6 +58,12 @@ class ShotEdit(BaseModel):
     movement: str | None = None
     asset_ids: list[str] | None = None
     shot_order: int | None = None
+
+
+@router.post("/ideas/develop")
+async def develop_ideas(body: IdeaRequest, session: Session = Depends(get_session)):
+    """Develop a raw idea into two mature concept options + a recommendation."""
+    return await scene_service.develop_script_idea(session, idea=body.idea)
 
 
 @router.post("/scripts/generate")

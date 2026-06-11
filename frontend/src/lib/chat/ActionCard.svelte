@@ -2,9 +2,11 @@
   import { del, get, post } from '$lib/api';
   import { runBackgroundOp, type Op } from '$lib/ops';
   import { Suggestion, Suggestions } from '$lib/components/ai-elements/suggestion';
+  import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
   import { Textarea } from '$lib/components/ui/textarea';
+  import Lightbulb from '@lucide/svelte/icons/lightbulb';
   import LoaderCircle from '@lucide/svelte/icons/loader-circle';
   import Play from '@lucide/svelte/icons/play';
   import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -36,6 +38,19 @@
     characters: Option[];
     outputs: Option[];
     caption_styles: string[];
+  }
+
+  interface IdeaOption {
+    title: string;
+    premise: string;
+    hook: string;
+    why_it_works: string;
+  }
+
+  interface IdeaOptions {
+    options: IdeaOption[];
+    recommended_index: number;
+    reasoning: string;
   }
 
   let {
@@ -76,6 +91,11 @@
   let plannedAssets = $state<
     { name: string; asset_type: string; shot_orders: number[] }[] | null
   >(null);
+  // Ideation phase for generate_script: null = phase 1 (raw idea),
+  // set = phase 2 (pick one of the developed concepts).
+  let ideaOptions = $state<IdeaOptions | null>(null);
+  let selectedIdea = $state(0);
+  let developing = $state(false);
 
   const labels: Record<string, string> = {
     generate_script: 'Generate script',
@@ -157,6 +177,27 @@
     return file ?? o.id;
   }
 
+  /** Phase 1 -> 2: develop the raw idea into two mature concept options. */
+  async function developIdeas() {
+    developing = true;
+    try {
+      const result: IdeaOptions = await post('/ideas/develop', { idea: idea.trim() });
+      ideaOptions = result;
+      selectedIdea = result.recommended_index ?? 0;
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      developing = false;
+    }
+  }
+
+  /** Compose the chosen concept into the idea passed to script generation. */
+  function composedIdea(): string {
+    const o = ideaOptions?.options[selectedIdea];
+    if (!o) return idea.trim();
+    return [`${o.title} — ${o.premise}`, o.hook].filter(Boolean).join(' ').trim();
+  }
+
   /** Long generations run as background ops: busy holds until the op is terminal. */
   async function runInBackground(
     path: string,
@@ -224,7 +265,7 @@
       switch (intent.action) {
         case 'generate_script':
           result = await post('/scripts/generate', {
-            idea: idea.trim(),
+            idea: ideaOptions ? composedIdea() : idea.trim(),
             ...(sceneCount ? { scene_count: sceneCount } : {})
           });
           focusId = result.scenes?.at(-1)?.id;
@@ -318,10 +359,39 @@
       </Suggestions>
     {:else}
       {#if intent.action === 'generate_script'}
-        <div>
-          <label class={labelClass} for="idea-{intent.action}">Idea</label>
-          <Textarea id="idea-{intent.action}" bind:value={idea} rows={3} placeholder="Describe the video idea…" />
-        </div>
+        {#if !ideaOptions}
+          <div>
+            <label class={labelClass} for="idea-{intent.action}">Idea</label>
+            <Textarea id="idea-{intent.action}" bind:value={idea} rows={3} placeholder="Describe the video idea…" />
+          </div>
+        {:else}
+          <div class="space-y-2">
+            {#each ideaOptions.options as o, i (i)}
+              <button
+                type="button"
+                class="w-full rounded-md border p-2.5 text-left text-sm transition-colors {selectedIdea === i
+                  ? 'border-primary bg-primary/5'
+                  : 'border-input hover:border-muted-foreground/40'}"
+                onclick={() => (selectedIdea = i)}
+              >
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <span class="font-bold">{o.title}</span>
+                  {#if i === ideaOptions.recommended_index}
+                    <Badge class="px-1.5 py-0 text-[10px]">Recommended</Badge>
+                  {/if}
+                </div>
+                <p class="mt-0.5">{o.premise}</p>
+                {#if o.hook}<p class="mt-0.5 text-muted-foreground">{o.hook}</p>{/if}
+                {#if o.why_it_works}
+                  <p class="mt-0.5 italic text-muted-foreground">{o.why_it_works}</p>
+                {/if}
+              </button>
+            {/each}
+            {#if ideaOptions.reasoning}
+              <p class="text-xs text-muted-foreground">{ideaOptions.reasoning}</p>
+            {/if}
+          </div>
+        {/if}
         <div>
           <label class={labelClass} for="scenes-{intent.action}">Scenes (optional)</label>
           <input id="scenes-{intent.action}" type="number" min="1" max="20"
@@ -457,22 +527,66 @@
       {/if}
 
       <div class="flex items-center gap-1.5 pt-1">
-        <Button
-          size="sm"
-          variant={intent.action === 'delete_scene' ? 'destructive' : 'default'}
-          class="rounded-full px-4"
-          disabled={busy || !ready}
-          onclick={run}
-        >
-          {#if busy}
-            <LoaderCircle class="size-4 mr-1 animate-spin" />
-          {:else if intent.action === 'delete_scene'}
-            <Trash2 class="size-4 mr-1" />
-          {:else}
-            <Play class="size-4 mr-1" />
-          {/if}
-          {busy ? 'Running…' : (labels[intent.action] ?? 'Run')}
-        </Button>
+        {#if intent.action === 'generate_script' && !ideaOptions}
+          <Button
+            size="sm"
+            class="rounded-full px-4"
+            disabled={busy || developing || !ready}
+            onclick={developIdeas}
+          >
+            {#if developing}
+              <LoaderCircle class="size-4 mr-1 animate-spin" />
+            {:else}
+              <Lightbulb class="size-4 mr-1" />
+            {/if}
+            {developing ? 'Developing…' : 'Develop ideas'}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            class="rounded-full px-3"
+            disabled={busy || developing || !ready}
+            onclick={run}
+          >
+            {#if busy}<LoaderCircle class="size-4 mr-1 animate-spin" />{/if}
+            {busy ? 'Running…' : 'Skip — generate directly'}
+          </Button>
+        {:else if intent.action === 'generate_script'}
+          <Button size="sm" class="rounded-full px-4" disabled={busy} onclick={run}>
+            {#if busy}
+              <LoaderCircle class="size-4 mr-1 animate-spin" />
+            {:else}
+              <Play class="size-4 mr-1" />
+            {/if}
+            {busy ? 'Running…' : 'Generate script'}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            class="rounded-full px-3"
+            disabled={busy}
+            onclick={() => (ideaOptions = null)}
+          >
+            Back
+          </Button>
+        {:else}
+          <Button
+            size="sm"
+            variant={intent.action === 'delete_scene' ? 'destructive' : 'default'}
+            class="rounded-full px-4"
+            disabled={busy || !ready}
+            onclick={run}
+          >
+            {#if busy}
+              <LoaderCircle class="size-4 mr-1 animate-spin" />
+            {:else if intent.action === 'delete_scene'}
+              <Trash2 class="size-4 mr-1" />
+            {:else}
+              <Play class="size-4 mr-1" />
+            {/if}
+            {busy ? 'Running…' : (labels[intent.action] ?? 'Run')}
+          </Button>
+        {/if}
       </div>
     {/if}
   </Card.Content>

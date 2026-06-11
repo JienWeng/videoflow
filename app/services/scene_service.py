@@ -7,13 +7,14 @@ import logging
 from sqlmodel import Session, select
 
 from app.agents import refine_agent
+from app.agents.idea_agent import develop_idea
 from app.agents.scene_agent import generate_scene
 from app.agents.script_agent import generate_script
 from app.agents.shot_agent import generate_shots
-from app.errors import NotFoundError
+from app.errors import NotFoundError, ValidationFailedError
 from app.models import Asset, Character, Revision, Scene, Script, Shot
 from app.models.base import new_id, utcnow
-from app.schemas import CharacterBible, SceneSpec, ScriptDraft, ShotSpec
+from app.schemas import CharacterBible, IdeaOptions, SceneSpec, ScriptDraft, ShotSpec
 from app.services import style_service
 from app.services.dialogue import has_dialogue
 
@@ -49,6 +50,29 @@ def character_to_bible(char: Character) -> CharacterBible:
         voice_rules=list(char.voice_rules_json or []),
         reference_asset_ids=list(char.reference_asset_ids_json or []),
     )
+
+
+async def develop_script_idea(session: Session, *, idea: str) -> IdeaOptions:
+    """Develop a raw idea into exactly two mature concept options (plus the
+    agent's recommendation) using the same character + style context the
+    script agent will later see.
+
+    Deterministic enforcement: more than two options are truncated to two;
+    zero options is a validation failure; recommended_index is clamped into
+    range (a one-option result keeps index 0).
+    """
+    result = await develop_idea(
+        idea=idea,
+        characters=_character_catalog(session) or None,
+        style=style_service.style_context(style_service.get_style(session)),
+    )
+    if not result.options:
+        raise ValidationFailedError("idea agent returned no concept options")
+    if len(result.options) > 2:
+        result = result.model_copy(update={"options": result.options[:2]})
+    if result.recommended_index >= len(result.options):
+        result = result.model_copy(update={"recommended_index": 0})
+    return result
 
 
 async def create_script(

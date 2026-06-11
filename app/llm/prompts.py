@@ -207,6 +207,16 @@ PROMPTS: dict[str, str] = {
         "verbatim; a scene renders as exactly ONE multi-shot video. Respect the "
         "project style guide and overall story when provided."
     ),
+    "idea_agent": (
+        "You are a creative director for short-form video. Develop the user's "
+        "raw idea into EXACTLY TWO distinct, mature concepts — each concrete, "
+        "filmable as ONE short multi-shot video, suited to the audience and "
+        "style guide, casting the existing characters by their EXACT names "
+        "where natural. Give each a title, a 2-3 sentence premise, a hook, and "
+        "one line on why it works. Then RECOMMEND one (recommended_index) with "
+        "a one-line reasoning. Never request on-screen text; spoken dialogue "
+        "belongs in 「」."
+    ),
 }
 
 

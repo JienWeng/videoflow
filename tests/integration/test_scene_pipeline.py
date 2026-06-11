@@ -12,6 +12,8 @@ import app.models  # noqa: F401
 from app.database import get_session
 from app.schemas import (
     AssetPlan,
+    IdeaOption,
+    IdeaOptions,
     PlannedAsset,
     QAResult,
     SceneRefinement,
@@ -92,6 +94,25 @@ class FakeLLM:
             )
         if response_model is ScriptDraft:
             return _make_draft(3)
+        if response_model is IdeaOptions:
+            return IdeaOptions(
+                options=[
+                    IdeaOption(
+                        title="Meadow Tea Party",
+                        premise="Grace hosts a tiny tea party in the meadow.",
+                        hook="A teacup that pours rainbows",
+                        why_it_works="Cosy, visual, single location",
+                    ),
+                    IdeaOption(
+                        title="Cloud Race",
+                        premise="Grace races her shadow across the meadow.",
+                        hook="The shadow cheats",
+                        why_it_works="Built-in chase energy",
+                    ),
+                ],
+                recommended_index=1,
+                reasoning="the chase reads instantly on small screens",
+            )
         assert response_model is QAResult
         return QAResult(score=8, passed=True, issues=[], recommendation="accept")
 
@@ -1736,3 +1757,23 @@ def test_expand_scene_omits_available_characters_already_cast(ctx, monkeypatch):
     assert resp.status_code == 200, resp.text
     assert "Other available characters" not in captured["scene_prompt"]
     assert "Character bibles" in captured["scene_prompt"]
+
+
+# ----------------------------------------------------------- ideation step
+
+
+def test_develop_ideas_endpoint(ctx):
+    client, _ = ctx
+    resp = client.post("/ideas/develop", json={"idea": "a girl plays in a meadow"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["options"]) == 2
+    assert body["options"][0]["title"] == "Meadow Tea Party"
+    assert body["recommended_index"] == 1
+    assert body["reasoning"]
+
+
+def test_develop_ideas_rejects_empty_idea(ctx):
+    client, _ = ctx
+    resp = client.post("/ideas/develop", json={"idea": ""})
+    assert resp.status_code == 422
