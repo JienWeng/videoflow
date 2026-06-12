@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { get, post } from '$lib/api';
   import ActionCard from '$lib/chat/ActionCard.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -27,6 +27,7 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import MessageSquare from '@lucide/svelte/icons/message-square';
   import PenLine from '@lucide/svelte/icons/pen-line';
+  import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 
   /**
    * Next-step chip: `send` posts the message immediately, `fill` pre-fills the
@@ -45,6 +46,10 @@
     text: string;
     intent?: any;
     options?: any;
+    /** Prerequisite warnings from the backend, shown above the action card. */
+    warnings?: string[];
+    /** Project-state snapshot from the backend (drives the unknown card). */
+    state?: any;
     /** Inline next-step suggestions rendered inside the bubble. */
     chips?: Chip[];
   }
@@ -68,7 +73,7 @@
   let messages = $state<Msg[]>([
     {
       role: 'assistant',
-      text: 'Tell me what to do — e.g. 「给乐乐的场景生成分镜图」, "render scene 我是乐乐", or "add captions".'
+      text: 'Tell me what to do — e.g. 「写一个关于小猫的故事」, "generate a storyboard", or "add captions".'
     }
   ]);
   let input = $state('');
@@ -374,19 +379,34 @@
     return lines.join('\n\n');
   }
 
+  /** Return keyboard focus to the composer (scoped: card textareas live
+   * outside `inputWrapper`, so this can't grab one of them). */
+  async function focusComposer() {
+    await tick();
+    inputWrapper?.querySelector('textarea')?.focus();
+  }
+
   async function send(text?: string) {
     const message = (text ?? input).trim();
     if (!message || busy) return;
     input = '';
+    // Conversation memory: the last 6 turns (text only — no cards/state).
+    const history = messages.slice(-6).map((m) => ({ role: m.role, text: m.text }));
     messages.push({ role: 'user', text: message });
     busy = true;
     try {
-      const r = await post('/chat', { message });
+      const r = await post('/chat', { message, history });
+      const intent = { ...r.intent };
+      // Meta-messages ("我想做一个视频") get echoed back as intent.idea — don't
+      // seed the card's Idea field with them; the user should type a real idea.
+      if (intent.idea && intent.idea.trim() === message) intent.idea = null;
       messages.push({
         role: 'assistant',
-        text: r.intent.reply,
-        intent: r.intent,
-        options: r.options
+        text: intent.reply,
+        intent,
+        options: r.options,
+        warnings: r.warnings ?? [],
+        state: r.state
       });
     } catch (e) {
       messages.push({
@@ -396,6 +416,7 @@
     } finally {
       busy = false;
       refreshChips();
+      focusComposer(); // the card may have stolen focus — composer stays primary
     }
   }
 </script>
@@ -456,10 +477,21 @@
                 {@render chipRow(m.chips)}
               </div>
             {/if}
+            {#if m.warnings?.length}
+              <div class="mt-2 space-y-1">
+                {#each m.warnings as w (w)}
+                  <p class="flex items-start gap-1.5 text-amber-500 text-xs">
+                    <TriangleAlert class="size-3.5 shrink-0 mt-0.5" />
+                    <span>{w}</span>
+                  </p>
+                {/each}
+              </div>
+            {/if}
             {#if m.intent}
               <ActionCard
                 intent={m.intent}
                 options={m.options}
+                projectState={m.state}
                 {onfocus}
                 onran={handleRan}
                 onsuggest={(text) => send(text)}

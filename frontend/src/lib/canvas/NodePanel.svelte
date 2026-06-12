@@ -414,10 +414,15 @@
       {:else if kind === 'output'}
         {#if videoSrc}
           <!-- svelte-ignore a11y_media_has_caption -->
-          <video controls src={videoSrc} class="w-full rounded-md border border-border"></video>
+          <!-- Capped height so portrait videos don't push the actions below the fold. -->
+          <video controls src={videoSrc} class="mx-auto max-h-64 w-full rounded-md border border-border object-contain"></video>
         {:else}
           <p class="text-sm text-muted-foreground">No video file available.</p>
         {/if}
+        <Button variant="secondary" class="w-full" href={`/editor/${shown?.id}`}>
+          <Clapperboard class="size-4 mr-1" />Open in editor
+        </Button>
+
         <div class="text-xs text-muted-foreground">
           {#if data.captioned_path}<p class="truncate">Captioned: {data.captioned_path}</p>{/if}
           {#if data.video_path}<p class="truncate">Video: {data.video_path}</p>{/if}
@@ -488,12 +493,6 @@
             <CaptionEditor outputId={shown.id} videoPath={data.video_path} onsaved={onsaved} />
           {/if}
         </div>
-
-        <Separator />
-
-        <Button variant="outline" size="sm" href={`/editor/${shown?.id}`}>
-          <Clapperboard class="size-4 mr-1" />Open in editor
-        </Button>
       {:else if kind === 'asset'}
         {#if imageSrc}
           <img src={imageSrc} alt={String(data.label ?? '')} class="w-full rounded-md border border-border object-cover" />

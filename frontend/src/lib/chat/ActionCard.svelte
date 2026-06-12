@@ -60,15 +60,33 @@
     outputId?: string;
   }
 
+  /** Backend project-state snapshot attached to the chat reply. */
+  interface ProjectState {
+    characters: number;
+    has_style: boolean;
+    scripts: number;
+    scenes: {
+      id: string;
+      title: string;
+      expanded: boolean;
+      has_shots: boolean;
+      has_storyboard: boolean;
+      rendered: boolean;
+    }[];
+    next_steps: string[];
+  }
+
   let {
     intent,
     options,
+    projectState = null,
     onran,
     onfocus,
     onsuggest
   }: {
     intent: Intent;
     options: Options;
+    projectState?: ProjectState | null;
     onran?: (result: any, ctx?: RunContext) => void | Promise<void>;
     onfocus?: (id: string) => void;
     onsuggest?: (text: string) => void;
@@ -122,6 +140,24 @@
   };
 
   const needsShot = (action: string) => action === 'render_shot' || action === 'refine_shot';
+
+  /** Example chips for the unknown card, filtered to what the project can
+   * actually do right now (each chip needs its previous pipeline stage). */
+  const exampleChips = $derived.by(() => {
+    const scenes = projectState?.scenes ?? [];
+    const hasShots = scenes.some((s) => s.has_shots);
+    const hasStoryboard = scenes.some((s) => s.has_storyboard);
+    const hasRendered = scenes.some((s) => s.rendered);
+    return [
+      'Generate a script',
+      ...(!projectState || hasShots ? ['生成分镜图'] : []),
+      ...(!projectState || hasStoryboard ? ['Render scene'] : []),
+      ...(!projectState || hasRendered ? ['Add captions'] : []),
+      '生成场景道具',
+      '帮我改一下场景',
+      'Suggest assets'
+    ];
+  });
 
   async function loadShots() {
     shotId = intent.shot_id && sceneId === intent.scene_id ? intent.shot_id : '';
@@ -345,17 +381,30 @@
     }
   }
 
+  // Card inputs are bg-muted/50 so the chat composer stays the primary input.
   const selectClass =
-    'w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm';
+    'w-full rounded-md border border-input bg-muted/50 px-2 py-1.5 text-sm';
   const labelClass = 'block text-xs text-muted-foreground mb-1';
 </script>
 
 <Card.Root class="mt-2 max-w-sm gap-3 py-4">
   <Card.Content class="space-y-3 px-4">
     {#if intent.action === 'unknown'}
-      <div class="text-sm text-muted-foreground space-y-1">
-        <p class="font-medium text-foreground">I can:</p>
-        <ul class="list-disc pl-4 space-y-0.5">
+      {#if projectState?.next_steps?.length}
+        <div class="text-sm space-y-1">
+          <p class="font-medium">Next steps:</p>
+          <ol class="list-decimal pl-5 space-y-0.5">
+            {#each projectState.next_steps as step (step)}
+              <li>{step}</li>
+            {/each}
+          </ol>
+        </div>
+      {/if}
+      <details class="text-sm text-muted-foreground">
+        <summary class="cursor-pointer text-xs hover:text-foreground select-none">
+          What can you do? / 你能做什么？
+        </summary>
+        <ul class="list-disc pl-4 mt-1 space-y-0.5">
           <li>generate a script from an idea — 从想法生成剧本</li>
           <li>expand a scene / generate shots — 展开场景／生成镜头</li>
           <li>create a storyboard — 生成分镜图</li>
@@ -368,9 +417,9 @@
           <li>derive the project style from the story — 从故事中提取项目风格</li>
           <li>suggest assets without generating — 建议道具但不生成</li>
         </ul>
-      </div>
+      </details>
       <Suggestions>
-        {#each ['生成分镜图', 'Render scene', 'Add captions', 'Generate a script', '生成场景道具', '帮我改一下场景', 'Suggest assets'] as s (s)}
+        {#each exampleChips as s (s)}
           <Suggestion suggestion={s} onclick={(text) => onsuggest?.(text)} />
         {/each}
       </Suggestions>
@@ -379,7 +428,7 @@
         {#if !ideaOptions}
           <div>
             <label class={labelClass} for="idea-{intent.action}">Idea</label>
-            <Textarea id="idea-{intent.action}" bind:value={idea} rows={3} placeholder="Describe the video idea…" />
+            <Textarea id="idea-{intent.action}" bind:value={idea} rows={3} class="bg-muted/50" placeholder="Describe the video idea…" />
           </div>
         {:else}
           <div class="space-y-2">
@@ -454,7 +503,7 @@
       {#if ['refine_scene', 'refine_shot'].includes(intent.action)}
         <div>
           <label class={labelClass} for="instr-{intent.action}">Instruction</label>
-          <Textarea id="instr-{intent.action}" bind:value={idea} rows={2}
+          <Textarea id="instr-{intent.action}" bind:value={idea} rows={2} class="bg-muted/50"
             placeholder="e.g. make the lighting warmer / 台词更简单" />
         </div>
       {/if}
@@ -474,7 +523,7 @@
       {#if ['generate_assets', 'plan_assets'].includes(intent.action)}
         <div>
           <label class={labelClass} for="instr-{intent.action}">Instruction (optional)</label>
-          <Textarea id="instr-{intent.action}" bind:value={idea} rows={2}
+          <Textarea id="instr-{intent.action}" bind:value={idea} rows={2} class="bg-muted/50"
             placeholder="e.g. 需要一个红色杯子 / a red cup" />
         </div>
         <div>

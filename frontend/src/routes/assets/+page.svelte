@@ -28,6 +28,17 @@
   let styleForm = $state({ style_prompt: '', palette: '', lighting: '', audience: '', tone: '' });
   let reingestOpen = $state(false);
   let deleteTarget: any = $state(null);
+  // Ingest derives the style FROM the story — gate it until one exists.
+  let hasStory = $state(true);
+
+  async function loadStoryPresence() {
+    try {
+      const [scenes, scripts] = await Promise.all([get('/scenes'), get('/scripts')]);
+      hasStory = (scenes?.length ?? 0) > 0 || (scripts?.length ?? 0) > 0;
+    } catch {
+      hasStory = true; // fail open — the backend will still reject sensibly
+    }
+  }
 
   function seedStyleForm(s: any) {
     styleForm = {
@@ -145,6 +156,7 @@
       .catch((e) => (error = e.message))
       .finally(() => (loaded = true));
     loadStyle();
+    loadStoryPresence();
   });
 
   async function doUpload(e: Event) {
@@ -212,13 +224,25 @@
       {:else if !style && !styleEditing}
         <p class="text-sm text-muted-foreground mb-2">No style guide yet</p>
         <div class="flex gap-2">
-          <Button size="sm" disabled={styleBusy === 'ingest'} onclick={ingestStyle}>
+          <Button
+            size="sm"
+            disabled={styleBusy === 'ingest' || !hasStory}
+            title={!hasStory
+              ? 'Write a script first — the style is derived from your story (先写剧本，再从故事提炼风格)'
+              : undefined}
+            onclick={ingestStyle}
+          >
             <Wand2 class="size-3 mr-1" />{styleBusy === 'ingest' ? 'Deriving…' : 'Ingest from story'}
           </Button>
           <Button variant="outline" size="sm" onclick={() => (styleEditing = true)}>
             Create manually
           </Button>
         </div>
+        {#if !hasStory}
+          <p class="text-xs text-muted-foreground mt-2">
+            Write a script first — the style is derived from your story (先写剧本，再从故事提炼风格).
+          </p>
+        {/if}
       {:else}
         <div class="grid gap-3">
           <div class="grid gap-1.5">

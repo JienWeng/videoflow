@@ -792,6 +792,10 @@
             Write your idea above and generate a script — one scene becomes one video,
             and each scene then walks through Expand, Shots, Storyboard and Render.
           </p>
+          <p class="text-sm text-muted-foreground mt-1">
+            Tip: add characters and a style first so generated scenes stay consistent —
+            先添加角色和风格，生成的场景更一致。
+          </p>
         </CardContent>
       </Card>
     {/if}
