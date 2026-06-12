@@ -2,14 +2,24 @@
   import '../app.css';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
-  import { Clapperboard, Image, Users, ListVideo, Film } from '@lucide/svelte';
+  import { Clapperboard, Image, Users, ListVideo, Film, FolderOpen } from '@lucide/svelte';
   import { Toaster } from '$lib/components/ui/sonner';
   import ActivityTray from '$lib/components/ActivityTray.svelte';
   import { initActivity } from '$lib/activity.svelte';
+  import { get } from '$lib/api';
 
   let { children } = $props();
 
-  onMount(() => initActivity());
+  // The active project scopes every backend endpoint; switching does a full
+  // page reload (see /projects), so fetching once on mount is always fresh.
+  let activeProject: any = $state(null);
+
+  onMount(() => {
+    initActivity();
+    get('/projects/active')
+      .then((p) => (activeProject = p))
+      .catch(() => {});
+  });
 
   const nav = [
     { href: '/', label: 'Studio', icon: Clapperboard },
@@ -29,7 +39,17 @@
 
 <div class="flex h-screen bg-background text-foreground">
   <aside class="flex w-48 shrink-0 flex-col gap-1 border-r border-border p-3">
-    <div class="px-2 py-3 text-sm font-semibold tracking-wide">VideoFlow</div>
+    <div class="px-2 pt-3 pb-1 text-sm font-semibold tracking-wide">VideoFlow</div>
+    <!-- Current-project row: the entry point to /projects (switch, create, manage). -->
+    <a
+      href="/projects"
+      title={activeProject ? `Project: ${activeProject.name}` : 'Projects'}
+      class="mb-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent
+             {page.url.pathname.startsWith('/projects') ? 'bg-accent font-medium' : 'text-muted-foreground'}"
+    >
+      <FolderOpen class="size-3.5 shrink-0" />
+      <span class="truncate">{activeProject?.name ?? 'Projects'}</span>
+    </a>
     {#each nav as item}
       <a
         href={item.href}
