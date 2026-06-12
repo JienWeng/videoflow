@@ -10,7 +10,7 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
   import { toast } from 'svelte-sonner';
-  import { Play, Captions, Pencil, RefreshCw } from '@lucide/svelte';
+  import { Play, Captions, Clapperboard, Pencil, RefreshCw } from '@lucide/svelte';
 
   let jobs: any[] = $state([]);
   let scenes: any[] = $state([]);
@@ -268,6 +268,9 @@
                         onclick={() => (editingOutput = { jobId: j.id, out })}
                       >
                         <Pencil class="size-3 mr-1" />Edit captions
+                      </Button>
+                      <Button variant="outline" size="sm" href={`/editor/${out.id}`}>
+                        <Clapperboard class="size-3 mr-1" />Open in editor
                       </Button>
                     </div>
                   </div>

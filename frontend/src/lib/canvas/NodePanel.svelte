@@ -21,7 +21,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Separator } from '$lib/components/ui/separator';
   import { toast } from 'svelte-sonner';
-  import { Captions, History, Pencil, RefreshCw, Sparkles, Trash2 } from '@lucide/svelte';
+  import { Captions, Clapperboard, History, Pencil, RefreshCw, Sparkles, Trash2 } from '@lucide/svelte';
   import { get, patch, post, del, mediaUrl, isImage } from '$lib/api';
   import { runBackgroundOp } from '$lib/ops';
   import CaptionEditor from '$lib/components/CaptionEditor.svelte';
@@ -420,6 +420,12 @@
             <CaptionEditor outputId={node.id} videoPath={data.video_path} onsaved={onsaved} />
           {/if}
         </div>
+
+        <Separator />
+
+        <Button variant="outline" size="sm" href={`/editor/${node?.id}`}>
+          <Clapperboard class="size-4 mr-1" />Open in editor
+        </Button>
       {:else if kind === 'asset'}
         {#if imageSrc}
           <img src={imageSrc} alt={String(data.label ?? '')} class="w-full rounded-md border border-border object-cover" />
