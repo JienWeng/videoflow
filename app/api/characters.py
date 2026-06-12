@@ -42,6 +42,12 @@ def get_character(character_id: str, session: Session = Depends(get_session)):
     return character_service.get_character(session, character_id)
 
 
+@router.delete("/{character_id}")
+def delete_character(character_id: str, session: Session = Depends(get_session)):
+    detached = character_service.delete_character(session, character_id)
+    return {"deleted": character_id, "detached_from": detached}
+
+
 @router.post("/{character_id}/bible")
 async def generate_bible(
     character_id: str, body: BibleRequest, session: Session = Depends(get_session)

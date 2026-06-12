@@ -216,6 +216,28 @@ def story_context(session: Session, scene: Scene) -> dict | None:
     return parts or None
 
 
+def create_scene(
+    session: Session,
+    *,
+    title: str,
+    summary: str = "",
+    duration: int = 5,
+    aspect_ratio: str = "16:9",
+) -> Scene:
+    """Plain scene create (no script) stamped with the active project."""
+    scene = Scene(
+        project_id=project_service.active_project_id(session),
+        title=title,
+        summary=summary,
+        duration=duration,
+        aspect_ratio=aspect_ratio,
+    )
+    session.add(scene)
+    session.commit()
+    session.refresh(scene)
+    return scene
+
+
 def get_scene(session: Session, scene_id: str) -> Scene:
     scene = session.get(Scene, scene_id)
     if scene is None:

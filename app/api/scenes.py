@@ -82,6 +82,25 @@ def list_scripts(session: Session = Depends(get_session)):
     return scene_service.list_scripts(session)
 
 
+class SceneCreate(BaseModel):
+    title: str
+    summary: str = ""
+    duration: int = 5
+    aspect_ratio: str = "16:9"
+
+
+@router.post("/scenes")
+def create_scene(body: SceneCreate, session: Session = Depends(get_session)):
+    """Plain scene create (no script) — stamped with the active project."""
+    return scene_service.create_scene(
+        session,
+        title=body.title,
+        summary=body.summary,
+        duration=body.duration,
+        aspect_ratio=body.aspect_ratio,
+    )
+
+
 @router.get("/scenes")
 def list_scenes(session: Session = Depends(get_session)):
     return scene_service.list_scenes(session)

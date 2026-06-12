@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.agents.character_memory import build_character_bible
 from app.config import get_settings
 from app.errors import NotFoundError
-from app.models import Asset, Character
+from app.models import Asset, Character, Scene
 from app.models.base import new_id, utcnow
 from app.providers.atlascloud_client import get_atlas_client
 from app.providers.atlascloud_image import AtlasCloudImageProvider
@@ -48,6 +48,37 @@ def list_characters(session: Session) -> list[Character]:
     return list(
         session.exec(select(Character).where(Character.project_id == pid)).all()
     )
+
+
+def delete_character(session: Session, character_id: str) -> int:
+    """Delete a Character row, detach its id from every scene cast, and null
+    character_id on its assets — the assets (and files on disk) are kept.
+
+    Returns the count of rows (scenes + assets) updated by the detach.
+    """
+    char = get_character(session, character_id)
+
+    detached = 0
+    # Detach from Scene.character_ids_json (JSON column: reassign, don't mutate).
+    for scene in session.exec(select(Scene)).all():
+        ids = list(scene.character_ids_json or [])
+        if character_id in ids:
+            scene.character_ids_json = [i for i in ids if i != character_id]
+            scene.updated_at = utcnow()
+            session.add(scene)
+            detached += 1
+
+    # Keep the character's assets; just sever the ownership link.
+    for asset in session.exec(
+        select(Asset).where(Asset.character_id == character_id)
+    ).all():
+        asset.character_id = None
+        session.add(asset)
+        detached += 1
+
+    session.delete(char)
+    session.commit()
+    return detached
 
 
 async def generate_bible(session: Session, character_id: str, notes: str) -> Character:

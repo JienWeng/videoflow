@@ -13,19 +13,30 @@
   } from '@xyflow/svelte';
   import '@xyflow/svelte/dist/style.css';
   import { toast } from 'svelte-sonner';
-  import { LayoutGrid } from '@lucide/svelte';
+  import { LayoutGrid, Plus, Clapperboard, Users, Image, ChevronLeft } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
   import { get, post, del } from '$lib/api';
   import { toFlow, loadPositions, savePositions, clearPositions, kindColor, type ApiGraph } from './transform';
   import { layout, layoutFresh } from './layout';
   import EntityNode from './EntityNode.svelte';
   import FlowHelper from './FlowHelper.svelte';
+  import CanvasMenu from './CanvasMenu.svelte';
 
   let { onselect }: { onselect: (node: Node | null) => void } = $props();
 
   let nodes = $state.raw<Node[]>([]);
   let edges = $state.raw<Edge[]>([]);
   let flow: ReturnType<typeof useSvelteFlow> | undefined;
+
+  // Right-click context menu (CanvasMenu) — null when closed.
+  let menu = $state<{ node: Node; x: number; y: number } | null>(null);
+  // "+" add menu in the top-right panel.
+  let addOpen = $state(false);
+  let addMode = $state<'root' | 'scene' | 'character'>('root');
+  let addName = $state('');
+  let addBusy = $state(false);
+  let addEl: HTMLDivElement | undefined = $state();
 
   const nodeTypes = { entity: EntityNode };
 
@@ -123,6 +134,44 @@
     if (changed) toast.success('Detached');
     await refresh();
   }
+
+  function openContextMenu({ node, event }: { node: Node; event: MouseEvent }) {
+    event.preventDefault();
+    menu = { node, x: event.clientX, y: event.clientY };
+  }
+
+  function closeAddMenu() {
+    addOpen = false;
+    addMode = 'root';
+    addName = '';
+  }
+
+  async function createEntity() {
+    const name = addName.trim();
+    if (!name || addBusy) return;
+    addBusy = true;
+    try {
+      const created =
+        addMode === 'scene'
+          ? await post('/scenes', { title: name })
+          : await post('/characters', { name });
+      toast.success(`${addMode === 'scene' ? 'Scene' : 'Character'} "${name}" created`);
+      closeAddMenu();
+      await refresh();
+      focusNode(created.id);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      addBusy = false;
+    }
+  }
+
+  function addClickAway(e: PointerEvent) {
+    if (addOpen && addEl && !addEl.contains(e.target as globalThis.Node)) closeAddMenu();
+  }
+  function addKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') closeAddMenu();
+  }
 </script>
 
 <div class="h-full w-full">
@@ -138,17 +187,87 @@
     onconnect={handleConnect}
     ondelete={handleDelete}
     onnodeclick={({ node }) => onselect(node)}
+    onnodecontextmenu={openContextMenu}
     onpaneclick={() => onselect(null)}
     onnodedragstop={() => savePositions(nodes)}
   >
     <FlowHelper register={(f) => (flow = f)} />
     <Panel position="top-right" class="z-10">
-      <Button variant="secondary" size="icon" title="Auto-arrange" onclick={autoArrange}>
-        <LayoutGrid />
-      </Button>
+      <div class="flex items-start gap-2">
+        <div class="relative" bind:this={addEl}>
+          <Button variant="secondary" size="icon" title="Add entity" data-testid="canvas-add" onclick={() => (addOpen ? closeAddMenu() : (addOpen = true))}>
+            <Plus />
+          </Button>
+          {#if addOpen}
+            <div
+              class="absolute right-0 top-10 w-52 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+              data-testid="canvas-add-menu"
+            >
+              {#if addMode === 'root'}
+                <button
+                  class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent"
+                  onclick={() => (addMode = 'scene')}
+                >
+                  <Clapperboard class="size-3.5" />New scene
+                </button>
+                <button
+                  class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent"
+                  onclick={() => (addMode = 'character')}
+                >
+                  <Users class="size-3.5" />New character
+                </button>
+                <a
+                  class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent"
+                  href="/assets"
+                >
+                  <Image class="size-3.5" />Upload asset
+                </a>
+              {:else}
+                <button
+                  class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent"
+                  onclick={() => { addMode = 'root'; addName = ''; }}
+                >
+                  <ChevronLeft class="size-3.5" />Back
+                </button>
+                <div class="flex items-center gap-1 p-1">
+                  <!-- svelte-ignore a11y_autofocus -->
+                  <Input
+                    class="h-7 text-xs"
+                    placeholder={addMode === 'scene' ? 'Scene title' : 'Character name'}
+                    autofocus
+                    bind:value={addName}
+                    onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && createEntity()}
+                  />
+                  <Button size="sm" class="h-7 px-2 text-xs" disabled={!addName.trim() || addBusy} onclick={createEntity}>
+                    {addBusy ? '…' : 'Add'}
+                  </Button>
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+        <Button variant="secondary" size="icon" title="Auto-arrange" onclick={autoArrange}>
+          <LayoutGrid />
+        </Button>
+      </div>
     </Panel>
     <Background />
     <Controls />
     <MiniMap pannable zoomable nodeColor={(n) => kindColor(String(n.data?.kind ?? ''))} />
   </SvelteFlow>
 </div>
+
+<svelte:window onpointerdown={addClickAway} onkeydown={addKey} />
+
+{#if menu}
+  <CanvasMenu
+    node={menu.node}
+    x={menu.x}
+    y={menu.y}
+    {nodes}
+    {edges}
+    onclose={() => (menu = null)}
+    {onselect}
+    onmutate={refresh}
+  />
+{/if}

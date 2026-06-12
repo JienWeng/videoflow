@@ -1967,3 +1967,60 @@ def test_render_scene_skips_unknown_asset_ids_instead_of_404(ctx):
     # payload has exactly char + bg (no storyboard generated in this test).
     assert "https://static.atlascloud.ai/up/bg.png" in payload["images"]
     assert len(payload["images"]) == 2
+
+
+def test_create_scene_endpoint(ctx):
+    """POST /scenes creates a plain scene stamped with the active project."""
+    client, _ = ctx
+    resp = client.post("/scenes", json={"title": "CtxMenu Test"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["title"] == "CtxMenu Test"
+    assert body["duration"] == 5
+    assert body["aspect_ratio"] == "16:9"
+    assert body["project_id"]  # stamped with the active project
+    # Appears in the project-scoped listing.
+    ids = [s["id"] for s in client.get("/scenes").json()]
+    assert body["id"] in ids
+    # Optional fields land verbatim.
+    body2 = client.post(
+        "/scenes",
+        json={"title": "T2", "summary": "sum", "duration": 8, "aspect_ratio": "9:16"},
+    ).json()
+    assert (body2["summary"], body2["duration"], body2["aspect_ratio"]) == ("sum", 8, "9:16")
+
+
+def test_delete_character_detaches_cast_and_keeps_assets(ctx):
+    """DELETE /characters/{id} removes the row, detaches the id from every
+    scene cast, and nulls character_id on its assets (assets kept)."""
+    client, _ = ctx
+    import app.database
+    from app.models import Asset
+
+    char = client.post("/characters", json={"name": "Throwaway"}).json()
+    cid = char["id"]
+    assert client.post(f"/scenes/scene_1/cast/{cid}").status_code == 200
+    with Session(app.database.engine) as s:
+        s.add(Asset(id="asset_tmpref", type="character_reference", name="tmp",
+                    file_path="/tmp/none.png", character_id=cid))
+        s.commit()
+
+    resp = client.delete(f"/characters/{cid}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["deleted"] == cid
+    assert body["detached_from"] == 2  # scene_1 cast + the asset
+
+    # The row is gone …
+    assert client.get(f"/characters/{cid}").status_code == 404
+    # … the cast no longer references it …
+    scene = client.get("/scenes/scene_1").json()
+    assert cid not in scene["character_ids_json"]
+    # … and the asset survives with character_id nulled.
+    asset = client.get("/assets/asset_tmpref").json()
+    assert asset["character_id"] is None
+
+
+def test_delete_character_unknown_404(ctx):
+    client, _ = ctx
+    assert client.delete("/characters/char_missing").status_code == 404
