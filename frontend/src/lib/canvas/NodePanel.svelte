@@ -21,10 +21,9 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Separator } from '$lib/components/ui/separator';
   import { toast } from 'svelte-sonner';
-  import { Captions, Clapperboard, History, Pencil, RefreshCw, Sparkles, Trash2, X } from '@lucide/svelte';
+  import { Captions, Clapperboard, History, RefreshCw, Sparkles, Trash2, X } from '@lucide/svelte';
   import { get, patch, post, del, mediaUrl, isImage } from '$lib/api';
   import { runBackgroundOp } from '$lib/ops';
-  import CaptionEditor from '$lib/components/CaptionEditor.svelte';
 
   let {
     node,
@@ -58,16 +57,13 @@
   let revisions = $state<any[]>([]);
   let reverting = $state('');
 
-  // Output node actions (QA retry + captions)
+  // Output node actions (QA retry + captions). Captioning uses the project
+  // defaults from /caption-config — fine-tuning lives in /editor/{id}.
   let retrying = $state(false);
   let captioning = $state(false);
-  let captionStyles = $state<string[]>([]);
-  let captionModels = $state<string[]>([]);
   let captionStyle = $state('');
   let captionModel = $state('');
   let captionLanguage = $state('zh');
-  // Caption editor is lazy: only mounted (and its captions fetched) when opened.
-  let editingCaptions = $state(false);
 
   // Sync the `node` prop into `shown`, guarding unsaved edits on node-switch.
   // Design note: reverting the parent's selection on cancel is impractical
@@ -90,7 +86,6 @@
     confirmingDelete = false;
     showHistory = false;
     revisions = [];
-    editingCaptions = false;
     formDirty = false;
     if (shown && String(d.kind) === 'scene') {
       form = {
@@ -129,10 +124,8 @@
     captionConfigPromise ??= get('/caption-config');
     try {
       const cfg = await captionConfigPromise;
-      captionStyles = cfg.styles ?? [];
-      captionModels = cfg.models ?? [];
-      captionStyle = cfg.default_style || captionStyles[0] || 'kids';
-      captionModel = cfg.default_model || captionModels[0] || '';
+      captionStyle = cfg.default_style || cfg.styles?.[0] || 'kids';
+      captionModel = cfg.default_model || cfg.models?.[0] || '';
       captionLanguage = cfg.default_language || 'zh';
     } catch {
       captionConfigPromise = null; // allow retry on next selection
@@ -450,48 +443,19 @@
 
         <div class="grid gap-1.5">
           <Label>Captions</Label>
-          <div class="flex flex-wrap items-center gap-1">
-            {#if captionStyles.length}
-              <select
-                bind:value={captionStyle}
-                class="rounded border border-input bg-background px-1.5 py-1 text-xs"
-              >
-                {#each captionStyles as st (st)}<option value={st}>{st}</option>{/each}
-              </select>
-            {/if}
-            {#if captionModels.length}
-              <select
-                bind:value={captionModel}
-                class="rounded border border-input bg-background px-1.5 py-1 text-xs"
-              >
-                {#each captionModels as m (m)}<option value={m}>{m}</option>{/each}
-              </select>
-            {/if}
-            <select
-              bind:value={captionLanguage}
-              class="rounded border border-input bg-background px-1.5 py-1 text-xs w-16"
-            >
-              <option value="zh">zh</option>
-              <option value="en">en</option>
-              <option value="auto">auto</option>
-            </select>
-          </div>
-          <Button variant="outline" size="sm" disabled={captioning} onclick={addCaptions}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={captioning}
+            title="Burn captions with the project defaults — fine-tune in the editor"
+            onclick={addCaptions}
+          >
             <Captions class="size-4 mr-1" />
             {captioning ? 'Transcribing…' : data.captioned_path ? 'Re-caption' : 'Auto captions'}
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            class="justify-start"
-            onclick={() => (editingCaptions = !editingCaptions)}
-          >
-            <Pencil class="size-4 mr-1" />
-            {editingCaptions ? 'Hide caption editor' : 'Edit captions'}
-          </Button>
-          {#if editingCaptions && shown}
-            <CaptionEditor outputId={shown.id} videoPath={data.video_path} onsaved={onsaved} />
-          {/if}
+          <p class="text-xs text-muted-foreground">
+            Uses the project defaults — open the editor to fine-tune text, timing and style.
+          </p>
         </div>
       {:else if kind === 'asset'}
         {#if imageSrc}

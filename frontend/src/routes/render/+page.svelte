@@ -4,14 +4,12 @@
   import { runBackgroundOp } from '$lib/ops';
   import { subscribeJobs } from '$lib/sse';
   import VideoPreview from '$lib/components/VideoPreview.svelte';
-  import CaptionEditor from '$lib/components/CaptionEditor.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
-  import * as Dialog from '$lib/components/ui/dialog';
   import { Skeleton } from '$lib/components/ui/skeleton';
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
   import { toast } from 'svelte-sonner';
-  import { Play, Captions, Clapperboard, Pencil, RefreshCw } from '@lucide/svelte';
+  import { Play, Captions, Clapperboard, RefreshCw } from '@lucide/svelte';
 
   let jobs: any[] = $state([]);
   let scenes: any[] = $state([]);
@@ -24,24 +22,14 @@
   let sceneId = $state('');
   let shotId = $state('');
 
-  // Caption config
+  // Caption defaults from /caption-config — fine-tuning lives in /editor/{id}.
   let captionStyles: string[] = $state([]);
-  let captionModels: string[] = $state([]);
   let captionDefaultModel = $state('');
   let captionDefaultLanguage = $state('zh');
   let captionDefaultStyle = $state('');
-  // Effective style for an output: per-output pick, else the style-guide-derived default.
-  const styleFor = (outId: string) =>
-    captionStyle[outId] ?? (captionDefaultStyle || captionStyles[0] || 'kids');
-  let captionStyle: Record<string, string> = $state({});
-  let captionModel: Record<string, string> = $state({});
-  let captionLanguage: Record<string, string> = $state({});
   // Captioning runs as a background op — per-output so several can run at once.
   let captioning: Record<string, boolean> = $state({});
   let retrying = $state('');
-  // Caption editor dialog: the output being edited (lazy — the editor only
-  // fetches when the dialog opens) plus its job id so we can refresh the row.
-  let editingOutput = $state<{ jobId: string; out: any } | null>(null);
 
   async function refreshJobOutputs(jobId: string) {
     const detail = await get(`/render-jobs/${jobId}`);
@@ -69,7 +57,6 @@
     get('/caption-config')
       .then((cfg: any) => {
         captionStyles = cfg.styles ?? [];
-        captionModels = cfg.models ?? [];
         captionDefaultModel = cfg.default_model ?? '';
         captionDefaultLanguage = cfg.default_language ?? 'zh';
         captionDefaultStyle = cfg.default_style ?? '';
@@ -87,13 +74,13 @@
   async function addCaptions(jobId: string, out: any) {
     captioning[out.id] = true;
     error = '';
-    const lang = captionLanguage[out.id] ?? captionDefaultLanguage ?? 'zh';
+    const lang = captionDefaultLanguage || 'zh';
     try {
       await runBackgroundOp(
         `/outputs/${out.id}/caption`,
         {
-          style: styleFor(out.id),
-          model: captionModel[out.id] ?? (captionDefaultModel || undefined),
+          style: captionDefaultStyle || captionStyles[0] || 'kids',
+          model: captionDefaultModel || undefined,
           language: lang === 'auto' ? null : lang
         },
         {
@@ -224,7 +211,7 @@
               <div class="flex flex-wrap gap-4 py-1">
                 {#each outputs[j.id] as out (out.id)}
                   <div class="flex-none">
-                    <VideoPreview path={out.captioned_path || out.video_path} />
+                    <VideoPreview path={out.captioned_path || out.video_path} href={`/editor/${out.id}`} />
                     <div class="text-xs text-muted-foreground mt-1 flex items-center gap-1">
                       QA: {out.score ?? '—'} {out.qa_json?.recommendation ?? ''}
                       {#if out.captioned_path}<Badge class="ml-1">captioned</Badge>{/if}
@@ -248,49 +235,18 @@
                       </div>
                     {/if}
                     <div class="flex flex-wrap items-center gap-1 mt-1">
-                      {#if captionStyles.length}
-                        <select
-                          value={styleFor(out.id)}
-                          onchange={(e) => (captionStyle[out.id] = (e.currentTarget as HTMLSelectElement).value)}
-                          class="rounded border border-input bg-background px-1.5 py-1 text-xs"
-                        >
-                          {#each captionStyles as st}<option value={st}>{st}</option>{/each}
-                        </select>
-                      {/if}
-                      {#if captionModels.length}
-                        <select
-                          bind:value={captionModel[out.id]}
-                          class="rounded border border-input bg-background px-1.5 py-1 text-xs"
-                        >
-                          {#each captionModels as m}<option value={m}>{m}</option>{/each}
-                        </select>
-                      {/if}
-                      <select
-                        bind:value={captionLanguage[out.id]}
-                        class="rounded border border-input bg-background px-1.5 py-1 text-xs w-16"
-                      >
-                        <option value="zh">zh</option>
-                        <option value="en">en</option>
-                        <option value="auto">auto</option>
-                      </select>
+                      <Button size="sm" href={`/editor/${out.id}`} title="Open in editor">
+                        <Clapperboard class="size-3 mr-1" />Open in editor
+                      </Button>
                       <Button
                         variant="outline"
                         size="sm"
+                        title="Burn captions with the project defaults — fine-tune in the editor"
                         disabled={captioning[out.id]}
                         onclick={() => addCaptions(j.id, out)}
                       >
                         <Captions class="size-3 mr-1" />
                         {captioning[out.id] ? 'transcribing…' : out.captioned_path ? 'Re-caption' : 'Auto captions'}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onclick={() => (editingOutput = { jobId: j.id, out })}
-                      >
-                        <Pencil class="size-3 mr-1" />Edit captions
-                      </Button>
-                      <Button variant="outline" size="sm" href={`/editor/${out.id}`}>
-                        <Clapperboard class="size-3 mr-1" />Open in editor
                       </Button>
                     </div>
                   </div>
@@ -303,25 +259,4 @@
     </TableBody>
   </Table>
 
-  <Dialog.Root
-    open={editingOutput !== null}
-    onOpenChange={(open) => !open && (editingOutput = null)}
-  >
-    <Dialog.Content class="max-w-3xl sm:max-w-3xl">
-      <Dialog.Header>
-        <Dialog.Title>Edit captions</Dialog.Title>
-        <Dialog.Description>
-          Fix subtitle text and timing, then re-burn — no re-transcription.
-        </Dialog.Description>
-      </Dialog.Header>
-      {#if editingOutput}
-        {@const editing = editingOutput}
-        <CaptionEditor
-          outputId={editing.out.id}
-          videoPath={editing.out.video_path}
-          onsaved={() => refreshJobOutputs(editing.jobId).catch(() => {})}
-        />
-      {/if}
-    </Dialog.Content>
-  </Dialog.Root>
 </div>

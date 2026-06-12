@@ -2,8 +2,7 @@
   /**
    * Video editor: preview player + zoomable multi-track timeline + inspector.
    *
-   * Plays the RAW video with a live caption overlay (same WYSIWYG trick as
-   * CaptionEditor); saving re-burns the subtitles into the captioned copy via
+   * Plays the RAW video with a live caption overlay (WYSIWYG); saving re-burns the subtitles into the captioned copy via
    * the background-op flow. Shot edits PATCH the live shot rows and only
    * affect the NEXT render.
    */

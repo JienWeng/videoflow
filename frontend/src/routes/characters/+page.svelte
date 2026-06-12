@@ -6,13 +6,14 @@
   import { Card, CardContent } from '$lib/components/ui/card';
   import { Skeleton } from '$lib/components/ui/skeleton';
   import { toast } from 'svelte-sonner';
-  import { UserPlus, BookOpen, Images, Upload } from '@lucide/svelte';
+  import { UserPlus, BookOpen, Images, Upload, ChevronDown } from '@lucide/svelte';
 
   let characters: any[] = $state([]);
   let assets: Record<string, any> = $state({});
   let error = $state('');
   let busy = $state('');
   let loaded = $state(false);
+  let expanded: Record<string, boolean> = $state({});
 
   let name = $state('');
   let description = $state('');
@@ -122,39 +123,77 @@
     </div>
   {/if}
 
-  <div class="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-4">
+  <div class="grid grid-cols-[repeat(auto-fill,minmax(290px,1fr))] gap-4">
     {#each characters as c (c.id)}
-      <Card>
+      {@const firstRef = c.reference_asset_ids_json?.length ? assets[c.reference_asset_ids_json[0]] : null}
+      <Card class="self-start">
         <CardContent class="p-3">
-          {#if c.reference_asset_ids_json?.length}
-            {@const ref = assets[c.reference_asset_ids_json[0]]}
-            {#if ref && isImage(ref.file_path)}
-              <img class="w-full aspect-square object-cover rounded-md bg-muted mb-2"
-                src={mediaUrl(ref.file_path)} alt={c.name} loading="lazy" />
+          <div class="flex items-center gap-3">
+            {#if firstRef && isImage(firstRef.file_path)}
+              <img class="size-12 flex-none aspect-square object-cover rounded-md bg-muted"
+                src={mediaUrl(firstRef.file_path)} alt={c.name} loading="lazy" />
+            {:else}
+              <div class="size-12 flex-none rounded-md bg-muted grid place-items-center text-muted-foreground font-medium">
+                {c.name?.[0] ?? '?'}
+              </div>
             {/if}
-          {/if}
-          <div class="font-medium text-sm mb-0.5">{c.name}</div>
-          <div class="text-xs text-muted-foreground mb-1">{c.id} · {c.reference_asset_ids_json?.length ?? 0} reference images</div>
-          {#if c.appearance}
-            <div class="text-xs text-muted-foreground mb-2">{c.appearance.slice(0, 120)}</div>
-          {/if}
-          <div class="flex flex-wrap gap-1 mb-2">
-            {#each c.visual_rules_json ?? [] as rule}
-              <Badge variant="outline">{rule}</Badge>
-            {/each}
-          </div>
-          <div class="flex flex-wrap gap-1 mt-1">
-            <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateBible(c)}>
-              <BookOpen class="size-3 mr-1" />{busy === `bible-${c.id}` ? 'Generating…' : 'Generate bible'}
+            <div class="min-w-0 flex-1">
+              <div class="font-medium text-sm truncate">{c.name}</div>
+              <div class="text-xs text-muted-foreground truncate">
+                {c.description || c.appearance || `${c.reference_asset_ids_json?.length ?? 0} reference images`}
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" class="flex-none px-2"
+              aria-expanded={!!expanded[c.id]}
+              onclick={() => (expanded[c.id] = !expanded[c.id])}>
+              <ChevronDown class="size-4 transition-transform {expanded[c.id] ? 'rotate-180' : ''}" />
+              <span class="text-xs">Details</span>
             </Button>
-            <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateSheets(c)}>
-              <Images class="size-3 mr-1" />{busy === `sheets-${c.id}` ? 'Generating…' : 'Reference sheets (ERNIE)'}
-            </Button>
-            <label class="inline-flex items-center gap-1 cursor-pointer rounded-md border border-border px-2 py-1 text-xs hover:bg-accent">
-              <Upload class="size-3" />Upload reference photo
-              <input type="file" class="hidden" onchange={(e) => uploadPhoto(c, e)} />
-            </label>
           </div>
+
+          {#if expanded[c.id]}
+            <div class="mt-3 space-y-2 border-t border-border pt-3">
+              <div class="text-xs text-muted-foreground">{c.id} · {c.reference_asset_ids_json?.length ?? 0} reference images</div>
+              {#if c.appearance}
+                <div class="text-xs"><span class="text-muted-foreground">Appearance:</span> {c.appearance}</div>
+              {/if}
+              {#if c.personality}
+                <div class="text-xs"><span class="text-muted-foreground">Personality:</span> {c.personality}</div>
+              {/if}
+              {#if c.visual_rules_json?.length}
+                <div class="flex flex-wrap gap-1">
+                  {#each c.visual_rules_json as rule}
+                    <Badge variant="outline" class="max-w-full" title={rule}>
+                      <span class="truncate">{rule}</span>
+                    </Badge>
+                  {/each}
+                </div>
+              {/if}
+              {#if c.reference_asset_ids_json?.length}
+                <div class="grid grid-cols-3 gap-2">
+                  {#each c.reference_asset_ids_json as refId (refId)}
+                    {@const ref = assets[refId]}
+                    {#if ref && isImage(ref.file_path)}
+                      <img class="w-full aspect-square object-cover rounded-md bg-muted"
+                        src={mediaUrl(ref.file_path)} alt={ref.name || c.name} title={ref.name} loading="lazy" />
+                    {/if}
+                  {/each}
+                </div>
+              {/if}
+              <div class="flex flex-wrap gap-1 pt-1">
+                <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateBible(c)}>
+                  <BookOpen class="size-3 mr-1" />{busy === `bible-${c.id}` ? 'Generating…' : 'Generate bible'}
+                </Button>
+                <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateSheets(c)}>
+                  <Images class="size-3 mr-1" />{busy === `sheets-${c.id}` ? 'Generating…' : 'Reference sheets (ERNIE)'}
+                </Button>
+                <label class="inline-flex items-center gap-1 cursor-pointer rounded-md border border-border px-2 py-1 text-xs hover:bg-accent">
+                  <Upload class="size-3" />Upload reference photo
+                  <input type="file" class="hidden" onchange={(e) => uploadPhoto(c, e)} />
+                </label>
+              </div>
+            </div>
+          {/if}
         </CardContent>
       </Card>
     {/each}

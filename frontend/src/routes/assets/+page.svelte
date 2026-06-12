@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { get, post, patch, del, upload, mediaUrl, isImage, isVideo } from '$lib/api';
+  import { get, patch, del, upload, mediaUrl, isImage, isVideo } from '$lib/api';
   import { runBackgroundOp } from '$lib/ops';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -11,7 +11,7 @@
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
   import { toast } from 'svelte-sonner';
-  import { Upload, Tag, Palette, Wand2, Pin, Trash2, X } from '@lucide/svelte';
+  import { Upload, Palette, Wand2, Pin, Trash2, X } from '@lucide/svelte';
 
   let assets: any[] = $state([]);
   let characters: any[] = $state([]);
@@ -171,20 +171,6 @@
       if (characterId) form.append('character_id', characterId);
       await upload('/assets/upload', form);
       file = null;
-      await refresh();
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function recognise(asset: any) {
-    const description = prompt(`Describe "${asset.name}" for AI tagging:`, asset.description || '');
-    if (description === null) return;
-    busy = true;
-    try {
-      await post(`/assets/${asset.id}/recognise`, { description });
       await refresh();
     } catch (e: any) {
       toast.error(e.message);
@@ -395,9 +381,6 @@
             {/each}
           </div>
           <div class="flex items-center gap-1">
-            <Button variant="outline" size="sm" disabled={busy} onclick={() => recognise(asset)}>
-              <Tag class="size-3 mr-1" />AI tag
-            </Button>
             {#if isImage(asset.file_path)}
               <Button variant="ghost" size="icon" class="size-8" title="Use as style ref"
                 disabled={busy || !!styleBusy} onclick={() => addStyleRef(asset)}>
