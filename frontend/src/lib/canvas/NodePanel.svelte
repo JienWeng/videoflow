@@ -12,6 +12,7 @@
 </script>
 
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { Node } from '@xyflow/svelte';
   import * as Sheet from '$lib/components/ui/sheet';
   import { Button } from '$lib/components/ui/button';
@@ -32,11 +33,24 @@
     onsaved
   }: { node: Node | null; onclose: () => void; onsaved: () => void } = $props();
 
-  const kind = $derived(String(node?.data?.kind ?? ''));
-  const data = $derived((node?.data ?? {}) as Record<string, any>);
+  // The panel's own source of truth for which node it shows. It tracks the
+  // `node` prop, EXCEPT when the form is dirty and the user cancels the
+  // discard confirm — then the new selection is ignored and the panel keeps
+  // the node being edited (we can't revert the parent's selection from here).
+  let shown = $state<Node | null>(null);
+  // Sheet open state is locally bound so a refused close can be re-opened —
+  // bits-ui flips its (unbound) open prop internally, so merely "not closing"
+  // in onOpenChange is not enough to keep the sheet visible.
+  let sheetOpen = $state(false);
+
+  const kind = $derived(String(shown?.data?.kind ?? ''));
+  const data = $derived((shown?.data ?? {}) as Record<string, any>);
 
   // Editable form state, re-seeded whenever the selected node changes.
   let form = $state<Record<string, any>>({});
+  // True once any form field was touched; reset on seed/save/refine/revert.
+  let formDirty = $state(false);
+  const markFormDirty = () => (formDirty = true);
   let saving = $state(false);
   let refineInstruction = $state('');
   let refining = $state(false);
@@ -58,21 +72,38 @@
   // Caption editor is lazy: only mounted (and its captions fetched) when opened.
   let editingCaptions = $state(false);
 
+  // Sync the `node` prop into `shown`, guarding unsaved edits on node-switch.
+  // Design note: reverting the parent's selection on cancel is impractical
+  // (selection lives in +page.svelte and there is no "reselect" callback), so
+  // we accept confirm-then-discard semantics: proceed only on OK; on cancel
+  // the incoming selection is simply ignored and the panel keeps `shown`.
   $effect(() => {
-    const d = (node?.data ?? {}) as Record<string, any>;
+    const next = node;
+    untrack(() => {
+      if ((next?.id ?? null) === (shown?.id ?? null)) return;
+      if (formDirty && shown && !confirm('Discard unsaved changes?')) return;
+      shown = next;
+      sheetOpen = next !== null;
+    });
+  });
+
+  // Re-seed the form whenever the shown node changes.
+  $effect(() => {
+    const d = (shown?.data ?? {}) as Record<string, any>;
     refineInstruction = '';
     confirmingDelete = false;
     showHistory = false;
     revisions = [];
     editingCaptions = false;
-    if (node && String(d.kind) === 'scene') {
+    formDirty = false;
+    if (shown && String(d.kind) === 'scene') {
       form = {
         title: d.label ?? '',
         summary: d.summary ?? '',
         duration: d.duration ?? 0,
         aspect_ratio: d.aspect_ratio ?? ''
       };
-    } else if (node && String(d.kind) === 'shot') {
+    } else if (shown && String(d.kind) === 'shot') {
       form = {
         prompt: d.prompt ?? '',
         duration: d.duration ?? 0,
@@ -83,8 +114,20 @@
     } else {
       form = {};
     }
-    if (node && String(d.kind) === 'output') void loadCaptionConfig();
+    if (shown && String(d.kind) === 'output') void loadCaptionConfig();
   });
+
+  // Close requested via Escape / overlay / X. bits-ui has already flipped
+  // sheetOpen to false by the time onOpenChange fires, so refusing the close
+  // means flipping it back (the confirm dialog blocks, so no visible flicker).
+  function requestClose() {
+    if (formDirty && !confirm('Discard unsaved changes?')) {
+      sheetOpen = true;
+      return;
+    }
+    formDirty = false;
+    onclose();
+  }
 
   async function loadCaptionConfig() {
     captionConfigPromise ??= get('/caption-config');
@@ -101,10 +144,10 @@
   }
 
   async function fixAndRerender() {
-    if (!node) return;
+    if (!shown) return;
     retrying = true;
     try {
-      const res = await post(`/outputs/${node.id}/retry`);
+      const res = await post(`/outputs/${shown.id}/retry`);
       toast.success(`Corrective re-render started — job ${res.job_id}`);
       onsaved();
     } catch (err: any) {
@@ -115,11 +158,11 @@
   }
 
   async function addCaptions() {
-    if (!node) return;
+    if (!shown) return;
     captioning = true;
     try {
       await runBackgroundOp(
-        `/outputs/${node.id}/caption`,
+        `/outputs/${shown.id}/caption`,
         {
           style: captionStyle || undefined,
           model: captionModel || undefined,
@@ -141,18 +184,18 @@
   }
 
   async function save() {
-    if (!node) return;
+    if (!shown) return;
     saving = true;
     try {
       if (kind === 'scene') {
-        await patch(`/scenes/${node.id}`, {
+        await patch(`/scenes/${shown.id}`, {
           title: form.title,
           summary: form.summary,
           duration: Number(form.duration),
           aspect_ratio: form.aspect_ratio
         });
       } else if (kind === 'shot') {
-        await patch(`/shots/${node.id}`, {
+        await patch(`/shots/${shown.id}`, {
           prompt: form.prompt,
           duration: Number(form.duration),
           camera: form.camera,
@@ -160,6 +203,7 @@
           shot_order: Number(form.shot_order)
         });
       }
+      formDirty = false;
       toast.success('Saved');
       onsaved();
     } catch (err: any) {
@@ -170,11 +214,11 @@
   }
 
   async function refine() {
-    if (!node || !refineInstruction.trim()) return;
+    if (!shown || !refineInstruction.trim()) return;
     refining = true;
     try {
       if (kind === 'scene') {
-        const r = await post(`/scenes/${node.id}/refine`, { instruction: refineInstruction.trim() });
+        const r = await post(`/scenes/${shown.id}/refine`, { instruction: refineInstruction.trim() });
         form = {
           title: r.scene.title ?? '',
           summary: r.scene.summary ?? '',
@@ -183,7 +227,7 @@
         };
         toast.success(r.note || 'Refined');
       } else if (kind === 'shot') {
-        const r = await post(`/shots/${node.id}/refine`, { instruction: refineInstruction.trim() });
+        const r = await post(`/shots/${shown.id}/refine`, { instruction: refineInstruction.trim() });
         form = {
           prompt: r.shot.prompt ?? '',
           duration: r.shot.duration ?? 0,
@@ -194,6 +238,7 @@
         toast.success(r.note || 'Refined');
       }
       refineInstruction = '';
+      formDirty = false; // form now mirrors the server-side refined entity
       onsaved();
     } catch (err: any) {
       toast.error(err.message);
@@ -203,6 +248,7 @@
   }
 
   function seedForm(e: Record<string, any>) {
+    formDirty = false;
     if (kind === 'scene') {
       form = {
         title: e.title ?? '',
@@ -222,23 +268,23 @@
   }
 
   async function toggleHistory() {
-    if (!node) return;
+    if (!shown) return;
     showHistory = !showHistory;
     if (!showHistory) return;
     try {
-      revisions = await get(`/${kind}s/${node.id}/revisions`);
+      revisions = await get(`/${kind}s/${shown.id}/revisions`);
     } catch (err: any) {
       toast.error(err.message);
     }
   }
 
   async function revert(revisionId: string) {
-    if (!node) return;
+    if (!shown) return;
     reverting = revisionId;
     try {
       const entity = await post(`/revisions/${revisionId}/revert`);
       seedForm(entity);
-      revisions = await get(`/${kind}s/${node.id}/revisions`);
+      revisions = await get(`/${kind}s/${shown.id}/revisions`);
       toast.success('Reverted');
       onsaved();
     } catch (err: any) {
@@ -249,7 +295,7 @@
   }
 
   async function deleteAsset() {
-    if (!node) return;
+    if (!shown) return;
     if (!confirmingDelete) {
       confirmingDelete = true;
       clearTimeout(confirmTimer);
@@ -259,7 +305,7 @@
     clearTimeout(confirmTimer);
     deleting = true;
     try {
-      const r = await del(`/assets/${node.id}`);
+      const r = await del(`/assets/${shown.id}`);
       toast.success(`Asset deleted (detached from ${r.detached_from} place${r.detached_from === 1 ? '' : 's'}).`);
       onsaved();
       onclose();
@@ -279,7 +325,7 @@
   );
 </script>
 
-<Sheet.Root open={node !== null} onOpenChange={(open) => !open && onclose()}>
+<Sheet.Root bind:open={sheetOpen} onOpenChange={(open) => !open && requestClose()}>
   <Sheet.Content side="right" class="w-[380px] sm:max-w-[380px]">
     <Sheet.Header>
       <Sheet.Title class="capitalize">{kind.replace('_', ' ')}</Sheet.Title>
@@ -290,20 +336,20 @@
       {#if kind === 'scene'}
         <div class="grid gap-1.5">
           <Label for="np-title">Title</Label>
-          <Input id="np-title" bind:value={form.title} />
+          <Input id="np-title" bind:value={form.title} oninput={markFormDirty} />
         </div>
         <div class="grid gap-1.5">
           <Label for="np-summary">Summary</Label>
-          <Textarea id="np-summary" rows={4} bind:value={form.summary} />
+          <Textarea id="np-summary" rows={4} bind:value={form.summary} oninput={markFormDirty} />
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div class="grid gap-1.5">
             <Label for="np-duration">Duration (s)</Label>
-            <Input id="np-duration" type="number" bind:value={form.duration} />
+            <Input id="np-duration" type="number" bind:value={form.duration} oninput={markFormDirty} />
           </div>
           <div class="grid gap-1.5">
             <Label for="np-aspect">Aspect ratio</Label>
-            <Input id="np-aspect" bind:value={form.aspect_ratio} />
+            <Input id="np-aspect" bind:value={form.aspect_ratio} oninput={markFormDirty} />
           </div>
         </div>
         <div class="flex gap-2">
@@ -312,29 +358,34 @@
             <Sparkles class="size-4 mr-1" />{refining ? 'Refining…' : 'AI refine'}
           </Button>
         </div>
-        <Button onclick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+        <div class="flex items-center gap-2">
+          <Button class="flex-1" onclick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+          {#if formDirty}
+            <Badge variant="outline" class="text-muted-foreground">unsaved</Badge>
+          {/if}
+        </div>
       {:else if kind === 'shot'}
         <div class="grid gap-1.5">
           <Label for="np-prompt">Prompt</Label>
-          <Textarea id="np-prompt" rows={5} bind:value={form.prompt} />
+          <Textarea id="np-prompt" rows={5} bind:value={form.prompt} oninput={markFormDirty} />
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div class="grid gap-1.5">
             <Label for="np-shot-duration">Duration (s)</Label>
-            <Input id="np-shot-duration" type="number" bind:value={form.duration} />
+            <Input id="np-shot-duration" type="number" bind:value={form.duration} oninput={markFormDirty} />
           </div>
           <div class="grid gap-1.5">
             <Label for="np-order">Order</Label>
-            <Input id="np-order" type="number" bind:value={form.shot_order} />
+            <Input id="np-order" type="number" bind:value={form.shot_order} oninput={markFormDirty} />
           </div>
         </div>
         <div class="grid gap-1.5">
           <Label for="np-camera">Camera</Label>
-          <Input id="np-camera" bind:value={form.camera} />
+          <Input id="np-camera" bind:value={form.camera} oninput={markFormDirty} />
         </div>
         <div class="grid gap-1.5">
           <Label for="np-movement">Movement</Label>
-          <Input id="np-movement" bind:value={form.movement} />
+          <Input id="np-movement" bind:value={form.movement} oninput={markFormDirty} />
         </div>
         <div class="flex gap-2">
           <Input placeholder="Tell AI what to change…" bind:value={refineInstruction} />
@@ -342,7 +393,12 @@
             <Sparkles class="size-4 mr-1" />{refining ? 'Refining…' : 'AI refine'}
           </Button>
         </div>
-        <Button onclick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+        <div class="flex items-center gap-2">
+          <Button class="flex-1" onclick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+          {#if formDirty}
+            <Badge variant="outline" class="text-muted-foreground">unsaved</Badge>
+          {/if}
+        </div>
       {:else if kind === 'output'}
         {#if videoSrc}
           <!-- svelte-ignore a11y_media_has_caption -->
@@ -416,14 +472,14 @@
             <Pencil class="size-4 mr-1" />
             {editingCaptions ? 'Hide caption editor' : 'Edit captions'}
           </Button>
-          {#if editingCaptions && node}
-            <CaptionEditor outputId={node.id} videoPath={data.video_path} onsaved={onsaved} />
+          {#if editingCaptions && shown}
+            <CaptionEditor outputId={shown.id} videoPath={data.video_path} onsaved={onsaved} />
           {/if}
         </div>
 
         <Separator />
 
-        <Button variant="outline" size="sm" href={`/editor/${node?.id}`}>
+        <Button variant="outline" size="sm" href={`/editor/${shown?.id}`}>
           <Clapperboard class="size-4 mr-1" />Open in editor
         </Button>
       {:else if kind === 'asset'}

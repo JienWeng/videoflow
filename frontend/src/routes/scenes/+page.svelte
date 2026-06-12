@@ -404,7 +404,15 @@
 
   {#each scenes.slice().reverse() as s (s.id)}
     {@const steps = sceneSteps(s)}
-    {@const currentIdx = steps.findIndex((st) => !st.done)}
+    <!-- The "current" step is the first not-done step ONLY when nothing after
+         it is done. If a later step is done (legacy/out-of-band data, e.g. a
+         rendered scene whose scene_json is still the pre-expand stub), pushing
+         "Next" would re-run an earlier stage and clobber finished work — so we
+         treat the scene as complete-ish: primary CTA becomes "Re-render" and
+         the skipped earlier steps render muted but still clickable. -->
+    {@const firstNotDone = steps.findIndex((st) => !st.done)}
+    {@const laterDone = firstNotDone !== -1 && steps.some((st, i) => i > firstNotDone && st.done)}
+    {@const currentIdx = laterDone ? -1 : firstNotDone}
     {@const current = currentIdx === -1 ? null : steps[currentIdx]}
     <Card class="mb-4">
       <CardContent class="p-4">
@@ -429,6 +437,15 @@
               {:else if i === currentIdx}
                 <button type="button"
                   class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium bg-background ring-2 ring-primary/60 disabled:opacity-60"
+                  disabled={st.busy} onclick={st.action}>
+                  <st.icon class="size-3" />{st.busy ? st.busyLabel : st.label}
+                </button>
+              {:else if !st.done && laterDone}
+                <!-- Skipped earlier step on a complete-ish scene: muted, but
+                     still clickable for users who really want to run it. -->
+                <button type="button"
+                  class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground/60 hover:text-foreground disabled:opacity-60"
+                  title="Skipped — later steps are already done. Click to run it anyway."
                   disabled={st.busy} onclick={st.action}>
                   <st.icon class="size-3" />{st.busy ? st.busyLabel : st.label}
                 </button>

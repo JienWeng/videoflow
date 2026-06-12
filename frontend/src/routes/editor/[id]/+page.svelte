@@ -175,14 +175,21 @@
           method: 'PUT',
           label: 'Re-burning captions',
           onDone: () => {
+            // Only a successful burn makes the page clean — clearing dirty on
+            // mere acceptance would let a failed re-burn masquerade as saved
+            // (and disarm the beforeNavigate guard).
             saving = false;
+            dirty = false;
             void load();
           },
-          onFail: () => (saving = false)
+          onFail: () => {
+            // ops.ts already toasts the failure; keep the page dirty so the
+            // unsaved-changes indicator and nav guard stay armed.
+            saving = false;
+            dirty = true;
+          }
         }
       );
-      // The edits were accepted for burning — further edits re-dirty the page.
-      dirty = false;
     } catch (err: any) {
       saving = false;
       toast.error(err.message);
