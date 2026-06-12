@@ -7,9 +7,10 @@
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Skeleton } from '$lib/components/ui/skeleton';
-  import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
+  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+  import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '$lib/components/ui/collapsible';
   import { toast } from 'svelte-sonner';
-  import { Play, Captions, Clapperboard, RefreshCw } from '@lucide/svelte';
+  import { Play, Captions, Clapperboard, RefreshCw, ChevronDown, History } from '@lucide/svelte';
 
   let jobs: any[] = $state([]);
   let scenes: any[] = $state([]);
@@ -136,80 +137,179 @@
     if (status === 'failed') return 'destructive';
     return 'secondary';
   }
+
+  function isActive(status: string) {
+    return status !== 'succeeded' && status !== 'failed';
+  }
+
+  function relativeTime(iso: string | null): string {
+    if (!iso) return '';
+    const t = new Date(iso.endsWith('Z') ? iso : iso + 'Z').getTime();
+    if (Number.isNaN(t)) return '';
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 60) return `${s}s ago`;
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+  }
+
+  // Group jobs by scene — humans browse renders per scene, not per job id.
+  type SceneGroup = {
+    sceneId: string;
+    title: string;
+    jobs: any[]; // newest first
+    active: any[];
+    succeeded: number;
+    failed: number;
+    latest: string; // newest created_at, for ordering cards
+  };
+
+  let groups: SceneGroup[] = $derived.by(() => {
+    const titles = new Map(scenes.map((s: any) => [s.id, s.title]));
+    const bySceneId = new Map<string, any[]>();
+    for (const j of jobs) {
+      const key = j.scene_id && titles.has(j.scene_id) ? j.scene_id : '__other__';
+      if (!bySceneId.has(key)) bySceneId.set(key, []);
+      bySceneId.get(key)!.push(j);
+    }
+    const out: SceneGroup[] = [];
+    for (const [key, list] of bySceneId) {
+      list.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
+      out.push({
+        sceneId: key,
+        title: key === '__other__' ? 'Other renders' : (titles.get(key) ?? key),
+        jobs: list,
+        active: list.filter((j) => isActive(j.status)),
+        succeeded: list.filter((j) => j.status === 'succeeded').length,
+        failed: list.filter((j) => j.status === 'failed').length,
+        latest: list[0]?.created_at ?? ''
+      });
+    }
+    // Newest activity first; the fallback bucket sorts by its own newest job too.
+    out.sort((a, b) => b.latest.localeCompare(a.latest));
+    return out;
+  });
+
+  function sceneOutputs(g: SceneGroup): { job: any; out: any }[] {
+    const res: { job: any; out: any }[] = [];
+    for (const j of g.jobs) {
+      if (j.status !== 'succeeded') continue;
+      for (const out of outputs[j.id] ?? []) res.push({ job: j, out });
+    }
+    return res;
+  }
 </script>
+
+{#snippet jobRow(j: any)}
+  <div class="flex items-center gap-2 text-xs py-1">
+    <Badge variant={statusVariant(j.status)} class={isActive(j.status) ? 'animate-pulse' : ''}>{j.status}</Badge>
+    <span class="text-muted-foreground">{j.model?.split('/').slice(-2).join('/')}</span>
+    <span class="text-muted-foreground">{relativeTime(j.created_at)}</span>
+    {#if j.error}
+      <span class="text-destructive max-w-[320px] truncate" title={j.error}>{j.error}</span>
+    {/if}
+  </div>
+{/snippet}
 
 <div class="p-6">
   <div class="mb-4">
     <h1 class="text-lg font-semibold">Render</h1>
-    <p class="text-sm text-muted-foreground">Track render jobs, then caption, edit or re-run the finished outputs.</p>
+    <p class="text-sm text-muted-foreground">Browse finished renders by scene — caption, edit or re-run the outputs.</p>
   </div>
 
-  <form class="mb-4 rounded-lg border border-border bg-card p-4" onsubmit={renderFromShot}>
-    <div class="flex flex-wrap gap-4 items-end">
-      <div class="flex-1 min-w-[160px]">
-        <label class="block text-xs text-muted-foreground mb-1" for="scene">Scene</label>
-        <select id="scene" bind:value={sceneId} onchange={loadShots}
-          class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm">
-          <option value="">choose…</option>
-          {#each scenes as s}<option value={s.id}>{s.title}</option>{/each}
-        </select>
-      </div>
-      <div class="flex-1 min-w-[160px]">
-        <label class="block text-xs text-muted-foreground mb-1" for="shot">Shot (prompt-agent render)</label>
-        <select id="shot" bind:value={shotId} disabled={!shots.length}
-          class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm">
-          <option value="">choose…</option>
-          {#each shots as sh}<option value={sh.id}>#{sh.shot_order + 1} {sh.prompt.slice(0, 50)}</option>{/each}
-        </select>
-      </div>
-      <div>
-        <Button type="submit" disabled={busy || !shotId} size="sm">
-          <Play class="size-4 mr-1" />Render shot
-        </Button>
-      </div>
-    </div>
-    <div class="text-xs text-muted-foreground mt-2">Whole-scene multi-shot renders live on the Scenes page (step 4).</div>
-  </form>
+  <Collapsible class="mb-4 rounded-lg border border-border bg-card">
+    <CollapsibleTrigger
+      class="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground [&[data-state=open]>svg]:rotate-180"
+    >
+      <Play class="size-4" />
+      Advanced: render a single shot
+      <ChevronDown class="size-4 ml-auto transition-transform" />
+    </CollapsibleTrigger>
+    <CollapsibleContent>
+      <form class="px-4 pb-4" onsubmit={renderFromShot}>
+        <div class="flex flex-wrap gap-4 items-end">
+          <div class="flex-1 min-w-[160px]">
+            <label class="block text-xs text-muted-foreground mb-1" for="scene">Scene</label>
+            <select id="scene" bind:value={sceneId} onchange={loadShots}
+              class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm">
+              <option value="">choose…</option>
+              {#each scenes as s}<option value={s.id}>{s.title}</option>{/each}
+            </select>
+          </div>
+          <div class="flex-1 min-w-[160px]">
+            <label class="block text-xs text-muted-foreground mb-1" for="shot">Shot (prompt-agent render)</label>
+            <select id="shot" bind:value={shotId} disabled={!shots.length}
+              class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm">
+              <option value="">choose…</option>
+              {#each shots as sh}<option value={sh.id}>#{sh.shot_order + 1} {sh.prompt.slice(0, 50)}</option>{/each}
+            </select>
+          </div>
+          <div>
+            <Button type="submit" disabled={busy || !shotId} size="sm">
+              <Play class="size-4 mr-1" />Render shot
+            </Button>
+          </div>
+        </div>
+        <div class="text-xs text-muted-foreground mt-2">Whole-scene multi-shot renders live on the Scenes page (step 4).</div>
+      </form>
+    </CollapsibleContent>
+  </Collapsible>
 
-  <Table>
-    <TableHeader>
-      <TableRow>
-        <TableHead>job</TableHead>
-        <TableHead>scene / shot</TableHead>
-        <TableHead>model</TableHead>
-        <TableHead>status</TableHead>
-        <TableHead>error</TableHead>
-      </TableRow>
-    </TableHeader>
-    <TableBody>
-      {#if !loaded}
-        {#each Array(3) as _, i (i)}
-          <TableRow>
-            <TableCell><Skeleton class="h-4 w-28" /></TableCell>
-            <TableCell><Skeleton class="h-4 w-36" /></TableCell>
-            <TableCell><Skeleton class="h-4 w-40" /></TableCell>
-            <TableCell><Skeleton class="h-5 w-20 rounded-full" /></TableCell>
-            <TableCell><Skeleton class="h-4 w-24" /></TableCell>
-          </TableRow>
-        {/each}
-      {/if}
-      {#each jobs.slice().reverse() as j (j.id)}
-        <TableRow>
-          <TableCell class="text-xs font-mono">{j.id}</TableCell>
-          <TableCell class="text-xs">{j.scene_id}{j.shot_id ? ` / ${j.shot_id}` : ''}</TableCell>
-          <TableCell class="text-xs">{j.model?.split('/').slice(-2).join('/')}</TableCell>
-          <TableCell>
-            <Badge variant={statusVariant(j.status)}>{j.status}</Badge>
-          </TableCell>
-          <TableCell class="text-xs text-muted-foreground">
-            <div class="max-w-[320px] truncate" title={j.error ?? ''}>{j.error ?? ''}</div>
-          </TableCell>
-        </TableRow>
-        {#if outputs[j.id]?.length}
-          <TableRow>
-            <TableCell colspan={5}>
-              <div class="flex flex-wrap gap-4 py-1">
-                {#each outputs[j.id] as out (out.id)}
+  {#if !loaded}
+    <div class="space-y-4">
+      {#each Array(2) as _, i (i)}
+        <Card>
+          <CardHeader>
+            <Skeleton class="h-5 w-48" />
+          </CardHeader>
+          <CardContent>
+            <Skeleton class="h-44 w-[320px] rounded-lg" />
+          </CardContent>
+        </Card>
+      {/each}
+    </div>
+  {:else if !jobs.length}
+    <div class="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
+      Nothing rendered yet — render a scene from the Scenes page or ask the chat. — 还没有渲染。
+    </div>
+  {:else}
+    <div class="space-y-4">
+      {#each groups as g (g.sceneId)}
+        <Card data-scene-card={g.sceneId}>
+          <CardHeader>
+            <div class="flex flex-wrap items-center gap-2">
+              <CardTitle class="text-base font-bold">{g.title}</CardTitle>
+              <div class="flex items-center gap-1.5 ml-auto">
+                {#if g.active.length}
+                  <Badge variant="secondary" class="animate-pulse">{g.active.length} in progress</Badge>
+                {/if}
+                {#if g.succeeded}
+                  <Badge variant="default">{g.succeeded} succeeded</Badge>
+                {/if}
+                {#if g.failed}
+                  <Badge variant="destructive">{g.failed} failed</Badge>
+                {/if}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {#if g.active.length}
+              <div class="mb-4 space-y-1.5">
+                {#each g.active as j (j.id)}
+                  <div class="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
+                    <Badge variant="secondary" class="animate-pulse">{j.status}</Badge>
+                    <span class="text-muted-foreground">{j.model?.split('/').slice(-2).join('/')}</span>
+                    <span class="text-muted-foreground ml-auto">{relativeTime(j.created_at)}</span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+
+            {#if sceneOutputs(g).length}
+              <div class="flex flex-wrap gap-4">
+                {#each sceneOutputs(g) as { job, out } (out.id)}
                   <div class="flex-none">
                     <VideoPreview path={out.captioned_path || out.video_path} href={`/editor/${out.id}`} />
                     <div class="text-xs text-muted-foreground mt-1 flex items-center gap-1">
@@ -243,7 +343,7 @@
                         size="sm"
                         title="Burn captions with the project defaults — fine-tune in the editor"
                         disabled={captioning[out.id]}
-                        onclick={() => addCaptions(j.id, out)}
+                        onclick={() => addCaptions(job.id, out)}
                       >
                         <Captions class="size-3 mr-1" />
                         {captioning[out.id] ? 'transcribing…' : out.captioned_path ? 'Re-caption' : 'Auto captions'}
@@ -252,11 +352,40 @@
                   </div>
                 {/each}
               </div>
-            </TableCell>
-          </TableRow>
-        {/if}
-      {/each}
-    </TableBody>
-  </Table>
+            {:else if !g.active.length}
+              <div class="text-xs text-muted-foreground">No finished outputs for this scene yet.</div>
+            {/if}
 
+            <!-- Compact jobs strip — collapsed behind "history (N)" when there are more than 2 jobs. -->
+            <div class="mt-3 border-t border-border pt-2">
+              {#if g.jobs.length > 2}
+                <Collapsible>
+                  <CollapsibleTrigger
+                    class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground [&[data-state=open]>svg.chev]:rotate-180"
+                  >
+                    <History class="size-3" />
+                    history ({g.jobs.length})
+                    <ChevronDown class="chev size-3 transition-transform" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div class="mt-1 divide-y divide-border/60">
+                      {#each g.jobs as j (j.id)}
+                        {@render jobRow(j)}
+                      {/each}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              {:else}
+                <div class="divide-y divide-border/60">
+                  {#each g.jobs as j (j.id)}
+                    {@render jobRow(j)}
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </CardContent>
+        </Card>
+      {/each}
+    </div>
+  {/if}
 </div>
