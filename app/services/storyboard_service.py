@@ -18,7 +18,7 @@ from app.models.base import new_id
 from app.providers.atlascloud_client import get_atlas_client
 from app.providers.atlascloud_image import AtlasCloudImageProvider
 from app.providers.polling import poll_until_terminal
-from app.services import media, style_service
+from app.services import project_service, media, style_service
 
 MIN_GRID = 2
 MAX_GRID = 4
@@ -161,6 +161,9 @@ async def generate_storyboard(
     await media.download(result.output_urls[0], dest)
     asset = Asset(
         id=asset_id,
+        # Stamped at creation so the row is never committed project-less (a
+        # NULL-window would risk adoption into the wrong project).
+        project_id=project_service.active_project_id(session),
         type="storyboard",
         name="分镜图",
         file_path=str(dest),

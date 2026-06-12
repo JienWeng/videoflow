@@ -182,11 +182,22 @@ def delete_project(session: Session, project_id: str) -> dict:
         select(Scene).where(col(Scene.project_id) == project_id)
     ).all()
     shot_count = 0
+    entity_ids: list[str] = []
     for scene in scenes:
+        entity_ids.append(scene.id)
         for shot in session.exec(select(Shot).where(Shot.scene_id == scene.id)).all():
             session.delete(shot)
+            entity_ids.append(shot.id)
             shot_count += 1
         session.delete(scene)
+    # Revision history belongs to the deleted entities — drop it with them.
+    if entity_ids:
+        from app.models import Revision
+
+        for rev in session.exec(
+            select(Revision).where(col(Revision.entity_id).in_(entity_ids))
+        ).all():
+            session.delete(rev)
     deleted["scenes"] = len(scenes)
     deleted["shots"] = shot_count
 
