@@ -1,5 +1,15 @@
 <script lang="ts">
-  import { Loader2, History } from '@lucide/svelte';
+  import { fade } from 'svelte/transition';
+  import {
+    Loader2,
+    History,
+    Images,
+    ImagePlus,
+    LayoutGrid,
+    Captions,
+    Palette,
+    Film
+  } from '@lucide/svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { activity, type ActivityItem } from '$lib/activity.svelte';
 
@@ -15,8 +25,22 @@
     render: 'Render'
   };
 
+  // Map kinds to lucide icon components
+  const KIND_ICONS: Record<string, any> = {
+    storyboard: Images,
+    assets: ImagePlus,
+    shots: LayoutGrid,
+    caption: Captions,
+    style_ingest: Palette,
+    render: Film
+  };
+
   function label(item: ActivityItem): string {
     return LABELS[item.kind] ?? item.kind;
+  }
+
+  function kindIcon(item: ActivityItem): any {
+    return KIND_ICONS[item.kind] ?? History;
   }
 
   function timeAgo(iso: string): string {
@@ -38,45 +62,70 @@
   function onWindowClick(e: MouseEvent) {
     if (open && root && !root.contains(e.target as Node)) open = false;
   }
+
+  function onWindowKeydown(e: KeyboardEvent) {
+    if (open && e.key === 'Escape') {
+      open = false;
+    }
+  }
+
+  const hasRunning = $derived(activity.runningCount > 0);
 </script>
 
-<svelte:window onclick={onWindowClick} />
+<svelte:window onclick={onWindowClick} onkeydown={onWindowKeydown} />
 
 <div class="relative" bind:this={root}>
   {#if open}
     <div
-      class="absolute bottom-full left-0 z-50 mb-2 w-80 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-md"
+      transition:fade={{ duration: 120 }}
+      class="absolute bottom-full left-0 z-50 mb-2 w-80 rounded-lg border border-border bg-popover shadow-lg text-popover-foreground"
     >
-      <div class="px-2 py-1.5 text-xs font-semibold text-muted-foreground">Recent activity</div>
+      <!-- Header row -->
+      <div class="flex items-center gap-2 px-3 py-2 border-b border-border">
+        <span class="text-xs font-semibold">Activity</span>
+        {#if activity.items.length > 0}
+          <Badge variant="secondary" class="text-[10px] px-1.5 py-0">{activity.items.length}</Badge>
+        {/if}
+        {#if hasRunning}
+          <span class="ml-auto flex items-center gap-1.5 text-[10px] text-muted-foreground">
+            <span class="relative flex size-2">
+              <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75"></span>
+              <span class="relative inline-flex size-2 rounded-full bg-primary"></span>
+            </span>
+            {activity.runningCount} running
+          </span>
+        {/if}
+      </div>
+
       {#if activity.items.length === 0}
-        <div class="px-2 py-3 text-sm text-muted-foreground">No background activity yet.</div>
+        <div class="px-3 py-4 text-sm text-muted-foreground">No background activity yet.</div>
       {:else}
-        <ul class="max-h-80 overflow-auto">
+        <ul class="max-h-80 overflow-y-auto">
           {#each activity.items.slice(0, 10) as item (item.id)}
-            <li class="rounded-md px-2 py-1.5 hover:bg-accent/50">
+            {@const Icon = kindIcon(item)}
+            <li class="px-3 py-2 hover:bg-accent/50 {item.status === 'failed' ? 'border-l-2 border-destructive' : ''}">
               <div class="flex items-center gap-2">
-                <span class="text-sm font-medium">{label(item)}</span>
-                <span class="ml-auto">
+                <Icon class="size-3.5 shrink-0 text-muted-foreground" />
+                <span class="text-sm font-medium truncate flex-1">{label(item)}</span>
+                <span class="text-xs text-muted-foreground shrink-0">{timeAgo(item.created_at)}</span>
+                <span class="shrink-0">
                   {#if isRunning(item)}
-                    <Badge variant="secondary" class="animate-pulse">running</Badge>
+                    <Badge variant="secondary" class="animate-pulse text-[10px] px-1.5 py-0">running</Badge>
                   {:else if item.status === 'failed'}
-                    <Badge variant="destructive" title={item.error ?? 'failed'}>failed</Badge>
+                    <Badge variant="destructive" class="text-[10px] px-1.5 py-0">failed</Badge>
                   {:else}
-                    <Badge>done</Badge>
+                    <Badge class="text-[10px] px-1.5 py-0">done</Badge>
                   {/if}
                 </span>
               </div>
-              <div class="flex items-center gap-2 text-xs text-muted-foreground">
-                {#if item.scene_id}
-                  <span class="truncate font-mono">{item.scene_id}</span>
-                {:else if item.output_id}
-                  <span class="truncate font-mono">{item.output_id}</span>
-                {/if}
-                <span class="ml-auto shrink-0">{timeAgo(item.created_at)}</span>
-              </div>
+              {#if item.scene_id || item.output_id}
+                <div class="mt-0.5 pl-5 text-[10px] text-muted-foreground font-mono truncate">
+                  {item.scene_id ?? item.output_id}
+                </div>
+              {/if}
               {#if item.status === 'failed'}
                 {@const errorText = item.error?.trim() || 'failed (no detail)'}
-                <div class="truncate text-xs text-destructive" title={errorText}>{errorText}</div>
+                <div class="mt-0.5 pl-5 truncate text-[10px] text-destructive" title={errorText}>{errorText}</div>
               {/if}
             </li>
           {/each}
@@ -89,10 +138,10 @@
     type="button"
     onclick={() => (open = !open)}
     class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent
-           {activity.runningCount > 0 ? 'text-primary font-medium' : 'text-muted-foreground'}"
+           {hasRunning ? 'text-primary font-medium' : 'text-muted-foreground'}"
     aria-expanded={open}
   >
-    {#if activity.runningCount > 0}
+    {#if hasRunning}
       <Loader2 class="size-4 animate-spin" />
       {activity.runningCount} running
     {:else}
