@@ -3,6 +3,7 @@
   import { Users, Image, Clapperboard, ListVideo, Film } from '@lucide/svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { mediaUrl, isImage } from '$lib/api';
+  import { kindColor } from './transform';
 
   let { data }: NodeProps = $props();
 
@@ -30,9 +31,12 @@
   );
 </script>
 
+<!-- Kind-tinted left border: at far zoom levels labels vanish, but the accent
+  colors keep the graph readable as structure-by-color (matches the minimap). -->
 <div
-  class="w-[180px] rounded-md border bg-card px-2 py-1.5 text-xs shadow-sm
+  class="w-[180px] rounded-md border border-l-2 bg-card px-2 py-1.5 text-xs shadow-sm
     {kind === 'scene' ? 'border-primary/60' : 'border-border'}"
+  style="border-left-color: {kindColor(kind)}"
 >
   <Handle type="target" position={Position.Left} />
   <div class="flex items-center gap-1.5">

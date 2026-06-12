@@ -1,5 +1,20 @@
 import type { Node, Edge } from '@xyflow/svelte';
 
+/** Per-kind accent colors — node left borders and minimap dots share these so
+ * the zoomed-out canvas still reads as structure-by-color. */
+export const KIND_COLORS: Record<string, string> = {
+  character: 'hsl(210, 85%, 60%)', // blue
+  asset: 'hsl(150, 60%, 50%)', // green
+  scene: 'hsl(270, 70%, 65%)', // purple
+  shot: 'hsl(35, 90%, 55%)', // orange
+  render_job: 'hsl(330, 70%, 60%)', // pink
+  output: 'hsl(190, 80%, 55%)' // cyan
+};
+
+export function kindColor(kind: string): string {
+  return KIND_COLORS[kind] ?? 'hsl(0, 0%, 55%)';
+}
+
 export type ApiGraph = {
   nodes: { id: string; type: string; label: string; data?: Record<string, any> }[];
   edges: { source: string; target: string; label: string }[];

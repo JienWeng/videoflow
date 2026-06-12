@@ -157,6 +157,21 @@
     dirty = true;
   }
 
+  /** Fold caption i into i-1: join the texts (space, unless identical),
+   * extend the previous segment's end to cover this one, drop this one. */
+  function mergePrevCaption(i: number) {
+    const prev = segments[i - 1];
+    const cur = segments[i];
+    if (!prev || !cur) return;
+    const a = (prev.text ?? '').trim();
+    const b = (cur.text ?? '').trim();
+    prev.text = a === b ? a : [a, b].filter(Boolean).join(' ');
+    prev.end = Math.max(Number(prev.end), Number(cur.end));
+    segments = segments.filter((_, idx) => idx !== i);
+    selection = { kind: 'caption', index: i - 1 };
+    dirty = true;
+  }
+
   async function save() {
     if (!output) return;
     saving = true;
@@ -344,6 +359,7 @@
           {focusSignal}
           ondirty={markDirty}
           ondeletecaption={deleteCaption}
+          onmergeprev={mergePrevCaption}
           onretried={() => {}}
         />
       </aside>

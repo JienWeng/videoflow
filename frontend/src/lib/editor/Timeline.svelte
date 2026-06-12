@@ -227,8 +227,8 @@
                 : 'border-border bg-secondary hover:bg-muted'}"
             style="left:{Number(seg.start) * pps}px; width:{Math.max(
               (Number(seg.end) - Number(seg.start)) * pps,
-              10
-            )}px"
+              14
+            )}px; z-index:{(Number(seg.end) - Number(seg.start)) * pps < 14 ? 5 : 1}"
             title={seg.text}
             onpointerdown={(e) => startMove(e, i)}
             ondblclick={() => oncaptiondblclick(i)}

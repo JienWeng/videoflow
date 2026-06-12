@@ -282,3 +282,81 @@ class TestValidateSegments:
             validate_segments([])
         with pytest.raises(ValidationFailedError):
             validate_segments([{"start": 0.0, "end": 1.0, "text": "  "}])
+
+
+# ---------------------------------------------------------------------------
+# tidy_segments — whisper sliver cleanup (near-zero duplicate segments)
+# ---------------------------------------------------------------------------
+
+from app.services.caption_service import tidy_segments
+
+
+class TestTidySegments:
+    def test_duplicate_text_merged_into_predecessor(self):
+        segs = tidy_segments(
+            [
+                CaptionSegment(start=0.0, end=2.0, text="秘密"),
+                CaptionSegment(start=2.0, end=2.04, text="秘密"),
+            ]
+        )
+        assert len(segs) == 1
+        assert segs[0].text == "秘密"
+        assert segs[0].start == 0.0
+        assert segs[0].end == 2.04
+
+    def test_duplicate_merge_keeps_predecessor_end_when_longer(self):
+        segs = tidy_segments(
+            [
+                CaptionSegment(start=0.0, end=3.0, text="hello"),
+                CaptionSegment(start=1.0, end=2.0, text=" hello "),
+            ]
+        )
+        assert len(segs) == 1
+        assert segs[0].end == 3.0
+
+    def test_sub_02s_contained_text_dropped(self):
+        segs = tidy_segments(
+            [
+                CaptionSegment(start=0.0, end=2.0, text="这是一个秘密"),
+                CaptionSegment(start=2.0, end=2.1, text="秘密"),
+            ]
+        )
+        assert len(segs) == 1
+        assert segs[0].text == "这是一个秘密"
+        assert segs[0].end == 2.0  # dropped, not merged — timings stay honest
+
+    def test_novel_short_segment_kept(self):
+        segs = tidy_segments(
+            [
+                CaptionSegment(start=0.0, end=2.0, text="你好"),
+                CaptionSegment(start=2.0, end=2.1, text="再见"),
+            ]
+        )
+        assert len(segs) == 2
+        assert segs[1].text == "再见"
+        assert segs[1].end == 2.1  # timings untouched
+
+    def test_long_contained_segment_kept(self):
+        # Containment only drops SHORT (<0.2s) slivers; a real repeated word
+        # with substance keeps its slot.
+        segs = tidy_segments(
+            [
+                CaptionSegment(start=0.0, end=2.0, text="这是一个秘密"),
+                CaptionSegment(start=2.0, end=3.0, text="秘密"),
+            ]
+        )
+        assert len(segs) == 2
+
+    def test_chain_of_duplicates_collapses(self):
+        segs = tidy_segments(
+            [
+                CaptionSegment(start=0.0, end=1.0, text="哇"),
+                CaptionSegment(start=1.0, end=1.05, text="哇"),
+                CaptionSegment(start=1.05, end=1.1, text="哇"),
+            ]
+        )
+        assert len(segs) == 1
+        assert segs[0].end == 1.1
+
+    def test_empty_list(self):
+        assert tidy_segments([]) == []

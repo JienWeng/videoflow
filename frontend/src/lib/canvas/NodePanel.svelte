@@ -14,7 +14,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { Node } from '@xyflow/svelte';
-  import * as Sheet from '$lib/components/ui/sheet';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
@@ -22,7 +21,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Separator } from '$lib/components/ui/separator';
   import { toast } from 'svelte-sonner';
-  import { Captions, Clapperboard, History, Pencil, RefreshCw, Sparkles, Trash2 } from '@lucide/svelte';
+  import { Captions, Clapperboard, History, Pencil, RefreshCw, Sparkles, Trash2, X } from '@lucide/svelte';
   import { get, patch, post, del, mediaUrl, isImage } from '$lib/api';
   import { runBackgroundOp } from '$lib/ops';
   import CaptionEditor from '$lib/components/CaptionEditor.svelte';
@@ -37,11 +36,9 @@
   // `node` prop, EXCEPT when the form is dirty and the user cancels the
   // discard confirm — then the new selection is ignored and the panel keeps
   // the node being edited (we can't revert the parent's selection from here).
+  // The panel is a plain fixed-position div (NOT a modal Sheet) so the canvas
+  // underneath stays pannable/clickable while it is open.
   let shown = $state<Node | null>(null);
-  // Sheet open state is locally bound so a refused close can be re-opened —
-  // bits-ui flips its (unbound) open prop internally, so merely "not closing"
-  // in onOpenChange is not enough to keep the sheet visible.
-  let sheetOpen = $state(false);
 
   const kind = $derived(String(shown?.data?.kind ?? ''));
   const data = $derived((shown?.data ?? {}) as Record<string, any>);
@@ -83,7 +80,6 @@
       if ((next?.id ?? null) === (shown?.id ?? null)) return;
       if (formDirty && shown && !confirm('Discard unsaved changes?')) return;
       shown = next;
-      sheetOpen = next !== null;
     });
   });
 
@@ -117,16 +113,16 @@
     if (shown && String(d.kind) === 'output') void loadCaptionConfig();
   });
 
-  // Close requested via Escape / overlay / X. bits-ui has already flipped
-  // sheetOpen to false by the time onOpenChange fires, so refusing the close
-  // means flipping it back (the confirm dialog blocks, so no visible flicker).
+  // Close requested via Escape or the X button. Dirty edits get a confirm;
+  // a refused close simply does nothing (the panel never left the DOM).
   function requestClose() {
-    if (formDirty && !confirm('Discard unsaved changes?')) {
-      sheetOpen = true;
-      return;
-    }
+    if (formDirty && !confirm('Discard unsaved changes?')) return;
     formDirty = false;
     onclose();
+  }
+
+  function onWindowKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && shown) requestClose();
   }
 
   async function loadCaptionConfig() {
@@ -325,12 +321,28 @@
   );
 </script>
 
-<Sheet.Root bind:open={sheetOpen} onOpenChange={(open) => !open && requestClose()}>
-  <Sheet.Content side="right" class="w-[380px] sm:max-w-[380px]">
-    <Sheet.Header>
-      <Sheet.Title class="capitalize">{kind.replace('_', ' ')}</Sheet.Title>
-      <Sheet.Description class="truncate">{data.label}</Sheet.Description>
-    </Sheet.Header>
+<svelte:window onkeydown={onWindowKeydown} />
+
+{#if shown}
+  <!-- Non-modal side panel: fixed right, no overlay, no focus trap — the
+    canvas stays interactive and clicking another node switches the panel. -->
+  <aside
+    class="bg-popover text-popover-foreground fixed inset-y-0 right-0 z-50 flex w-[380px] flex-col gap-4 border-l border-border text-sm shadow-lg"
+    aria-label="{kind} details"
+  >
+    <header class="flex flex-col gap-1.5 p-4 pb-0">
+      <h2 class="font-semibold capitalize">{kind.replace('_', ' ')}</h2>
+      <p class="text-muted-foreground truncate">{data.label}</p>
+    </header>
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      class="absolute top-3 right-3"
+      onclick={requestClose}
+    >
+      <X />
+      <span class="sr-only">Close</span>
+    </Button>
 
     <div class="flex flex-col gap-4 overflow-y-auto px-4 pb-4">
       {#if kind === 'scene'}
@@ -548,5 +560,5 @@
         </div>
       {/if}
     </div>
-  </Sheet.Content>
-</Sheet.Root>
+  </aside>
+{/if}

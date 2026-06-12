@@ -10,7 +10,7 @@
   import { Textarea } from '$lib/components/ui/textarea';
   import { Separator } from '$lib/components/ui/separator';
   import { toast } from 'svelte-sonner';
-  import { RefreshCw, Trash2 } from '@lucide/svelte';
+  import { ArrowUpToLine, RefreshCw, Trash2 } from '@lucide/svelte';
   import type { EditorOutput, SceneRef, Segment, Selection, Shot } from './types';
 
   let {
@@ -24,6 +24,7 @@
     focusSignal = 0,
     ondirty,
     ondeletecaption,
+    onmergeprev,
     onretried
   }: {
     selection: Selection;
@@ -36,6 +37,7 @@
     focusSignal?: number;
     ondirty: () => void;
     ondeletecaption: (i: number) => void;
+    onmergeprev: (i: number) => void;
     onretried: () => void;
   } = $props();
 
@@ -167,6 +169,16 @@
       </div>
     {/if}
     <Separator />
+    {#if selection.index > 0}
+      <Button
+        variant="outline"
+        size="sm"
+        title="Fold this caption into the previous one (joins text, extends its end)"
+        onclick={() => selection && onmergeprev(selection.index)}
+      >
+        <ArrowUpToLine class="mr-1 size-3.5" />Merge into previous
+      </Button>
+    {/if}
     <Button
       variant="destructive"
       size="sm"

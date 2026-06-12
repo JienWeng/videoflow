@@ -16,7 +16,7 @@
   import { LayoutGrid } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
   import { get, post, del } from '$lib/api';
-  import { toFlow, loadPositions, savePositions, clearPositions, type ApiGraph } from './transform';
+  import { toFlow, loadPositions, savePositions, clearPositions, kindColor, type ApiGraph } from './transform';
   import { layout, layoutFresh } from './layout';
   import EntityNode from './EntityNode.svelte';
   import FlowHelper from './FlowHelper.svelte';
@@ -46,7 +46,7 @@
   export function autoArrange() {
     clearPositions();
     nodes = layout(nodes, edges);
-    flow?.fitView({ duration: 400 });
+    flow?.fitView({ duration: 400, padding: 0.1, minZoom: 0.1 });
   }
 
   export function focusNode(id: string) {
@@ -131,6 +131,8 @@
     bind:edges
     {nodeTypes}
     fitView
+    fitViewOptions={{ padding: 0.1 }}
+    minZoom={0.1}
     colorMode="dark"
     proOptions={{ hideAttribution: true }}
     onconnect={handleConnect}
@@ -147,6 +149,6 @@
     </Panel>
     <Background />
     <Controls />
-    <MiniMap />
+    <MiniMap pannable zoomable nodeColor={(n) => kindColor(String(n.data?.kind ?? ''))} />
   </SvelteFlow>
 </div>

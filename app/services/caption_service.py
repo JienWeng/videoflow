@@ -213,6 +213,31 @@ def correct_segments_timed(
     return result
 
 
+def tidy_segments(segments: list[CaptionSegment]) -> list[CaptionSegment]:
+    """Clean up whisper sliver artifacts: near-zero-length duplicate segments.
+
+    Walking in order, a segment is folded into its predecessor when:
+    - its stripped text equals the predecessor's stripped text → merge
+      (predecessor's end extends to cover it); or
+    - it is shorter than 0.2s AND its text is contained in the predecessor's
+      text → drop it (no timing change — timings stay honest).
+
+    Short segments with novel text are kept untouched.
+    """
+    out: list[CaptionSegment] = []
+    for seg in segments:
+        text = seg.text.strip()
+        prev = out[-1] if out else None
+        if prev is not None:
+            if text == prev.text.strip():
+                out[-1] = dataclasses.replace(prev, end=max(prev.end, seg.end))
+                continue
+            if seg.end - seg.start < 0.2 and text and text in prev.text:
+                continue
+        out.append(seg)
+    return out
+
+
 def format_ass_time(seconds: float) -> str:
     cs = int(round(seconds * 100))
     h, rem = divmod(cs, 360000)
@@ -450,6 +475,9 @@ async def caption_output(
         script_lines = extract_script_lines(request_json)
         if script_lines:
             segments = correct_segments(segments, script_lines)
+    # After script alignment duplicates become exact, so sliver cleanup runs
+    # last — the stored captions_json is clean.
+    segments = tidy_segments(segments)
 
     output = await _burn_and_store(
         session, output, segments, style=style, language=language
