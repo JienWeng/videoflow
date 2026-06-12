@@ -13,6 +13,7 @@ def register_routers(app: FastAPI) -> None:
         events,
         graph,
         ops,
+        projects,
         render,
         scenes,
         style,
@@ -25,5 +26,6 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(style.router)
     app.include_router(graph.router)
     app.include_router(ops.router)
+    app.include_router(projects.router)
     app.include_router(chat.router)
     app.include_router(events.router)

@@ -6,7 +6,7 @@ import logging
 
 from sqlmodel import Session, select
 
-from app.models import Character, RenderOutput, Scene, Shot
+from app.models import Character, RenderJob, RenderOutput, Scene, Shot
 from app.schemas import Intent, IntentAction
 
 logger = logging.getLogger("videoflow.chat")
@@ -18,13 +18,26 @@ async def handle_message(session: Session, message: str) -> dict:
     from app.agents.intent_agent import classify_intent
     from app.services.caption_service import STYLES
 
-    scenes = [{"id": s.id, "title": s.title} for s in session.exec(select(Scene)).all()]
+    from app.services import project_service
+
+    pid = project_service.active_project_id(session)
+    scenes = [
+        {"id": s.id, "title": s.title}
+        for s in session.exec(select(Scene).where(Scene.project_id == pid)).all()
+    ]
     characters = [
-        {"id": c.id, "name": c.name} for c in session.exec(select(Character)).all()
+        {"id": c.id, "name": c.name}
+        for c in session.exec(
+            select(Character).where(Character.project_id == pid)
+        ).all()
     ]
     outputs = [
         {"id": o.id, "video": o.video_path}
-        for o in session.exec(select(RenderOutput)).all()
+        for o in session.exec(
+            select(RenderOutput)
+            .join(RenderJob, RenderOutput.render_job_id == RenderJob.id)
+            .where(RenderJob.project_id == pid)
+        ).all()
     ]
 
     try:

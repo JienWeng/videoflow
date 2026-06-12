@@ -69,6 +69,7 @@ async def process_job(job_id: str) -> None:
 
         # Surface the render in the Assets library (reusable as a reference).
         session.add(Asset(
+            project_id=job.project_id,
             type="video",
             name=f"Render {job.scene_id or job.id}",
             file_path=str(video_path),

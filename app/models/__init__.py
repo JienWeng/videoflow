@@ -3,6 +3,7 @@
 from app.models.asset import Asset
 from app.models.character import Character
 from app.models.op import Op
+from app.models.project import Project
 from app.models.render_job import RenderJob, RenderStatus
 from app.models.render_output import RenderOutput
 from app.models.revision import Revision
@@ -15,6 +16,7 @@ __all__ = [
     "Asset",
     "Character",
     "Op",
+    "Project",
     "RenderJob",
     "RenderStatus",
     "RenderOutput",

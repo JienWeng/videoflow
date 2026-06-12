@@ -22,6 +22,7 @@ class RenderJob(SQLModel, table=True):
     __tablename__ = "render_jobs"
 
     id: str = Field(default_factory=lambda: new_id("job"), primary_key=True)
+    project_id: str | None = Field(default=None, foreign_key="projects.id")
     scene_id: str | None = Field(default=None, foreign_key="scenes.id")
     shot_id: str | None = Field(default=None, foreign_key="shots.id")
     provider: str = "atlascloud"

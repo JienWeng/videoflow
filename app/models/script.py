@@ -14,6 +14,7 @@ class Script(SQLModel, table=True):
     __tablename__ = "scripts"
 
     id: str = Field(default_factory=lambda: new_id("script"), primary_key=True)
+    project_id: str | None = Field(default=None, foreign_key="projects.id")
     idea: str = ""  # the user's original idea text
     title: str = ""
     summary: str = ""  # the draft's overall summary/narrative

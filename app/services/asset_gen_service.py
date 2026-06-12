@@ -30,7 +30,7 @@ from app.providers.atlascloud_image import AtlasCloudImageProvider
 from app.providers.polling import poll_until_terminal
 from app.providers.url_resolver import AtlasCloudUploadResolver
 from app.schemas import AssetPlan, PlannedAsset
-from app.services import media, scene_service, style_service
+from app.services import media, project_service, scene_service, style_service
 
 logger = logging.getLogger("videoflow.assets")
 
@@ -107,8 +107,13 @@ def gather_library(session: Session, exclude_ids: set[str]) -> list[Asset]:
     already linked to the scene (exclude_ids), excluding non-reusable types,
     capped at LIBRARY_CAP."""
     out: list[Asset] = []
+    pid = project_service.active_project_id(session)
     # Deterministic cap: oldest assets win the LIBRARY_CAP slots.
-    for asset in session.exec(select(Asset).order_by(Asset.created_at, Asset.id)):
+    for asset in session.exec(
+        select(Asset)
+        .where(Asset.project_id == pid)
+        .order_by(Asset.created_at, Asset.id)
+    ):
         if asset.id in exclude_ids or asset.type in LIBRARY_EXCLUDED_TYPES:
             continue
         out.append(asset)
@@ -299,6 +304,7 @@ async def generate_scene_assets(
         await media.download(result.output_urls[0], dest)
         asset = Asset(
             id=asset_id,
+            project_id=scene.project_id,
             type=item.asset_type,
             name=item.name,
             description=item.description,

@@ -44,6 +44,18 @@ def _migrate(target_engine) -> None:
         if cols and "script_id" not in cols:
             conn.exec_driver_sql("ALTER TABLE scenes ADD COLUMN script_id VARCHAR")
             conn.commit()
+        # Projects: scope columns on every project-owned table. Backfilling
+        # NULLs into the default project happens lazily in
+        # project_service.get_active (adopt_orphans).
+        for table in (
+            "characters", "assets", "scenes", "scripts", "style_guides", "render_jobs",
+        ):
+            cols = [r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")]
+            if cols and "project_id" not in cols:
+                conn.exec_driver_sql(
+                    f"ALTER TABLE {table} ADD COLUMN project_id VARCHAR"
+                )
+                conn.commit()
 
 
 def get_session() -> Iterator[Session]:

@@ -18,6 +18,7 @@ class Asset(SQLModel, table=True):
     __tablename__ = "assets"
 
     id: str = Field(default_factory=lambda: new_id("asset"), primary_key=True)
+    project_id: str | None = Field(default=None, foreign_key="projects.id")
     type: str = "prop"
     name: str = ""
     file_path: str | None = None

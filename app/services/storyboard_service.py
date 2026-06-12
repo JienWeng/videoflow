@@ -244,6 +244,7 @@ async def generate_storyboard_for_scene(
         image_provider=image_provider,
     )
     asset.name = f"分镜图 {scene.title}"
+    asset.project_id = scene.project_id
     asset.metadata_json = {**(asset.metadata_json or {}), "scene_id": scene_id}
     session.add(asset)
     session.commit()

@@ -48,9 +48,15 @@ def style_context(style: StyleGuide | None) -> dict | None:
 
 
 def get_style(session: Session) -> StyleGuide | None:
-    """Return the singleton StyleGuide row (latest by created_at if several)."""
+    """Return the ACTIVE project's StyleGuide row (per-project singleton;
+    latest by created_at if several)."""
+    from app.services import project_service
+
+    pid = project_service.active_project_id(session)
     rows = session.exec(
-        select(StyleGuide).order_by(StyleGuide.created_at.desc())  # type: ignore[attr-defined]
+        select(StyleGuide)
+        .where(StyleGuide.project_id == pid)
+        .order_by(StyleGuide.created_at.desc())  # type: ignore[attr-defined]
     ).all()
     return rows[0] if rows else None
 
@@ -68,7 +74,11 @@ def upsert_style(
 ) -> StyleGuide:
     """Update the singleton row (create it if missing). Partial: only non-None
     fields are applied. reference_asset_ids are validated — unknown ids dropped."""
-    style = get_style(session) or StyleGuide()
+    from app.services import project_service
+
+    style = get_style(session) or StyleGuide(
+        project_id=project_service.active_project_id(session)
+    )
     if name is not None:
         style.name = name
     if style_prompt is not None:
@@ -95,21 +105,28 @@ def upsert_style(
 async def ingest_style(session: Session) -> StyleGuide:
     """Derive the project style from scripts/scenes/characters/assets and
     upsert the five derived fields (name + reference assets are kept)."""
+    from app.services import project_service
+
+    pid = project_service.active_project_id(session)
     scripts = [
         {"idea": sc.idea, "title": sc.title, "summary": sc.summary}
-        for sc in session.exec(select(Script)).all()
+        for sc in session.exec(select(Script).where(Script.project_id == pid)).all()
     ]
     scenes = [
         {"title": s.title, "summary": s.summary, "aspect_ratio": s.aspect_ratio}
-        for s in session.exec(select(Scene)).all()
+        for s in session.exec(select(Scene).where(Scene.project_id == pid)).all()
     ]
     characters = [
         {"name": c.name, "appearance": c.appearance}
-        for c in session.exec(select(Character)).all()
+        for c in session.exec(
+            select(Character).where(Character.project_id == pid)
+        ).all()
     ]
     assets = [
         {"name": a.name, "description": a.description}
-        for a in session.exec(select(Asset).limit(_INGEST_ASSET_LIMIT)).all()
+        for a in session.exec(
+            select(Asset).where(Asset.project_id == pid).limit(_INGEST_ASSET_LIMIT)
+        ).all()
     ]
     spec = await derive_style(
         scripts=scripts, scenes=scenes, characters=characters, assets=assets

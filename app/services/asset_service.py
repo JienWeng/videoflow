@@ -13,6 +13,7 @@ from app.errors import NotFoundError
 from app.models import Asset, Character, Scene, Shot
 from app.models.base import new_id, utcnow
 from app.models.style_guide import StyleGuide
+from app.services import project_service
 
 
 def save_upload(
@@ -52,6 +53,7 @@ def save_upload(
 
     asset = Asset(
         id=asset_id,
+        project_id=project_service.active_project_id(session),
         type=asset_type,
         name=Path(filename).stem,
         file_path=str(dest),
@@ -78,7 +80,8 @@ def get_asset(session: Session, asset_id: str) -> Asset:
 
 
 def list_assets(session: Session) -> list[Asset]:
-    return list(session.exec(select(Asset)).all())
+    pid = project_service.active_project_id(session)
+    return list(session.exec(select(Asset).where(Asset.project_id == pid)).all())
 
 
 def delete_asset(session: Session, asset_id: str) -> int:
@@ -137,7 +140,13 @@ def delete_asset(session: Session, asset_id: str) -> int:
 async def recognise(session: Session, asset_id: str, description: str) -> Asset:
     """Run the asset recogniser and persist its metadata onto the asset."""
     asset = get_asset(session, asset_id)
-    known = [c.id for c in session.exec(select(Character)).all()]
+    pid = project_service.active_project_id(session)
+    known = [
+        c.id
+        for c in session.exec(
+            select(Character).where(Character.project_id == pid)
+        ).all()
+    ]
     meta = await recognise_asset(
         asset_id=asset.id,
         filename=asset.file_path or asset.name,

@@ -13,7 +13,7 @@ from app.providers.atlascloud_client import get_atlas_client
 from app.providers.atlascloud_image import AtlasCloudImageProvider
 from app.providers.polling import poll_until_terminal
 from app.providers.url_resolver import AtlasCloudUploadResolver
-from app.services import media, style_service
+from app.services import media, project_service, style_service
 from app.services.asset_gen_service import REFERENCE_STYLE_PREFIX
 
 DEFAULT_ANGLES = [
@@ -25,7 +25,11 @@ DEFAULT_ANGLES = [
 
 
 def create_character(session: Session, *, name: str, description: str = "") -> Character:
-    char = Character(name=name, description=description)
+    char = Character(
+        name=name,
+        description=description,
+        project_id=project_service.active_project_id(session),
+    )
     session.add(char)
     session.commit()
     session.refresh(char)
@@ -40,7 +44,10 @@ def get_character(session: Session, character_id: str) -> Character:
 
 
 def list_characters(session: Session) -> list[Character]:
-    return list(session.exec(select(Character)).all())
+    pid = project_service.active_project_id(session)
+    return list(
+        session.exec(select(Character).where(Character.project_id == pid)).all()
+    )
 
 
 async def generate_bible(session: Session, character_id: str, notes: str) -> Character:
@@ -138,6 +145,7 @@ async def generate_reference_sheets(
         await media.download(result.output_urls[0], dest)
         asset = Asset(
             id=asset_id,
+            project_id=char.project_id,
             type="character_reference",
             name=f"{char.name} — {angle}",
             file_path=str(dest),

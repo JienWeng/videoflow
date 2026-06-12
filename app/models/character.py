@@ -14,6 +14,7 @@ class Character(SQLModel, table=True):
     __tablename__ = "characters"
 
     id: str = Field(default_factory=lambda: new_id("char"), primary_key=True)
+    project_id: str | None = Field(default=None, foreign_key="projects.id")
     name: str
     description: str = ""
     appearance: str = ""

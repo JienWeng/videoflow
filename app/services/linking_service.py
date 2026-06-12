@@ -135,8 +135,15 @@ def auto_link_scene(session: Session, scene_id: str) -> dict:
     scene = scene_service.get_scene(session, scene_id)
     shots = scene_service.list_shots(session, scene_id)
 
-    char_names = _names_to_ids(session.exec(select(Character)).all())
-    asset_names = _names_to_ids(session.exec(select(Asset)).all())
+    from app.services import project_service
+
+    pid = project_service.active_project_id(session)
+    char_names = _names_to_ids(
+        session.exec(select(Character).where(Character.project_id == pid)).all()
+    )
+    asset_names = _names_to_ids(
+        session.exec(select(Asset).where(Asset.project_id == pid)).all()
+    )
     # Character precedence: an asset sharing a character's name is skipped.
     asset_names = {n: i for n, i in asset_names.items() if n not in char_names}
     all_names = {**char_names, **asset_names}

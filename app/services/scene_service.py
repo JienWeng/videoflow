@@ -15,7 +15,7 @@ from app.errors import NotFoundError, ValidationFailedError
 from app.models import Asset, Character, Revision, Scene, Script, Shot
 from app.models.base import new_id, utcnow
 from app.schemas import CharacterBible, IdeaOptions, SceneSpec, ScriptDraft, ShotSpec
-from app.services import style_service
+from app.services import project_service, style_service
 from app.services.dialogue import has_dialogue
 
 logger = logging.getLogger(__name__)
@@ -59,9 +59,12 @@ def resolve_entity_ids(session: Session, ids: list[str], *, kind: str) -> list[s
         rid = raw
         if session.get(model, rid) is None:
             if by_name is None:
+                pid = project_service.active_project_id(session)
                 by_name = {
                     _norm_name(row.name): row.id
-                    for row in session.exec(select(model))
+                    for row in session.exec(
+                        select(model).where(model.project_id == pid)
+                    )
                     if row.name
                 }
             candidate = rid
@@ -89,9 +92,12 @@ def _character_catalog(
     """Compact {name, appearance} catalog of every character (minus
     exclude_ids) for agent context blocks. The agents are instructed to cast
     these by their EXACT names so auto_link_scene can @-tag and DB-link them."""
+    pid = project_service.active_project_id(session)
     return [
         {"name": c.name, "appearance": (c.appearance or "")[:160]}
-        for c in session.exec(select(Character))
+        for c in session.exec(
+            select(Character).where(Character.project_id == pid)
+        )
         if c.id not in (exclude_ids or set())
     ]
 
@@ -156,8 +162,10 @@ async def create_script(
     )
     if scene_count is not None and len(draft.scenes) > scene_count:
         draft = draft.model_copy(update={"scenes": draft.scenes[:scene_count]})
+    pid = project_service.active_project_id(session)
     script = Script(
         idea=idea,
+        project_id=pid,
         title=draft.title,
         summary=draft.summary,
         draft_json=draft.model_dump(),
@@ -166,6 +174,7 @@ async def create_script(
     for s in draft.scenes:
         scene = Scene(
             id=new_id("scene"),
+            project_id=pid,
             script_id=script.id,
             title=s.title,
             summary=s.summary,
@@ -180,7 +189,8 @@ async def create_script(
 
 
 def list_scripts(session: Session) -> list[Script]:
-    return list(session.exec(select(Script)).all())
+    pid = project_service.active_project_id(session)
+    return list(session.exec(select(Script).where(Script.project_id == pid)).all())
 
 
 def story_context(session: Session, scene: Scene) -> dict | None:
@@ -214,7 +224,8 @@ def get_scene(session: Session, scene_id: str) -> Scene:
 
 
 def list_scenes(session: Session) -> list[Scene]:
-    return list(session.exec(select(Scene)).all())
+    pid = project_service.active_project_id(session)
+    return list(session.exec(select(Scene).where(Scene.project_id == pid)).all())
 
 
 async def expand_scene(session: Session, scene_id: str, character_ids: list[str] | None = None) -> Scene:

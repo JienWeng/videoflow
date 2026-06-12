@@ -15,6 +15,7 @@ class StyleGuide(SQLModel, table=True):
     __tablename__ = "style_guides"
 
     id: str = Field(default_factory=lambda: new_id("style"), primary_key=True)
+    project_id: str | None = Field(default=None, foreign_key="projects.id")
     name: str = "Project style"
     style_prompt: str = ""  # the text appended to every image/video generation
     palette: str = ""       # e.g. "soft pastel, warm yellows"

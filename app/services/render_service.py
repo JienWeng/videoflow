@@ -29,6 +29,7 @@ from app.providers.registry import get_video_provider
 from app.providers.url_resolver import AtlasCloudUploadResolver
 from app.schemas import ReferenceImage, RenderSpec, StoryboardShot
 from app.services.dialogue import has_dialogue
+from app.services import project_service
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,11 @@ async def _anchor_reference(session: Session, scene: Scene) -> dict | None:
     no successful render, or no ffmpeg)."""
     from app.services import media
 
-    prev = pick_previous_scene(scene, list(session.exec(select(Scene)).all()))
+    pool = [
+        s for s in session.exec(select(Scene)).all()
+        if s.project_id == scene.project_id
+    ]
+    prev = pick_previous_scene(scene, pool)
     if prev is None:
         return None
     output = _latest_succeeded_output(session, prev.id)
@@ -116,6 +121,7 @@ async def _anchor_reference(session: Session, scene: Scene) -> dict | None:
         return None
     asset = Asset(
         id=asset_id,
+        project_id=scene.project_id,
         type="frame",
         name=ANCHOR_NAME,
         file_path=str(frame),
@@ -138,7 +144,14 @@ async def start_render(session: Session, spec: RenderSpec) -> RenderJob:
     payload = await provider.build_payload(spec, resolver)
     provider_job_id = await provider.submit(payload)
 
+    project_id = None
+    if spec.scene_id and (job_scene := session.get(Scene, spec.scene_id)):
+        project_id = job_scene.project_id
+    if project_id is None:
+        project_id = project_service.active_project_id(session)
+
     job = RenderJob(
+        project_id=project_id,
         scene_id=spec.scene_id,
         shot_id=spec.shot_id,
         provider=spec.provider,
@@ -353,7 +366,10 @@ def get_job(session: Session, job_id: str) -> RenderJob:
 
 
 def list_jobs(session: Session) -> list[RenderJob]:
-    return list(session.exec(select(RenderJob)).all())
+    pid = project_service.active_project_id(session)
+    return list(
+        session.exec(select(RenderJob).where(RenderJob.project_id == pid)).all()
+    )
 
 
 def job_outputs(session: Session, job_id: str) -> list[RenderOutput]:
