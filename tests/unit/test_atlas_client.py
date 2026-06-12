@@ -58,3 +58,35 @@ async def test_generate_image_returns_full_data_block():
     data = await make_client(handler).generate_image({"prompt": "x"})
     assert data["id"] == "p2"
     assert data["outputs"] == ["https://x/img.png"]
+
+
+async def test_post_json_bodyless_500_includes_status_code_and_fallback():
+    """A bodyless HTTP 500 must produce a ProviderError whose message includes
+    the status code and the 'no error detail from provider' fallback text —
+    never a bare trailing colon."""
+
+    def handler(request):
+        return httpx.Response(500, content=b"")
+
+    with pytest.raises(ProviderError) as exc_info:
+        await make_client(handler).generate_image({"prompt": "x"})
+
+    msg = str(exc_info.value)
+    assert "500" in msg, f"status code missing from: {msg!r}"
+    assert "no error detail from provider" in msg, f"fallback text missing from: {msg!r}"
+    # Message must NOT end with a bare colon / space
+    assert not msg.rstrip().endswith(":"), f"trailing colon in: {msg!r}"
+
+
+async def test_post_json_500_with_body_includes_body_snippet():
+    """An HTTP 500 with a JSON error body must include a snippet of that body."""
+
+    def handler(request):
+        return httpx.Response(500, json={"error": "quota exceeded"})
+
+    with pytest.raises(ProviderError) as exc_info:
+        await make_client(handler).generate_image({"prompt": "x"})
+
+    msg = str(exc_info.value)
+    assert "500" in msg
+    assert "quota exceeded" in msg

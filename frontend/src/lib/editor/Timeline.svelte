@@ -61,6 +61,7 @@
 
   const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
   const snap = (t: number) => Math.round(t / SNAP) * SNAP;
+  const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
   /** Pointer x -> timeline seconds, clamped to [0, totalDuration]. */
   function timeAt(e: PointerEvent): number {
@@ -112,21 +113,21 @@
     const start = Number(seg.start);
     const end = Number(seg.end);
     if (drag.mode === 'move') {
-      const dur = end - start;
-      const next = clamp(snap(t - drag.grab), 0, Math.max(0, totalDuration - dur));
+      const dur = r3(end - start);
+      const next = r3(clamp(snap(t - drag.grab), 0, Math.max(0, totalDuration - dur)));
       if (next !== start) {
         seg.start = next;
-        seg.end = Math.round((next + dur) * 1000) / 1000;
+        seg.end = r3(next + dur);
         ondirty();
       }
     } else if (drag.mode === 'resize-l') {
-      const next = clamp(snap(t), 0, snap(end - MIN_DUR));
+      const next = r3(clamp(snap(t), 0, snap(end - MIN_DUR)));
       if (next !== start) {
         seg.start = next;
         ondirty();
       }
     } else {
-      const next = clamp(snap(t), snap(start + MIN_DUR), totalDuration);
+      const next = r3(clamp(snap(t), snap(start + MIN_DUR), totalDuration));
       if (next !== end) {
         seg.end = next;
         ondirty();

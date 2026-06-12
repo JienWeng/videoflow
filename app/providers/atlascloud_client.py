@@ -37,11 +37,13 @@ class AtlasCloudClient:
             )
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            body = exc.response.text[:200].strip() or "no error detail from provider"
             raise ProviderError(
-                f"AtlasCloud {path} -> {exc.response.status_code}: {exc.response.text[:300]}"
+                f"AtlasCloud {path} failed: HTTP {exc.response.status_code} {body}"
             ) from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(f"AtlasCloud {path} failed: {exc}") from exc
+            detail = str(exc).strip() or "no error detail from provider"
+            raise ProviderError(f"AtlasCloud {path} failed: {detail}") from exc
         return resp.json()
 
     @staticmethod

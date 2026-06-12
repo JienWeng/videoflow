@@ -142,10 +142,12 @@
     dirty = true;
   }
 
+  const r3 = (n: number) => Math.round(n * 1000) / 1000;
+
   function addCaption() {
-    const start = Math.round(Math.min(currentTime, Math.max(0, totalDuration - 0.3)) * 10) / 10;
-    const end = Math.round(Math.min(start + 2, totalDuration) * 10) / 10;
-    segments = [...segments, { start, end: Math.max(end, start + 0.3), text: '' }];
+    const start = r3(Math.min(currentTime, Math.max(0, totalDuration - 0.3)));
+    const end = r3(Math.min(start + 2, totalDuration));
+    segments = [...segments, { start, end: r3(Math.max(end, start + 0.3)), text: '' }];
     selection = { kind: 'caption', index: segments.length - 1 };
     focusSignal += 1;
     dirty = true;
@@ -166,7 +168,7 @@
     const a = (prev.text ?? '').trim();
     const b = (cur.text ?? '').trim();
     prev.text = a === b ? a : [a, b].filter(Boolean).join(' ');
-    prev.end = Math.max(Number(prev.end), Number(cur.end));
+    prev.end = r3(Math.max(Number(prev.end), Number(cur.end)));
     segments = segments.filter((_, idx) => idx !== i);
     selection = { kind: 'caption', index: i - 1 };
     dirty = true;

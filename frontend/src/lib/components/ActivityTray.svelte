@@ -74,8 +74,9 @@
                 {/if}
                 <span class="ml-auto shrink-0">{timeAgo(item.created_at)}</span>
               </div>
-              {#if item.status === 'failed' && item.error}
-                <div class="truncate text-xs text-destructive" title={item.error}>{item.error}</div>
+              {#if item.status === 'failed'}
+                {@const errorText = item.error?.trim() || 'failed (no detail)'}
+                <div class="truncate text-xs text-destructive" title={errorText}>{errorText}</div>
               {/if}
             </li>
           {/each}

@@ -356,17 +356,17 @@
       <div class="text-sm text-muted-foreground space-y-1">
         <p class="font-medium text-foreground">I can:</p>
         <ul class="list-disc pl-4 space-y-0.5">
-          <li>generate a script from an idea</li>
-          <li>expand a scene / generate shots</li>
-          <li>create a storyboard (分镜图)</li>
-          <li>render a scene or a single shot</li>
-          <li>add captions to a rendered video</li>
-          <li>fix &amp; re-render a video using its QA review feedback</li>
-          <li>generate props/assets for a scene (生成场景道具)</li>
-          <li>refine a scene or shot with AI (帮我改一下场景)</li>
-          <li>delete a scene (with confirmation)</li>
-          <li>derive the project style from the story</li>
-          <li>suggest assets without generating them</li>
+          <li>generate a script from an idea — 从想法生成剧本</li>
+          <li>expand a scene / generate shots — 展开场景／生成镜头</li>
+          <li>create a storyboard — 生成分镜图</li>
+          <li>render a scene or a single shot — 渲染场景或单个镜头</li>
+          <li>add captions to a rendered video — 为视频添加字幕</li>
+          <li>fix &amp; re-render using QA feedback — 根据审核反馈修复并重渲染</li>
+          <li>generate props/assets for a scene — 生成场景道具</li>
+          <li>refine a scene or shot with AI — AI 优化场景或镜头</li>
+          <li>delete a scene — 删除场景</li>
+          <li>derive the project style from the story — 从故事中提取项目风格</li>
+          <li>suggest assets without generating — 建议道具但不生成</li>
         </ul>
       </div>
       <Suggestions>
