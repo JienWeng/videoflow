@@ -1,8 +1,15 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { get, post } from '$lib/api';
+  import { get, mediaUrl, post } from '$lib/api';
   import ActionCard from '$lib/chat/ActionCard.svelte';
   import { Button } from '$lib/components/ui/button';
+  import * as Tooltip from '$lib/components/ui/tooltip';
+  import {
+    Task,
+    TaskContent,
+    TaskItem,
+    TaskTrigger
+  } from '$lib/components/ai-elements/task';
   import {
     Conversation,
     ConversationContent
@@ -25,6 +32,9 @@
   import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right';
   import Brain from '@lucide/svelte/icons/brain';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import CircleCheck from '@lucide/svelte/icons/circle-check';
+  import CircleX from '@lucide/svelte/icons/circle-x';
+  import Eraser from '@lucide/svelte/icons/eraser';
   import MessageSquare from '@lucide/svelte/icons/message-square';
   import PenLine from '@lucide/svelte/icons/pen-line';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
@@ -41,6 +51,15 @@
     href?: string;
   }
 
+  /** In-chat progress row for a background op (storyboard/assets/shots/caption). */
+  interface OpProgress {
+    id: string;
+    label: string;
+    status: 'running' | 'done' | 'failed';
+    /** Error or restore note shown under the row. */
+    detail?: string;
+  }
+
   interface Msg {
     role: 'user' | 'assistant';
     text: string;
@@ -52,6 +71,10 @@
     state?: any;
     /** Inline next-step suggestions rendered inside the bubble. */
     chips?: Chip[];
+    /** Background-op progress row (spinner → check/cross). */
+    op?: OpProgress;
+    /** Generated-image thumbnails (storyboard / assets results). */
+    thumbs?: { src: string; alt: string }[];
   }
 
   interface SelectedNode {
@@ -70,14 +93,69 @@
     selected?: SelectedNode | null;
   } = $props();
 
-  let messages = $state<Msg[]>([
-    {
-      role: 'assistant',
-      text: 'Tell me what to do — e.g. 「写一个关于小猫的故事」, "generate a storyboard", or "add captions".'
-    }
-  ]);
+  const greeting = (): Msg => ({
+    role: 'assistant',
+    text: 'Tell me what to do — e.g. 「写一个关于小猫的故事」, "generate a storyboard", or "add captions".'
+  });
+
+  let messages = $state<Msg[]>([greeting()]);
   let input = $state('');
   let busy = $state(false);
+
+  // ---------------------------------------------------------------------
+  // Session persistence: messages survive navigating away from Studio.
+  // Keyed per project; restore on mount (last 30), save on every change.
+  // ---------------------------------------------------------------------
+  let storageKey = $state<string | null>(null);
+
+  /** Drop the non-serializable / refetched parts (state, callbacks live in
+   * the template anyway — cards re-render fine from intent + options). */
+  function serializableMsg(m: Msg) {
+    const { role, text, intent, options, warnings, chips, op, thumbs } = m;
+    return { role, text, intent, options, warnings, chips, op, thumbs };
+  }
+
+  async function initPersistence() {
+    let projectId = 'default';
+    try {
+      projectId = (await get('/projects/active'))?.id ?? 'default';
+    } catch {
+      /* backend down — still keep history under the fallback key */
+    }
+    const key = `videoflow.chat.${projectId}`;
+    try {
+      const raw = sessionStorage.getItem(key);
+      const saved = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(saved) && saved.length) {
+        // Ops that were still running when we left can't be resumed here —
+        // the Activity tray tracks them; mark the row stale instead.
+        messages = saved.slice(-30).map((m: Msg) =>
+          m.op?.status === 'running'
+            ? { ...m, op: { ...m.op, status: 'failed' as const, detail: 'interrupted — check the Activity tray' } }
+            : m
+        );
+      }
+    } catch {
+      /* corrupt entry — start fresh */
+    }
+    storageKey = key; // persistence only starts after restore
+  }
+
+  $effect(() => {
+    if (!storageKey) return;
+    // JSON.stringify reads every nested prop → deep-tracks the messages.
+    const json = JSON.stringify(messages.map(serializableMsg));
+    try {
+      sessionStorage.setItem(storageKey, json);
+    } catch {
+      /* quota — drop silently, chat still works in-memory */
+    }
+  });
+
+  function clearChat() {
+    messages = [greeting()];
+    if (storageKey) sessionStorage.removeItem(storageKey);
+  }
 
   let graphData = $state<any>(null);
   let styleData = $state<any>(null);
@@ -249,6 +327,7 @@
 
   onMount(() => {
     refreshChips();
+    initPersistence();
   });
 
   /** Context passed up by ActionCard after a successful run. */
@@ -259,6 +338,75 @@
   }
 
   const captionsChip: Chip = { label: '给最新视频加字幕', send: '给最新视频加字幕' };
+
+  // ---------------------------------------------------------------------
+  // Background-op progress: when an ActionCard launches a background op we
+  // append a Task progress row that flips to done/failed on the op result.
+  //
+  // Navigation policy: we NEVER goto() on the user's behalf mid-conversation
+  // (a chip click like 给这个视频加字幕 must not yank them off the page).
+  // Instead completed ops get prominent href chips — "Open in editor",
+  // "View in Assets", "Track in Render" — which navigate normally when the
+  // user clicks them (the one sanctioned navigation).
+  // ---------------------------------------------------------------------
+
+  /** Result handed to ActionCard so it can settle the progress row. */
+  interface OpHandle {
+    done: (op: { result_json?: Record<string, any> | null; output_id?: string | null }) => unknown;
+    fail: (op: { error?: string | null }) => unknown;
+  }
+
+  /** Map generated asset ids to image thumbnails (cap 4, click → /assets). */
+  async function assetThumbs(ids: string[]): Promise<{ src: string; alt: string }[]> {
+    if (!ids.length) return [];
+    try {
+      const assets: any[] = await get('/assets');
+      const byId = new Map(assets.map((a) => [a.id, a]));
+      return ids
+        .map((id) => byId.get(id))
+        .map((a) => a && { src: mediaUrl(a.file_path), alt: a.name || 'generated asset' })
+        .filter((t): t is { src: string; alt: string } => !!t?.src)
+        .slice(0, 4);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Attach result thumbnails + onward-navigation chips to the op row. */
+  async function attachOpResults(m: Msg | undefined, ctx: RunContext, result: any) {
+    if (!m) return;
+    const rj = result?.result_json ?? {};
+    if (ctx.action === 'caption') {
+      const outputId = rj.output_id ?? result?.output_id ?? ctx.outputId;
+      if (outputId)
+        m.chips = [{ label: 'Open in editor', href: `/editor/${outputId}` }];
+    } else if (ctx.action === 'storyboard' || ctx.action === 'generate_assets') {
+      const ids: string[] = rj.asset_ids ?? (rj.asset_id ? [rj.asset_id] : []);
+      const thumbs = await assetThumbs(ids);
+      if (thumbs.length) m.thumbs = thumbs;
+      m.chips = [{ label: 'View in Assets', href: '/assets' }];
+    }
+  }
+
+  /** ActionCard launched a background op: append the in-chat progress row. */
+  function handleOpStart(label: string, ctx: RunContext): OpHandle {
+    const id = crypto.randomUUID();
+    messages.push({ role: 'assistant', text: '', op: { id, label, status: 'running' } });
+    const find = () => messages.find((m) => m.op?.id === id);
+    return {
+      done: async (op) => {
+        const m = find();
+        if (m?.op) m.op.status = 'done';
+        await attachOpResults(m, ctx, op);
+      },
+      fail: (op) => {
+        const m = find();
+        if (!m?.op) return;
+        m.op.status = 'failed';
+        m.op.detail = op.error ?? 'failed';
+      }
+    };
+  }
 
   /**
    * Compose the assistant follow-up posted after a card runs successfully.
@@ -312,8 +460,11 @@
       case 'retry_render':
         return {
           role: 'assistant',
-          text: 'Render submitted — watch the Activity tray; when it succeeds, captions are one click:',
-          chips: [captionsChip]
+          text: 'Render submitted — when it succeeds, captions are one click:',
+          chips: [
+            { label: 'Track in Render — 查看渲染', href: '/render' },
+            captionsChip
+          ]
         };
       case 'caption':
         return {
@@ -454,6 +605,29 @@
   <div class="flex items-center gap-2 border-b border-border px-4 py-2.5">
     <MessageSquare class="size-4 text-muted-foreground" />
     <span class="text-sm font-semibold">Chat</span>
+    <div class="ml-auto">
+      <Tooltip.Provider delayDuration={300}>
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <Button
+                {...props}
+                variant="ghost"
+                size="icon"
+                class="size-7 text-muted-foreground"
+                aria-label="Clear chat"
+                onclick={clearChat}
+              >
+                <Eraser class="size-3.5" />
+              </Button>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content side="bottom">
+            Clear chat — history is kept for this session
+          </Tooltip.Content>
+        </Tooltip.Root>
+      </Tooltip.Provider>
+    </div>
   </div>
 
   <Conversation class="flex-1 min-h-0">
@@ -471,7 +645,51 @@
                 <ReasoningContent class="mt-2 text-xs" content={intentSummary(m.intent, m.options)} />
               </Reasoning>
             {/if}
-            <p class="whitespace-pre-wrap">{m.text}</p>
+            {#if m.text}
+              <p class="whitespace-pre-wrap">{m.text}</p>
+            {/if}
+            {#if m.op}
+              <Task class="w-full">
+                <TaskTrigger title={m.op.label}>
+                  <div class="flex w-full items-center gap-2 text-sm">
+                    {#if m.op.status === 'running'}
+                      <Loader size={14} />
+                    {:else if m.op.status === 'done'}
+                      <CircleCheck class="size-4 text-emerald-500" />
+                    {:else}
+                      <CircleX class="size-4 text-destructive" />
+                    {/if}
+                    <span>
+                      {m.op.label}
+                      {m.op.status === 'running'
+                        ? '— running…'
+                        : m.op.status === 'done'
+                          ? '— done'
+                          : '— failed'}
+                    </span>
+                  </div>
+                </TaskTrigger>
+                {#if m.op.detail}
+                  <TaskContent>
+                    <TaskItem class="text-xs">{m.op.detail}</TaskItem>
+                  </TaskContent>
+                {/if}
+              </Task>
+            {/if}
+            {#if m.thumbs?.length}
+              <div class="mt-2 flex flex-wrap gap-1.5">
+                {#each m.thumbs as t (t.src)}
+                  <a href="/assets" title="{t.alt} — view in Assets">
+                    <img
+                      src={t.src}
+                      alt={t.alt}
+                      loading="lazy"
+                      class="size-16 rounded-md border border-border object-cover transition-opacity hover:opacity-80"
+                    />
+                  </a>
+                {/each}
+              </div>
+            {/if}
             {#if m.chips?.length}
               <div class="mt-2 flex flex-wrap items-center gap-1.5">
                 {@render chipRow(m.chips)}
@@ -494,6 +712,7 @@
                 projectState={m.state}
                 {onfocus}
                 onran={handleRan}
+                onop={handleOpStart}
                 onsuggest={(text) => send(text)}
               />
             {/if}

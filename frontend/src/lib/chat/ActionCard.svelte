@@ -76,12 +76,19 @@
     next_steps: string[];
   }
 
+  /** Settles the chat's in-conversation progress row for a background op. */
+  interface OpHandle {
+    done: (op: Op) => unknown;
+    fail: (op: Op) => unknown;
+  }
+
   let {
     intent,
     options,
     projectState = null,
     onran,
     onfocus,
+    onop,
     onsuggest
   }: {
     intent: Intent;
@@ -89,6 +96,8 @@
     projectState?: ProjectState | null;
     onran?: (result: any, ctx?: RunContext) => void | Promise<void>;
     onfocus?: (id: string) => void;
+    /** Called when a background op launches; returns done/fail callbacks. */
+    onop?: (label: string, ctx: RunContext) => OpHandle | undefined;
     onsuggest?: (text: string) => void;
   } = $props();
 
@@ -250,19 +259,25 @@
     ctx?: RunContext
   ) {
     busy = true;
+    const handle = ctx ? onop?.(label, ctx) : undefined;
     try {
       await runBackgroundOp(path, body, {
         label,
         onDone: async (op) => {
           busy = false;
+          await handle?.done(op); // settle the chat progress row (thumbs + nav chips) first
           await onran?.(op.result_json ?? op, ctx); // let the canvas refresh before zooming to the new node
           const focusId = focus(op);
           if (focusId) onfocus?.(focusId);
         },
-        onFail: () => (busy = false)
+        onFail: (op) => {
+          busy = false;
+          handle?.fail(op);
+        }
       });
     } catch (e) {
       busy = false;
+      handle?.fail({ error: (e as Error).message } as Op);
       toast.error((e as Error).message);
     }
   }
