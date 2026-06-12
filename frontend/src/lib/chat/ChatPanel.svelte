@@ -483,7 +483,7 @@
 
   <div class="border-t border-border p-3" bind:this={inputWrapper}>
     {#if chips.length}
-      <div class="mb-2 flex items-center gap-1.5 overflow-x-auto whitespace-nowrap pb-0.5">
+      <div class="mb-2 flex flex-wrap items-center gap-1.5 pb-0.5">
         {@render chipRow(chips)}
       </div>
     {/if}

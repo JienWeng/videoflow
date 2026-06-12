@@ -4,6 +4,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Card, CardContent } from '$lib/components/ui/card';
+  import { Skeleton } from '$lib/components/ui/skeleton';
   import { toast } from 'svelte-sonner';
   import { UserPlus, BookOpen, Images, Upload } from '@lucide/svelte';
 
@@ -69,7 +70,10 @@
 </script>
 
 <div class="p-6">
-  <h1 class="text-lg font-semibold mb-4">Characters</h1>
+  <div class="mb-4">
+    <h1 class="text-lg font-semibold">Characters</h1>
+    <p class="text-sm text-muted-foreground">Recurring cast with reference sheets that keep each character consistent across videos.</p>
+  </div>
 
   {#if loaded && !characters.length}
     <Card class="mb-4">
@@ -105,6 +109,18 @@
       </div>
     </div>
   </form>
+
+  {#if !loaded}
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-4">
+      {#each Array(3) as _, i (i)}
+        <div class="rounded-lg border border-border p-3 space-y-2">
+          <Skeleton class="w-full aspect-square rounded-md" />
+          <Skeleton class="h-4 w-24" />
+          <Skeleton class="h-3 w-40" />
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   <div class="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-4">
     {#each characters as c (c.id)}

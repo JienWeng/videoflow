@@ -7,6 +7,7 @@
   import { Card, CardContent } from '$lib/components/ui/card';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as Collapsible from '$lib/components/ui/collapsible';
+  import { Skeleton } from '$lib/components/ui/skeleton';
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
   import { toast } from 'svelte-sonner';
   import { Wand2, Save, LayoutGrid, Video, Images, Trash2, Sparkles, ImagePlus, Lightbulb, VolumeX, Check, ChevronDown } from '@lucide/svelte';
@@ -357,7 +358,10 @@
 </script>
 
 <div class="p-6">
-  <h1 class="text-lg font-semibold mb-4">Scenes</h1>
+  <div class="mb-4">
+    <h1 class="text-lg font-semibold">Scenes</h1>
+    <p class="text-sm text-muted-foreground">Turn a story idea into scenes, then walk each one through Expand, Shots, Storyboard and Render.</p>
+  </div>
 
   <form class="mb-4 rounded-lg border border-border bg-card p-4" onsubmit={generateScript}>
     <label class="block text-xs text-muted-foreground mb-1" for="idea">Story idea → script + scenes</label>
@@ -383,6 +387,20 @@
       </div>
     </div>
   </form>
+
+  {#if !loaded}
+    {#each Array(3) as _, i (i)}
+      <div class="mb-4 rounded-lg border border-border p-4 space-y-3">
+        <div class="flex items-center gap-3">
+          <Skeleton class="h-5 w-56" />
+          <Skeleton class="h-5 w-10" />
+          <Skeleton class="h-6 w-72" />
+          <Skeleton class="ml-auto h-8 w-28" />
+        </div>
+        <Skeleton class="h-3 w-44" />
+      </div>
+    {/each}
+  {/if}
 
   {#each scenes.slice().reverse() as s (s.id)}
     {@const steps = sceneSteps(s)}

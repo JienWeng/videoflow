@@ -10,7 +10,12 @@
 
 {#if path && mediaUrl(path)}
   <!-- svelte-ignore a11y_media_has_caption -->
-  <video class="w-full max-w-[360px] rounded-lg bg-black" controls src={mediaUrl(path)}></video>
+  <video
+    class="w-[320px] aspect-video rounded-lg border border-border bg-black object-contain"
+    controls
+    preload="metadata"
+    src={mediaUrl(path)}
+  ></video>
 {:else}
   <span class="text-xs text-muted-foreground">no output yet</span>
 {/if}

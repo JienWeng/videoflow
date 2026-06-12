@@ -8,6 +8,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import * as Dialog from '$lib/components/ui/dialog';
+  import { Skeleton } from '$lib/components/ui/skeleton';
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
   import { toast } from 'svelte-sonner';
   import { Play, Captions, Clapperboard, Pencil, RefreshCw } from '@lucide/svelte';
@@ -18,6 +19,7 @@
   let outputs: Record<string, any[]> = $state({});
   let error = $state('');
   let busy = $state(false);
+  let loaded = $state(false);
 
   let sceneId = $state('');
   let shotId = $state('');
@@ -61,7 +63,9 @@
   }
 
   onMount(() => {
-    refresh().catch((e) => (error = e.message));
+    refresh()
+      .catch((e) => (error = e.message))
+      .finally(() => (loaded = true));
     get('/caption-config')
       .then((cfg: any) => {
         captionStyles = cfg.styles ?? [];
@@ -148,7 +152,10 @@
 </script>
 
 <div class="p-6">
-  <h1 class="text-lg font-semibold mb-4">Render</h1>
+  <div class="mb-4">
+    <h1 class="text-lg font-semibold">Render</h1>
+    <p class="text-sm text-muted-foreground">Track render jobs, then caption, edit or re-run the finished outputs.</p>
+  </div>
 
   <form class="mb-4 rounded-lg border border-border bg-card p-4" onsubmit={renderFromShot}>
     <div class="flex flex-wrap gap-4 items-end">
@@ -188,6 +195,17 @@
       </TableRow>
     </TableHeader>
     <TableBody>
+      {#if !loaded}
+        {#each Array(3) as _, i (i)}
+          <TableRow>
+            <TableCell><Skeleton class="h-4 w-28" /></TableCell>
+            <TableCell><Skeleton class="h-4 w-36" /></TableCell>
+            <TableCell><Skeleton class="h-4 w-40" /></TableCell>
+            <TableCell><Skeleton class="h-5 w-20 rounded-full" /></TableCell>
+            <TableCell><Skeleton class="h-4 w-24" /></TableCell>
+          </TableRow>
+        {/each}
+      {/if}
       {#each jobs.slice().reverse() as j (j.id)}
         <TableRow>
           <TableCell class="text-xs font-mono">{j.id}</TableCell>
@@ -196,7 +214,9 @@
           <TableCell>
             <Badge variant={statusVariant(j.status)}>{j.status}</Badge>
           </TableCell>
-          <TableCell class="text-xs text-muted-foreground">{j.error ?? ''}</TableCell>
+          <TableCell class="text-xs text-muted-foreground">
+            <div class="max-w-[320px] truncate" title={j.error ?? ''}>{j.error ?? ''}</div>
+          </TableCell>
         </TableRow>
         {#if outputs[j.id]?.length}
           <TableRow>

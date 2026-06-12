@@ -14,6 +14,7 @@
   import { runBackgroundOp } from '$lib/ops';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
+  import { Skeleton } from '$lib/components/ui/skeleton';
   import { toast } from 'svelte-sonner';
   import { ArrowLeft, Pause, Play, Save, ZoomIn, ZoomOut } from '@lucide/svelte';
   import Timeline from '$lib/editor/Timeline.svelte';
@@ -195,7 +196,11 @@
 
 <div class="flex h-screen flex-col">
   {#if loading}
-    <p class="p-6 text-sm text-muted-foreground">Loading editor…</p>
+    <div class="p-6 space-y-4">
+      <Skeleton class="h-8 w-72" />
+      <Skeleton class="mx-auto aspect-video w-full max-w-3xl rounded-lg" />
+      <Skeleton class="h-24 w-full rounded-lg" />
+    </div>
   {:else if loadError || !output}
     <div class="p-6">
       <p class="text-sm text-destructive">{loadError || 'Output not found.'}</p>

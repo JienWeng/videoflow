@@ -18,6 +18,13 @@
     { href: '/scenes', label: 'Scenes', icon: ListVideo },
     { href: '/render', label: 'Render', icon: Film }
   ];
+
+  // The editor is contextual (reached from a render output), so it highlights Render.
+  function isActive(href: string, pathname: string): boolean {
+    if (href === '/') return pathname === '/';
+    if (href === '/render') return pathname.startsWith('/render') || pathname.startsWith('/editor');
+    return pathname.startsWith(href);
+  }
 </script>
 
 <div class="flex h-screen bg-background text-foreground">
@@ -27,7 +34,7 @@
       <a
         href={item.href}
         class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent
-               {page.url.pathname === item.href ? 'bg-accent font-medium' : 'text-muted-foreground'}"
+               {isActive(item.href, page.url.pathname) ? 'bg-accent font-medium' : 'text-muted-foreground'}"
       >
         <item.icon class="size-4" />
         {item.label}

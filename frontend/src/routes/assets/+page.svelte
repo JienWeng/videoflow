@@ -5,6 +5,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Card, CardContent } from '$lib/components/ui/card';
+  import { Skeleton } from '$lib/components/ui/skeleton';
   import * as Dialog from '$lib/components/ui/dialog';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
@@ -17,6 +18,7 @@
   let error = $state('');
   let busy = $state(false);
   let search = $state('');
+  let loaded = $state(false);
 
   // --- Project style guide ---
   let style: any = $state(null);
@@ -139,7 +141,9 @@
     [assets, characters] = await Promise.all([get('/assets'), get('/characters')]);
   }
   onMount(() => {
-    refresh().catch((e) => (error = e.message));
+    refresh()
+      .catch((e) => (error = e.message))
+      .finally(() => (loaded = true));
     loadStyle();
   });
 
@@ -188,7 +192,10 @@
 </script>
 
 <div class="p-6">
-  <h1 class="text-lg font-semibold mb-4">Assets</h1>
+  <div class="mb-4">
+    <h1 class="text-lg font-semibold">Assets</h1>
+    <p class="text-sm text-muted-foreground">Project style, uploads, and every generated image and video in one library.</p>
+  </div>
 
   <Card class="mb-4">
     <CardContent class="p-4">
@@ -315,7 +322,17 @@
     class="mb-4 w-full max-w-sm rounded-md border border-input bg-background px-2 py-1.5 text-sm"
   />
 
-  {#if !assets.length}
+  {#if !loaded}
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-4">
+      {#each Array(4) as _, i (i)}
+        <div class="rounded-lg border border-border p-3 space-y-2">
+          <Skeleton class="w-full aspect-square rounded-md" />
+          <Skeleton class="h-4 w-28" />
+          <Skeleton class="h-3 w-36" />
+        </div>
+      {/each}
+    </div>
+  {:else if !assets.length}
     <p class="text-sm text-muted-foreground">
       Generated props, reference sheets and rendered videos will appear here.
     </p>
