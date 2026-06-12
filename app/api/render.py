@@ -214,6 +214,122 @@ def caption_config(session: Session = Depends(get_session)):
     }
 
 
+@router.get("/outputs/{output_id}/editor")
+def get_editor_data(output_id: str, session: Session = Depends(get_session)):
+    """Return everything the video-editor page needs in a single call:
+    the output row, captions, shot timeline blocks, and scene metadata."""
+    from app.models.render_job import RenderJob
+    from app.models.scene import Scene
+
+    output = session.get(RenderOutput, output_id)
+    if output is None:
+        raise NotFoundError(f"render output {output_id} not found")
+
+    # --- Output block ---
+    qa_issues: list = []
+    if output.qa_json:
+        qa_issues = output.qa_json.get("issues") or []
+    output_block = {
+        "id": output.id,
+        "video_path": output.video_path,
+        "captioned_path": output.captioned_path,
+        "thumbnail_path": output.thumbnail_path,
+        "score": output.score,
+        "qa_issues": qa_issues,
+    }
+
+    # --- Captions block (same logic as GET /captions) ---
+    cap_data = output.captions_json or {}
+    cap_segments = cap_data.get("segments") or []
+    captions_block = {
+        "segments": cap_segments,
+        "style": cap_data.get("style"),
+        "available": bool(cap_segments),
+    }
+
+    # --- Scene + Shot blocks ---
+    job = session.get(RenderJob, output.render_job_id)
+    spec: dict = {}
+    if job and job.request_json:
+        spec = job.request_json.get("spec") or {}
+
+    scene_block = None
+    shots_block: list = []
+    total_duration: float = 0.0
+
+    if not spec:
+        # Legacy job with no spec stored.
+        return {
+            "output": output_block,
+            "captions": captions_block,
+            "shots": shots_block,
+            "scene": scene_block,
+            "total_duration": total_duration,
+        }
+
+    # Resolve scene.
+    scene_id = spec.get("scene_id") or (job.scene_id if job else None)
+    scene: Scene | None = None
+    if scene_id:
+        scene = session.get(Scene, scene_id)
+    if scene:
+        scene_block = {"id": scene.id, "title": scene.title}
+
+    multi_prompt: list[dict] = spec.get("multi_prompt") or []
+    spec_duration: int = spec.get("duration") or 0
+
+    if not multi_prompt:
+        # Single-prompt render: one block spanning total duration.
+        total_duration = float(spec_duration)
+        shots_block = [
+            {
+                "index": 1,
+                "start": 0.0,
+                "end": total_duration,
+                "duration": spec_duration,
+                "prompt": spec.get("prompt") or "",
+                "shot_id": None,
+                "camera": None,
+                "movement": None,
+            }
+        ]
+    else:
+        # Multi-prompt: build cumulative time blocks and match to live Shot rows.
+        from app.services.scene_service import list_shots
+
+        live_shots = list_shots(session, scene.id) if scene else []
+
+        cursor = 0.0
+        for i, entry in enumerate(multi_prompt):
+            dur = entry.get("duration") or 0
+            start = cursor
+            end = cursor + dur
+            # Match by position (0-based index i -> shot at order i).
+            matched_shot = live_shots[i] if i < len(live_shots) else None
+            shots_block.append(
+                {
+                    "index": entry.get("index") or (i + 1),
+                    "start": start,
+                    "end": end,
+                    "duration": dur,
+                    "prompt": entry.get("prompt") or "",
+                    "shot_id": matched_shot.id if matched_shot else None,
+                    "camera": matched_shot.camera if matched_shot else None,
+                    "movement": matched_shot.movement if matched_shot else None,
+                }
+            )
+            cursor = end
+        total_duration = cursor
+
+    return {
+        "output": output_block,
+        "captions": captions_block,
+        "shots": shots_block,
+        "scene": scene_block,
+        "total_duration": total_duration,
+    }
+
+
 @router.get("/render-jobs")
 def list_jobs(session: Session = Depends(get_session)):
     return render_service.list_jobs(session)

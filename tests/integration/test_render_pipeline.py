@@ -533,3 +533,227 @@ def test_qa_retry_without_issues_rejected(client):
 
     # Unknown output -> 404.
     assert client.post("/outputs/out_nope/retry").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Editor endpoint tests
+# ---------------------------------------------------------------------------
+
+def test_editor_endpoint_404_for_unknown_output(client):
+    """GET /outputs/unknown/editor returns 404."""
+    resp = client.get("/outputs/out_nonexistent/editor")
+    assert resp.status_code == 404
+
+
+def test_editor_endpoint_multi_prompt_shots_with_shot_ids(client, monkeypatch):
+    """Editor endpoint returns shot blocks with cumulative times from multi_prompt,
+    shot_ids attached from the scene's Shot rows by order, captions section,
+    qa_issues, and scene title."""
+    from app.services import caption_service
+
+    async def fake_transcribe(video_path, language=None, model_size=None):
+        return [caption_service.CaptionSegment(start=0.0, end=2.0, text="hello")]
+
+    async def fake_burn(video_path, ass_path, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"captioned")
+        return dest
+
+    monkeypatch.setattr(caption_service, "transcribe", fake_transcribe)
+    monkeypatch.setattr(caption_service, "burn_subtitles", fake_burn)
+
+    from app.database import engine as db_engine
+    from app.models import Scene, Shot
+    from app.models.render_job import RenderJob
+
+    # Create a scene with Shot rows in order.
+    with Session(db_engine) as s:
+        scene = Scene(id="scene_editor", title="Editor Scene", summary="s", duration=8)
+        s.add(scene)
+        shot1 = Shot(id="shot_e1", scene_id="scene_editor", shot_order=0, duration=3,
+                     prompt="shot one prompt", camera="wide", movement="pan left")
+        shot2 = Shot(id="shot_e2", scene_id="scene_editor", shot_order=1, duration=5,
+                     prompt="shot two prompt", camera="close", movement=None)
+        s.add(shot1)
+        s.add(shot2)
+        s.commit()
+
+    # Submit a multi-prompt render for that scene.
+    spec = {
+        "scene_id": "scene_editor",
+        "duration": 8,
+        "prompt": "@Image main prompt",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+        "multi_shot": True,
+        "shot_type": "customize",
+        "multi_prompt": [
+            {"prompt": "shot one prompt", "duration": 3},
+            {"prompt": "shot two prompt", "duration": 5},
+        ],
+    }
+    job_id = client.post("/render", json=spec).json()["job_id"]
+    body = _wait_for_job(client, job_id)
+    assert body["job"]["status"] == "succeeded", body
+    output_id = body["outputs"][0]["id"]
+
+    # Add captions so the captions section shows available=True.
+    assert client.post(
+        f"/outputs/{output_id}/caption", json={"style": "kids", "model": "tiny"}
+    ).status_code == 200
+
+    resp = client.get(f"/outputs/{output_id}/editor")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+
+    # output block
+    assert data["output"]["id"] == output_id
+    assert data["output"]["video_path"] is not None
+    assert "qa_issues" in data["output"]
+
+    # captions block — same shape as GET /captions
+    caps = data["captions"]
+    assert caps["available"] is True
+    assert caps["style"] == "kids"
+    assert len(caps["segments"]) == 1
+
+    # scene block
+    assert data["scene"]["id"] == "scene_editor"
+    assert data["scene"]["title"] == "Editor Scene"
+
+    # shots block — 2 entries with cumulative start/end
+    shots = data["shots"]
+    assert len(shots) == 2
+
+    assert shots[0]["index"] == 1
+    assert shots[0]["start"] == 0.0
+    assert shots[0]["end"] == 3.0
+    assert shots[0]["duration"] == 3
+    assert shots[0]["prompt"] == "shot one prompt"
+    assert shots[0]["shot_id"] == "shot_e1"
+    assert shots[0]["camera"] == "wide"
+    assert shots[0]["movement"] == "pan left"
+
+    assert shots[1]["index"] == 2
+    assert shots[1]["start"] == 3.0
+    assert shots[1]["end"] == 8.0
+    assert shots[1]["duration"] == 5
+    assert shots[1]["prompt"] == "shot two prompt"
+    assert shots[1]["shot_id"] == "shot_e2"
+    assert shots[1]["camera"] == "close"
+    assert shots[1]["movement"] is None
+
+    assert data["total_duration"] == 8.0
+
+
+def test_editor_endpoint_single_prompt_render(client):
+    """Single-prompt render (no multi_prompt) -> one shot block spanning spec duration."""
+    spec = {
+        "scene_id": "scene_x",
+        "duration": 5,
+        "prompt": "@Image solo prompt",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+    }
+    job_id = client.post("/render", json=spec).json()["job_id"]
+    body = _wait_for_job(client, job_id)
+    assert body["job"]["status"] == "succeeded", body
+    output_id = body["outputs"][0]["id"]
+
+    resp = client.get(f"/outputs/{output_id}/editor")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+
+    shots = data["shots"]
+    assert len(shots) == 1
+    assert shots[0]["index"] == 1
+    assert shots[0]["start"] == 0.0
+    assert shots[0]["end"] == 5.0
+    assert shots[0]["duration"] == 5
+    assert shots[0]["prompt"] == "@Image solo prompt"
+    assert shots[0]["shot_id"] is None
+    assert data["total_duration"] == 5.0
+
+    # captions not yet generated -> available=False
+    assert data["captions"]["available"] is False
+
+
+def test_editor_endpoint_legacy_job_no_spec(client):
+    """A job with no spec stored -> shots: [], total_duration: 0."""
+    from app.database import engine as db_engine
+    from app.models.render_job import RenderJob, RenderStatus
+    from app.models.render_output import RenderOutput
+
+    with Session(db_engine) as s:
+        job = RenderJob(
+            id="job_legacy",
+            scene_id=None,
+            status=RenderStatus.succeeded,
+            request_json={},  # no spec key
+        )
+        s.add(job)
+        output = RenderOutput(
+            id="out_legacy",
+            render_job_id="job_legacy",
+            video_path="/tmp/legacy.mp4",
+        )
+        s.add(output)
+        s.commit()
+
+    resp = client.get("/outputs/out_legacy/editor")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["shots"] == []
+    assert data["total_duration"] == 0
+    assert data["scene"] is None
+
+
+def test_editor_endpoint_shot_count_mismatch(client):
+    """When shot rows count != multi_prompt count, unmatched blocks get shot_id: null."""
+    from app.database import engine as db_engine
+    from app.models import Scene, Shot
+    from app.models.render_job import RenderJob, RenderStatus
+    from app.models.render_output import RenderOutput
+
+    # Scene with only 1 shot row (shots regenerated since render).
+    with Session(db_engine) as s:
+        scene = Scene(id="scene_mismatch", title="Mismatch Scene", summary="s", duration=8)
+        s.add(scene)
+        shot1 = Shot(id="shot_m1", scene_id="scene_mismatch", shot_order=0, duration=3,
+                     prompt="first", camera="wide", movement=None)
+        s.add(shot1)
+        s.commit()
+
+    # A job with 2 multi_prompt entries but only 1 shot row.
+    with Session(db_engine) as s:
+        job = RenderJob(
+            id="job_mismatch",
+            scene_id="scene_mismatch",
+            status=RenderStatus.succeeded,
+            request_json={
+                "spec": {
+                    "prompt": "main",
+                    "duration": 8,
+                    "multi_prompt": [
+                        {"index": 1, "prompt": "block one", "duration": 3},
+                        {"index": 2, "prompt": "block two", "duration": 5},
+                    ],
+                }
+            },
+        )
+        s.add(job)
+        output = RenderOutput(
+            id="out_mismatch",
+            render_job_id="job_mismatch",
+            video_path="/tmp/mismatch.mp4",
+        )
+        s.add(output)
+        s.commit()
+
+    resp = client.get("/outputs/out_mismatch/editor")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    shots = data["shots"]
+    assert len(shots) == 2
+    # First block matched to shot_m1.
+    assert shots[0]["shot_id"] == "shot_m1"
+    # Second block unmatched -> null.
+    assert shots[1]["shot_id"] is None
