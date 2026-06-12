@@ -15,8 +15,13 @@ router = APIRouter(tags=["chat"])
 
 class ChatRequest(BaseModel):
     message: str
+    # Prior turns, oldest first: [{"role": "user"|"assistant", "text": str}].
+    # Truncated server-side (last 6 turns, 300 chars each).
+    history: list[dict] = []
 
 
 @router.post("/chat")
 async def chat(body: ChatRequest, session: Session = Depends(get_session)):
-    return await chat_service.handle_message(session, body.message)
+    return await chat_service.handle_message(
+        session, body.message, history=body.history
+    )

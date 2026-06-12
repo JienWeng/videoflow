@@ -69,6 +69,46 @@ def test_intent_prompt_mentions_new_actions():
 
 
 @pytest.mark.asyncio
+async def test_state_and_history_blocks_reach_the_prompt():
+    fake = FakeLLM(Intent(action=IntentAction.unknown, reply="ok"))
+    await classify_intent(
+        message="然后呢？",
+        scenes=[],
+        characters=[],
+        history=[
+            {"role": "user", "text": "帮我做个视频"},
+            {"role": "assistant", "text": "先上传角色照片吧"},
+        ],
+        state={"characters": 0, "has_style": False, "scripts": 0,
+               "scenes": [], "next_steps": ["Add characters"]},
+        client=fake,
+    )
+    prompt = fake.calls[0]["user_prompt"]
+    assert "Conversation so far" in prompt
+    assert "先上传角色照片吧" in prompt
+    assert "Project state" in prompt
+    assert "next_steps" in prompt
+
+
+@pytest.mark.asyncio
+async def test_state_and_history_blocks_omitted_when_absent():
+    fake = FakeLLM(Intent(action=IntentAction.unknown, reply="ok"))
+    await classify_intent(message="hi", scenes=[], characters=[], client=fake)
+    prompt = fake.calls[0]["user_prompt"]
+    assert "Conversation so far" not in prompt
+    assert "Project state" not in prompt
+
+
+def test_intent_prompt_mentions_project_state_and_lost_user_rule():
+    from app.llm.prompts import PROMPTS
+
+    prompt = PROMPTS["intent_agent"]
+    assert "project state" in prompt.lower()
+    assert "next_steps" in prompt
+    assert "prerequisite" in prompt.lower()
+
+
+@pytest.mark.asyncio
 async def test_intent_defaults_are_safe():
     intent = Intent()
     assert intent.action == IntentAction.unknown

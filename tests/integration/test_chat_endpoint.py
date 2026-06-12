@@ -15,9 +15,11 @@ from app.schemas import Intent, IntentAction
 class FakeLLM:
     def __init__(self, intent: Intent):
         self.intent = intent
+        self.prompts: list[str] = []
 
     async def generate(self, *, agent, response_model, user_prompt, context=None, images=None):
         assert response_model is Intent
+        self.prompts.append(user_prompt)
         return self.intent
 
 
@@ -141,6 +143,93 @@ def test_chat_scene_count_passes_through(monkeypatch, tmp_path):
     body = r.json()
     assert body["intent"]["action"] == "generate_script"
     assert body["intent"]["scene_count"] == 1
+
+
+def test_chat_response_carries_state_with_next_steps(monkeypatch, tmp_path):
+    """The fixture has 1 scene (stub) + 1 character — state must reflect that
+    and next_steps must point at the scene's first missing pipeline step."""
+    intent = Intent(action=IntentAction.unknown, reply="…")
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        r = client.post("/chat", json={"message": "我现在该做什么？"})
+    assert r.status_code == 200
+    body = r.json()
+    state = body["state"]
+    assert state["characters"] == 1
+    assert state["scenes"][0]["id"] == "scene_1"
+    assert state["scenes"][0]["expanded"] is False
+    assert state["next_steps"], "next_steps must never be empty here"
+    assert "我是乐乐" in state["next_steps"][0]
+    assert body["warnings"] == []
+
+
+def test_chat_warns_generate_script_without_characters(monkeypatch, tmp_path):
+    intent = Intent(action=IntentAction.generate_script, idea="小猫的故事",
+                    confidence=0.9, reply="好的")
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        # wipe the seeded character so the prerequisite is missing
+        from app.models import Character
+
+        eng = client.app.dependency_overrides[get_session]
+        with next(eng()) as s:  # type: ignore[misc]
+            s.delete(s.get(Character, "char_1"))
+            s.commit()
+        r = client.post("/chat", json={"message": "做一个小猫的视频"})
+    body = r.json()
+    assert body["intent"]["action"] == "generate_script"  # still classified
+    assert body["warnings"], "missing-characters warning expected"
+    assert "character" in body["warnings"][0].lower()
+
+
+def test_chat_warns_storyboard_when_scene_has_no_shots(monkeypatch, tmp_path):
+    intent = Intent(action=IntentAction.storyboard, scene_id="scene_1",
+                    confidence=0.9, reply="好的")
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        r = client.post("/chat", json={"message": "给乐乐的场景生成分镜图"})
+    body = r.json()
+    assert body["warnings"]
+    assert "shot" in body["warnings"][0].lower()
+
+
+def test_chat_warns_style_ingest_without_story(monkeypatch, tmp_path):
+    intent = Intent(action=IntentAction.style_ingest, confidence=0.9, reply="好的")
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        r = client.post("/chat", json={"message": "从故事里提取风格"})
+    body = r.json()
+    assert body["warnings"]
+    assert "script" in body["warnings"][0].lower()
+
+
+def test_chat_history_reaches_the_llm_prompt(monkeypatch, tmp_path):
+    intent = Intent(action=IntentAction.unknown, reply="…")
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        fake = FakeLLM(intent)
+        monkeypatch.setattr("app.agents.base.get_llm_client", lambda: fake)
+        r = client.post("/chat", json={
+            "message": "好，就按你说的来",
+            "history": [
+                {"role": "user", "text": "帮我做个视频"},
+                {"role": "assistant", "text": "建议先上传角色照片"},
+            ],
+        })
+    assert r.status_code == 200
+    prompt = fake.prompts[0]
+    assert "Conversation so far" in prompt
+    assert "建议先上传角色照片" in prompt
+
+
+def test_chat_history_truncated_to_last_six_and_300_chars(monkeypatch, tmp_path):
+    intent = Intent(action=IntentAction.unknown, reply="…")
+    history = [{"role": "user", "text": f"msg-{i} " + "x" * 400}
+               for i in range(10)]
+    with make_client(monkeypatch, tmp_path, intent) as client:
+        fake = FakeLLM(intent)
+        monkeypatch.setattr("app.agents.base.get_llm_client", lambda: fake)
+        r = client.post("/chat", json={"message": "hi", "history": history})
+    assert r.status_code == 200
+    prompt = fake.prompts[0]
+    assert "msg-3" not in prompt          # only the last 6 survive
+    assert "msg-4" in prompt and "msg-9" in prompt
+    assert "x" * 301 not in prompt        # each text capped at 300 chars
 
 
 def test_chat_llm_failure_degrades_to_unknown(monkeypatch, tmp_path):

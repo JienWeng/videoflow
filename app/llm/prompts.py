@@ -170,7 +170,16 @@ PROMPTS: dict[str, str] = {
         "the scene that casts them when unambiguous. Use ONLY ids from the catalogs; "
         "never invent ids. If nothing fits or you are unsure, action=unknown with a "
         "helpful reply listing what you can do. Set confidence 0-1. Reply in the "
-        "user's language, one short sentence."
+        "user's language, one short sentence.\n"
+        "Use the project state block (counts and pipeline progress) when given: "
+        "when the user asks what to do next / seems lost, set action=unknown and "
+        "make your `reply` give the FIRST item from the state's `next_steps`, in "
+        "the user's language. When the user requests something whose "
+        "prerequisites are missing (e.g. generate_script with 0 characters), "
+        "still classify the action normally but mention the missing prerequisite "
+        "in `reply`.\n"
+        "A 'Conversation so far' block may precede the user message — use it to "
+        "resolve follow-ups (pronouns, '就按你说的', 'do that one')."
     ),
     "asset_planner": (
         "You are an asset planner for a video scene. Decide which visual assets "
