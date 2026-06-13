@@ -148,30 +148,34 @@
   // (re)set to the server snapshot so saved rows go clean.
   function mergeScenes(fresh: any[]) {
     const prevById = new Map(scenes.map((s) => [s.id, s]));
+    const baseline: Record<string, Record<string, any>> = {};
     const merged = fresh.map((srv) => {
+      // Snapshot the baseline from the UNTOUCHED server row first, so it always
+      // reflects the latest server field values — never the kept edits below.
+      baseline[srv.id] = snapScene(srv);
       const prev = prevById.get(srv.id);
       if (prev && sceneDirty(prev)) {
-        // keep edits; baseline becomes the new server snapshot so a later Save
-        // diffs against the latest server state.
+        // keep edits; the baseline (captured above) stays at the server snapshot
+        // so the row remains dirty until the user actually Saves.
         for (const f of SCENE_FIELDS) srv[f] = prev[f];
       }
       return srv;
     });
-    const baseline: Record<string, Record<string, any>> = {};
-    for (const srv of fresh) baseline[srv.id] = snapScene(srv);
     sceneBaseline = baseline;
     return merged;
   }
   function mergeShots(sceneId: string, fresh: any[]) {
     const prevById = new Map((shotsByScene[sceneId] ?? []).map((s) => [s.id, s]));
     const merged = fresh.map((srv) => {
+      // Snapshot the baseline from the UNTOUCHED server row first (before the
+      // dirty-keep loop overwrites srv), so a kept edit still reads as dirty.
+      shotBaseline[srv.id] = snapShot(srv);
       const prev = prevById.get(srv.id);
       if (prev && shotDirty(prev)) {
         for (const f of SHOT_FIELDS) srv[f] = prev[f];
       }
       return srv;
     });
-    for (const srv of fresh) shotBaseline[srv.id] = snapShot(srv);
     shotBaseline = shotBaseline; // re-assign so dirty derivations re-run
     return merged;
   }

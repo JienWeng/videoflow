@@ -36,19 +36,40 @@ logger = logging.getLogger(__name__)
 # Name of the previous-scene anchor frame reference (@-token in the prompt).
 ANCHOR_NAME = "上一场景"
 
+# Locale codes -> human-readable names for the prompt. The resolver may yield a
+# bare locale code (e.g. 'zh' from config defaults); the video prompt reads more
+# naturally as "Spoken dialogue in Chinese" than "...in zh". Unknown values pass
+# through verbatim (already-human values like 'English' stay as-is).
+_DIALOGUE_LANGUAGE_NAMES = {
+    "zh": "Chinese",
+    "zh-cn": "Chinese",
+    "zh-hans": "Chinese",
+    "en": "English",
+    "en-us": "English",
+}
+
+
+def _humanize_language(value: str) -> str:
+    """Map a common locale code to its English name; pass anything else through."""
+    return _DIALOGUE_LANGUAGE_NAMES.get((value or "").strip().lower(), value)
+
 
 def resolve_dialogue_language(session: Session) -> str:
     """The effective spoken-dialogue language for a render, via the settings
     resolver (project override -> global -> config default). Used by BOTH render
-    paths so the language of 「」 lines is configurable, not hardcoded."""
+    paths so the language of 「」 lines is configurable, not hardcoded.
+
+    A bare locale code (e.g. 'zh') is humanized to its English name ('Chinese')
+    so the prompt reads naturally; already-human values pass through unchanged."""
     from app.services import settings_service
 
-    return settings_service.resolve(
+    value = settings_service.resolve(
         session,
         "dialogue_language",
         default="English",
         project_id=project_service.active_project_id(session),
     )
+    return _humanize_language(value)
 
 
 def resolve_render_negatives(session: Session) -> tuple[str, str, list[str]]:

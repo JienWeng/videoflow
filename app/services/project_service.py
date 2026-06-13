@@ -422,24 +422,63 @@ _FK_LIST_FIELDS: dict[type, tuple[str, ...]] = {
 }
 
 
+def _validate_manifest(zf: zipfile.ZipFile) -> dict:
+    """Parse and validate an export archive's manifest BEFORE anything is
+    created, so a malformed archive fails fast with ValidationFailedError (422)
+    and never leaves a partially-built (orphan) project behind.
+
+    Checks: a readable JSON manifest with a dict ``rows`` whose every table is a
+    list of dict rows, and every row carries a non-empty ``id``."""
+    try:
+        manifest = json.loads(zf.read("manifest.json"))
+    except (KeyError, json.JSONDecodeError) as exc:
+        raise ValidationFailedError(
+            "import archive is missing a valid manifest"
+        ) from exc
+
+    if not isinstance(manifest, dict):
+        raise ValidationFailedError("import manifest is not a valid object")
+
+    rows = manifest.get("rows")
+    if not isinstance(rows, dict):
+        raise ValidationFailedError("import manifest is missing its 'rows' section")
+
+    for _key, model in _EXPORT_TABLES:
+        items = rows.get(_key, [])
+        if not isinstance(items, list):
+            raise ValidationFailedError(
+                f"import manifest table '{_key}' is not a list of rows"
+            )
+        for raw in items:
+            if not isinstance(raw, dict) or not raw.get("id"):
+                raise ValidationFailedError(
+                    f"import manifest row in '{_key}' is missing an 'id'"
+                )
+    return manifest
+
+
 def import_project(session: Session, blob: bytes) -> Project:
     """Recreate a project from an export zip as a NEW (inactive) project.
 
     All ids are remapped to avoid collisions; cross-references and media paths
-    are rewritten. Raises ValidationFailedError on a malformed archive."""
+    are rewritten. Raises ValidationFailedError (-> 422) on a malformed archive.
+
+    Transactional: the archive is fully validated BEFORE anything is created,
+    and the whole build (project + media restore + row recreation) is guarded so
+    that ANY failure rolls back and deletes the just-created project — a bad
+    import never leaves an orphaned empty project behind."""
     try:
         zf = zipfile.ZipFile(io.BytesIO(blob))
     except zipfile.BadZipFile as exc:
         raise ValidationFailedError("import file is not a valid zip archive") from exc
-    try:
-        manifest = json.loads(zf.read("manifest.json"))
-    except (KeyError, json.JSONDecodeError) as exc:
-        raise ValidationFailedError("import archive is missing a valid manifest") from exc
 
-    rows = manifest.get("rows", {})
-    src_meta = manifest.get("project", {})
+    # 1) Validate up front — raises ValidationFailedError on malformed input
+    #    BEFORE we create any database rows.
+    manifest = _validate_manifest(zf)
+    rows = manifest["rows"]
+    src_meta = manifest.get("project") or {}
 
-    # 1) New project (kept inactive — import must never steal focus).
+    # 2) New project (kept inactive — import must never steal focus).
     project = Project(
         name=f"{src_meta.get('name', 'Imported project')} (imported)",
         description=src_meta.get("description", ""),
@@ -449,41 +488,52 @@ def import_project(session: Session, blob: bytes) -> Project:
     session.commit()
     session.refresh(project)
 
-    # 2) Build the id map across every row, up front, so forward references
-    #    (e.g. a scene referencing an asset listed later) resolve cleanly.
-    id_map: dict[str, str] = {}
-    for key, model in _EXPORT_TABLES:
-        for raw in rows.get(key, []):
-            old = raw.get("id")
-            if old and old not in id_map:
-                id_map[old] = new_id(_id_prefix(model))
+    try:
+        # 3) Build the id map across every row, up front, so forward references
+        #    (e.g. a scene referencing an asset listed later) resolve cleanly.
+        id_map: dict[str, str] = {}
+        for key, model in _EXPORT_TABLES:
+            for raw in rows.get(key, []):
+                old = raw["id"]  # validated present above
+                if old not in id_map:
+                    id_map[old] = new_id(_id_prefix(model))
 
-    # 3) Copy media files out of the zip into the storage root, mapping each
-    #    archive member to its new on-disk path (keyed by the OLD path string).
-    path_map = _restore_media(zf, rows, id_map)
+        # 4) Copy media files out of the zip into the storage root, mapping each
+        #    archive member to its new on-disk path (keyed by the OLD path).
+        path_map = _restore_media(zf, rows, id_map)
 
-    # 4) Recreate rows with remapped ids/fks/paths.
-    for key, model in _EXPORT_TABLES:
-        for raw in rows.get(key, []):
-            data = dict(raw)
-            data["id"] = id_map[raw["id"]]
-            if "project_id" in _columns(model):
-                data["project_id"] = project.id
-            for field in _FK_FIELDS.get(model, ()):
-                old = data.get(field)
-                if old:
-                    data[field] = id_map.get(old, old)
-            for field in _FK_LIST_FIELDS.get(model, ()):
-                data[field] = [id_map.get(i, i) for i in (data.get(field) or [])]
-            for field in _MEDIA_FIELDS.get(model, ()):
-                old = data.get(field)
-                if old and old in path_map:
-                    data[field] = path_map[old]
-                elif old:
-                    # Media was missing at export — drop the dangling path.
-                    data[field] = None
-            session.add(model(**_filter_columns(model, data)))
-    session.commit()
+        # 5) Recreate rows with remapped ids/fks/paths.
+        for key, model in _EXPORT_TABLES:
+            for raw in rows.get(key, []):
+                data = dict(raw)
+                data["id"] = id_map[raw["id"]]
+                if "project_id" in _columns(model):
+                    data["project_id"] = project.id
+                for field in _FK_FIELDS.get(model, ()):
+                    old = data.get(field)
+                    if old:
+                        data[field] = id_map.get(old, old)
+                for field in _FK_LIST_FIELDS.get(model, ()):
+                    data[field] = [id_map.get(i, i) for i in (data.get(field) or [])]
+                for field in _MEDIA_FIELDS.get(model, ()):
+                    old = data.get(field)
+                    if old and old in path_map:
+                        data[field] = path_map[old]
+                    elif old:
+                        # Media was missing at export — drop the dangling path.
+                        data[field] = None
+                session.add(model(**_filter_columns(model, data)))
+        session.commit()
+    except Exception:
+        # Roll back the in-flight inserts, then delete the just-created project
+        # so a failed import leaves NO orphan behind.
+        session.rollback()
+        orphan = session.get(Project, project.id)
+        if orphan is not None:
+            session.delete(orphan)
+            session.commit()
+        raise
+
     session.refresh(project)
     return project
 

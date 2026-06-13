@@ -117,7 +117,15 @@
   }
 
   function onWindowKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && shown) requestClose();
+    if (e.key !== 'Escape' || !shown) return;
+    // Bail when an overlay owns this Escape — e.g. the command palette (a
+    // bits-ui Dialog) is open. Otherwise Escape over the palette would also
+    // close this docked panel and pop a spurious "Discard unsaved changes?".
+    // bits-ui calls preventDefault when it handles Escape to close a dialog;
+    // the [role=dialog] check is the belt for any other open modal.
+    if (e.defaultPrevented) return;
+    if (typeof document !== 'undefined' && document.querySelector('[role="dialog"]')) return;
+    requestClose();
   }
 
   async function loadCaptionConfig() {

@@ -41,7 +41,8 @@
     description: '',
     appearance: '',
     personality: '',
-    visual_rules: '' // one rule per line
+    visual_rules: '', // one rule per line
+    voice_rules: '' // one rule per line
   });
 
   // --- delete confirm ---
@@ -111,7 +112,8 @@
       description: c.description ?? '',
       appearance: c.appearance ?? '',
       personality: c.personality ?? '',
-      visual_rules: (c.visual_rules_json ?? []).join('\n')
+      visual_rules: (c.visual_rules_json ?? []).join('\n'),
+      voice_rules: (c.voice_rules_json ?? []).join('\n')
     };
   }
 
@@ -126,6 +128,10 @@
       appearance: editForm.appearance,
       personality: editForm.personality,
       visual_rules: editForm.visual_rules
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      voice_rules: editForm.voice_rules
         .split('\n')
         .map((s) => s.trim())
         .filter(Boolean)
@@ -292,6 +298,11 @@
                     <Label for="edit-rules-{c.id}">Visual rules (one per line)</Label>
                     <Textarea id="edit-rules-{c.id}" rows={3} bind:value={editForm.visual_rules}
                       placeholder="always wears red hoodie&#10;short black hair" />
+                  </div>
+                  <div class="grid gap-1.5">
+                    <Label for="edit-voice-{c.id}">Voice rules (one per line)</Label>
+                    <Textarea id="edit-voice-{c.id}" rows={3} bind:value={editForm.voice_rules}
+                      placeholder="cheerful high-pitched voice&#10;speaks quickly" />
                   </div>
                   <div class="flex gap-2 pt-1">
                     <Button size="sm" disabled={busy === `save-${c.id}`} onclick={() => saveEdit(c)}>

@@ -15,7 +15,16 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Skeleton } from '$lib/components/ui/skeleton';
   import { toast } from 'svelte-sonner';
-  import { ArrowLeft, Download, Pause, Play, Save, ZoomIn, ZoomOut } from '@lucide/svelte';
+  import {
+    ArrowLeft,
+    Download,
+    Pause,
+    Play,
+    Save,
+    Sparkles,
+    ZoomIn,
+    ZoomOut
+  } from '@lucide/svelte';
   import Timeline from '$lib/editor/Timeline.svelte';
   import Inspector from '$lib/editor/Inspector.svelte';
   import type { EditorOutput, SceneRef, Segment, Selection, Shot } from '$lib/editor/types';
@@ -32,6 +41,18 @@
   let shots = $state<Shot[]>([]);
   let scene = $state<SceneRef>(null);
   let specDuration = $state(0);
+
+  // --- Transcription (auto-captions, whisper) ---
+  let models = $state<string[]>([]);
+  let model = $state('');
+  let languages = $state<{ value: string; label: string }[]>([
+    { value: 'auto', label: 'Auto-detect' },
+    { value: 'zh', label: 'Chinese' },
+    { value: 'en', label: 'English' }
+  ]);
+  let language = $state('auto');
+  let transcribing = $state(false);
+  const hasCaptions = $derived(segments.length > 0);
 
   // --- Player ---
   let videoEl: HTMLVideoElement | undefined = $state();
@@ -97,6 +118,14 @@
       .then((cfg: any) => {
         styles = cfg.styles ?? [];
         if (!style) style = cfg.default_style || styles[0] || '';
+        models = cfg.models ?? [];
+        model = cfg.default_model || models[0] || '';
+        // Make sure the resolved default language is selectable.
+        const defLang = cfg.default_language || 'auto';
+        if (!languages.some((l) => l.value === defLang)) {
+          languages = [...languages, { value: defLang, label: defLang }];
+        }
+        language = defLang;
       })
       .catch(() => {});
     return () => cancelAnimationFrame(raf);
@@ -212,6 +241,40 @@
     }
   }
 
+  // --- Auto-transcribe (whisper -> editable segments, NO burn) ---
+  async function transcribe() {
+    if (!output || transcribing) return;
+    // Replacing existing captions is destructive — confirm first.
+    if (hasCaptions && !confirm('Re-transcribe will replace the current captions. Continue?')) {
+      return;
+    }
+    transcribing = true;
+    try {
+      await runBackgroundOp(
+        `/outputs/${output.id}/captions/transcribe`,
+        { model: model || null, language: language || null },
+        {
+          label: hasCaptions ? 'Re-transcribing' : 'Transcribing',
+          onDone: () => {
+            transcribing = false;
+            // Re-fetch so the freshly transcribed segments appear on the
+            // timeline, ready to edit. Transcription is a fresh, on-disk
+            // source of truth -> clear the dirty flag.
+            dirty = false;
+            selection = null;
+            void load();
+          },
+          onFail: () => {
+            transcribing = false;
+          }
+        }
+      );
+    } catch (err: any) {
+      transcribing = false;
+      toast.error(err.message);
+    }
+  }
+
   function downloadUrl(variant: 'raw' | 'captioned'): string {
     return `${API_BASE}/outputs/${outputId}/download?variant=${variant}`;
   }
@@ -303,6 +366,44 @@
       {#if dirty}
         <span class="text-xs text-muted-foreground">unsaved changes</span>
       {/if}
+      <!-- Auto-transcribe: whisper -> editable caption segments (no burn).
+           The editor is the single place to transcribe -> edit -> re-burn. -->
+      <div class="flex items-center gap-1.5">
+        {#if models.length}
+          <select
+            class="h-8 rounded-md border border-input bg-background px-2 text-xs"
+            bind:value={model}
+            disabled={transcribing}
+            title="Whisper model (larger = more accurate, slower)"
+          >
+            {#each models as m (m)}<option value={m}>{m}</option>{/each}
+          </select>
+        {/if}
+        <select
+          class="h-8 rounded-md border border-input bg-background px-2 text-xs"
+          bind:value={language}
+          disabled={transcribing}
+          title="Spoken language for transcription"
+        >
+          {#each languages as l (l.value)}<option value={l.value}>{l.label}</option>{/each}
+        </select>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={transcribing}
+          onclick={transcribe}
+          title={hasCaptions
+            ? 'Re-run transcription and replace the current captions'
+            : 'Transcribe the video into editable caption segments'}
+        >
+          <Sparkles class="mr-1 size-3.5 {transcribing ? 'animate-pulse' : ''}" />
+          {transcribing
+            ? 'Transcribing…'
+            : hasCaptions
+              ? 'Re-transcribe'
+              : 'Auto-transcribe'}
+        </Button>
+      </div>
       <!-- Download: captioned copy when it exists, plus the raw original. -->
       {#if output.captioned_path}
         <Button
@@ -401,6 +502,22 @@
           <Button variant="ghost" size="sm" disabled={zoom <= 1} onclick={() => (zoom = 1)}>Fit</Button>
         </div>
 
+        <!-- Empty captions: prompt the user to auto-transcribe right here. -->
+        {#if !hasCaptions}
+          <div
+            class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-3"
+          >
+            <p class="text-xs text-muted-foreground">
+              No captions yet. Auto-transcribe the voice track into editable lines, then fine-tune and
+              re-burn — all here.
+            </p>
+            <Button variant="secondary" size="sm" disabled={transcribing} onclick={transcribe}>
+              <Sparkles class="mr-1 size-3.5 {transcribing ? 'animate-pulse' : ''}" />
+              {transcribing ? 'Transcribing…' : 'Auto-transcribe'}
+            </Button>
+          </div>
+        {/if}
+
         <!-- Timeline -->
         <Timeline
           {shots}
@@ -432,11 +549,13 @@
           bind:style
           {styles}
           {focusSignal}
+          {transcribing}
           ondirty={markDirty}
           ondeletecaption={deleteCaption}
           onmergeprev={mergePrevCaption}
           onretried={() => {}}
           onqarun={() => void load()}
+          ontranscribe={transcribe}
         />
       </aside>
     </div>

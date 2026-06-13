@@ -349,6 +349,135 @@ def test_caption_unknown_style_rejected(client):
     assert resp.status_code == 404
 
 
+def test_transcribe_captions_stores_segments_without_burn(client, monkeypatch):
+    """POST /outputs/{id}/captions/transcribe runs whisper + the script-
+    correction/tidy pipeline and STORES the segments into captions_json with NO
+    ffmpeg burn — the editor's editable list is refreshed, captioned_path stays
+    untouched until the user re-burns."""
+    from app.services import caption_service
+
+    transcribe_calls = {"n": 0, "model": None, "language": "unset"}
+    burn_calls = {"n": 0}
+
+    async def fake_transcribe(video_path, language=None, model_size=None):
+        transcribe_calls["n"] += 1
+        transcribe_calls["model"] = model_size
+        transcribe_calls["language"] = language
+        return [
+            caption_service.CaptionSegment(start=0.0, end=2.0, text="第一句"),
+            # near-zero duplicate sliver -> tidied away, proving the pipeline ran.
+            caption_service.CaptionSegment(start=2.0, end=2.04, text="第一句"),
+            caption_service.CaptionSegment(start=2.5, end=4.0, text="第二句"),
+        ]
+
+    async def fake_burn(video_path, ass_path, dest):
+        burn_calls["n"] += 1
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"captioned")
+        return dest
+
+    monkeypatch.setattr(caption_service, "transcribe", fake_transcribe)
+    monkeypatch.setattr(caption_service, "burn_subtitles", fake_burn)
+
+    # Unknown output -> 404.
+    assert client.post("/outputs/nonexistent/captions/transcribe").status_code == 404
+
+    # Produce a finished render.
+    spec = {
+        "scene_id": "scene_x", "duration": 5, "prompt": "@Image p",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+    }
+    job_id = client.post("/render", json=spec).json()["job_id"]
+    body = _wait_for_job(client, job_id)
+    output_id = body["outputs"][0]["id"]
+
+    # Never captioned -> editor sees nothing yet.
+    assert client.get(f"/outputs/{output_id}/captions").json() == {
+        "segments": [], "style": None, "available": False,
+    }
+
+    resp = client.post(
+        f"/outputs/{output_id}/captions/transcribe", json={"model": "tiny"}
+    )
+    assert resp.status_code == 200, resp.text
+    out = resp.json()
+
+    # whisper ran once; ffmpeg burn never ran.
+    assert transcribe_calls["n"] == 1
+    assert transcribe_calls["model"] == "tiny"
+    # language None in body -> resolved default 'auto' -> whisper autodetect None.
+    assert transcribe_calls["language"] is None
+    assert burn_calls["n"] == 0, "transcribe must NOT burn a video"
+
+    # No captioned file produced.
+    assert out["captioned_path"] is None
+
+    # Segments stored, tidied (duplicate sliver folded), and style defaulted.
+    assert out["captions_json"]["segments"] == [
+        {"start": 0.0, "end": 2.04, "text": "第一句"},
+        {"start": 2.5, "end": 4.0, "text": "第二句"},
+    ]
+    assert out["captions_json"]["style"] == "kids"
+
+    # The editor can now load them via GET /captions and /editor.
+    got = client.get(f"/outputs/{output_id}/captions").json()
+    assert got["available"] is True
+    assert [s["text"] for s in got["segments"]] == ["第一句", "第二句"]
+    ed = client.get(f"/outputs/{output_id}/editor").json()
+    assert ed["captions"]["available"] is True
+    assert [s["text"] for s in ed["captions"]["segments"]] == ["第一句", "第二句"]
+
+    # Invalid model -> 4xx, no burn, no whisper re-run.
+    bad = client.post(
+        f"/outputs/{output_id}/captions/transcribe", json={"model": "bogus"}
+    )
+    assert bad.status_code in (400, 422), bad.text
+
+
+def test_transcribe_captions_background(client, monkeypatch):
+    """?background=true returns 202 {op_id}; the op (kind 'caption') succeeds and
+    its result summary carries the output_id."""
+    import time as _time
+
+    from app.services import caption_service
+
+    async def fake_transcribe(video_path, language=None, model_size=None):
+        return [caption_service.CaptionSegment(start=0.0, end=2.0, text="背景转写")]
+
+    async def fake_burn(video_path, ass_path, dest):  # must never be called
+        raise AssertionError("transcribe must not burn")
+
+    monkeypatch.setattr(caption_service, "transcribe", fake_transcribe)
+    monkeypatch.setattr(caption_service, "burn_subtitles", fake_burn)
+
+    spec = {
+        "scene_id": "scene_x", "duration": 5, "prompt": "@Image p",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+    }
+    job_id = client.post("/render", json=spec).json()["job_id"]
+    output_id = _wait_for_job(client, job_id)["outputs"][0]["id"]
+
+    resp = client.post(f"/outputs/{output_id}/captions/transcribe?background=true")
+    assert resp.status_code == 202, resp.text
+    op_id = resp.json()["op_id"]
+    assert resp.json()["status"] == "running"
+
+    op = {}
+    for _ in range(100):
+        op = client.get(f"/ops/{op_id}").json()
+        if op["status"] != "running":
+            break
+        _time.sleep(0.05)
+    assert op["status"] == "succeeded", op
+    assert op["kind"] == "caption"
+    assert op["output_id"] == output_id
+    assert op["result_json"] == {"output_id": output_id}
+
+    # Segments landed on the output for the editor to pick up.
+    got = client.get(f"/outputs/{output_id}/captions").json()
+    assert [s["text"] for s in got["segments"]] == ["背景转写"]
+
+
 def test_render_job_succeeds(client):
     spec = {
         "scene_id": "scene_x",

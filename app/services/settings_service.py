@@ -20,6 +20,7 @@ Four concerns:
 from __future__ import annotations
 
 import base64
+import re
 import time
 
 from sqlmodel import Session, select
@@ -93,6 +94,34 @@ def _mask(raw: str) -> str:
     if len(raw) <= 4:
         return "•" * len(raw)
     return "••••" + raw[-4:]
+
+
+# Matches sk-/key-shaped secrets (incl. partially-masked fingerprints a 401 body
+# might echo, e.g. "sk-...AB12" or "sk-************AB12").
+_KEYISH = re.compile(r"\b(?:sk|key)-[A-Za-z0-9_\-•*\.]+", re.IGNORECASE)
+
+
+def _sanitize_connection_error(exc: Exception) -> str:
+    """A concise, secret-free message for a failed connection test.
+
+    Provider SDK errors can echo a partially-masked key fingerprint in their 401
+    body, so we never surface the raw error verbatim. When an HTTP status is
+    available we return e.g. "authentication failed (HTTP 401)"; otherwise a
+    generic message. Any sk-/key-shaped token is stripped from the detail as a
+    belt-and-suspenders guard.
+    """
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        resp = getattr(exc, "response", None)
+        status = getattr(resp, "status_code", None)
+
+    if status in (401, 403):
+        return f"authentication failed (HTTP {status})"
+    if status is not None:
+        return f"connection failed (HTTP {status})"
+
+    detail = _KEYISH.sub("[redacted]", str(exc)).strip()
+    return f"connection failed: {detail[:200]}" if detail else "connection failed"
 
 
 def _secret_row(session: Session, provider: str) -> ProviderSecret | None:
@@ -260,7 +289,13 @@ def test_connection(session: Session, provider: str) -> dict:
         return {"ok": True, "latency_ms": latency, "error": None}
     except Exception as exc:  # noqa: BLE001 — surface any provider/SDK error
         latency = int((time.monotonic() - started) * 1000)
-        return {"ok": False, "latency_ms": latency, "error": str(exc)[:300]}
+        # Never echo the SDK's raw error: a 401 body can contain a partially
+        # masked key fingerprint. Map to a concise, secret-free message.
+        return {
+            "ok": False,
+            "latency_ms": latency,
+            "error": _sanitize_connection_error(exc),
+        }
 
 
 def suggested_models(provider: str, settings: Settings | None = None) -> list[str]:

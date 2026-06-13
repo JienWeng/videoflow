@@ -13,6 +13,8 @@
   } from '@lucide/svelte';
   import { Toaster } from '$lib/components/ui/sonner';
   import ActivityTray from '$lib/components/ActivityTray.svelte';
+  import CommandPalette from '$lib/shell/CommandPalette.svelte';
+  import { palette } from '$lib/shell/palette.svelte';
   import { initActivity } from '$lib/activity.svelte';
   import { get } from '$lib/api';
   import { watchTheme } from '$lib/shell/theme';
@@ -54,6 +56,15 @@
     if (href === '/') return pathname === '/';
     if (href === '/render') return pathname.startsWith('/render') || pathname.startsWith('/editor');
     return pathname.startsWith(href);
+  }
+
+  // App-wide Cmd/Ctrl+K. Hoisted here (not the Studio page) so the palette is
+  // reachable from every route — onboarding promises "press Ctrl/⌘ K anytime".
+  function onKeydown(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      palette.toggle();
+    }
   }
 </script>
 
@@ -139,4 +150,16 @@
     {@render children?.()}
   </main>
 </div>
+
+<svelte:window onkeydown={onKeydown} />
+
+<!-- Single app-wide palette instance. Studio-only callbacks are read from the
+  store (set by the Studio page on mount); off Studio they are undefined and
+  the palette falls back to navigation. -->
+<CommandPalette
+  bind:open={palette.open}
+  onfocus={(id) => palette.handlers.onfocus?.(id)}
+  onnewstory={() => palette.handlers.onnewstory?.()}
+/>
+
 <Toaster richColors />

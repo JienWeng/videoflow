@@ -176,8 +176,9 @@ class TestSelectOutput:
 # ---------------------------------------------------------------------------
 class TestResolveRenderDefaults:
     def test_dialogue_language_defaults_to_config(self, session):
-        # No app_settings rows + no project -> config default (dialogue_language=zh).
-        assert render_service.resolve_dialogue_language(session) == "zh"
+        # No app_settings rows + no project -> config default (dialogue_language=zh),
+        # humanized to its English name for the prompt ("zh" -> "Chinese").
+        assert render_service.resolve_dialogue_language(session) == "Chinese"
 
     def test_dialogue_language_honours_global_override(self, session):
         from app.services import settings_service

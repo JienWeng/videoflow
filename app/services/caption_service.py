@@ -466,6 +466,38 @@ async def recaption_output(
     return output
 
 
+async def _transcribe_aligned_segments(
+    session: Session,
+    output: RenderOutput,
+    *,
+    language: str | None,
+    model: str | None,
+) -> list[CaptionSegment]:
+    """Run whisper on the output's video and apply the shared script-correction
+    / timed-alignment / tidy pipeline. Shared by caption_output (which then
+    burns) and transcribe_output (which only stores the segment list)."""
+    segments = await transcribe(
+        Path(output.video_path), language=language, model_size=model
+    )
+    if not segments:
+        raise ValidationFailedError("no speech detected in the video")
+
+    job = session.get(RenderJob, output.render_job_id)
+    request_json = job.request_json if job else None
+    timed = timed_script_lines(request_json)
+    if timed:
+        # Shot durations give each script line a time window — align by time
+        # first, fuzzy ratio as tiebreak/validation.
+        segments = correct_segments_timed(segments, timed)
+    else:
+        script_lines = extract_script_lines(request_json)
+        if script_lines:
+            segments = correct_segments(segments, script_lines)
+    # After script alignment duplicates become exact, so sliver cleanup runs
+    # last — the stored captions_json is clean.
+    return tidy_segments(segments)
+
+
 async def caption_output(
     session: Session,
     output_id: str,
@@ -489,28 +521,72 @@ async def caption_output(
             f"unknown whisper model '{model}' (have: {', '.join(WHISPER_MODELS)})"
         )
 
-    video_path = Path(output.video_path)
-    segments = await transcribe(video_path, language=language, model_size=model)
-    if not segments:
-        raise ValidationFailedError("no speech detected in the video")
-
-    job = session.get(RenderJob, output.render_job_id)
-    request_json = job.request_json if job else None
-    timed = timed_script_lines(request_json)
-    if timed:
-        # Shot durations give each script line a time window — align by time
-        # first, fuzzy ratio as tiebreak/validation.
-        segments = correct_segments_timed(segments, timed)
-    else:
-        script_lines = extract_script_lines(request_json)
-        if script_lines:
-            segments = correct_segments(segments, script_lines)
-    # After script alignment duplicates become exact, so sliver cleanup runs
-    # last — the stored captions_json is clean.
-    segments = tidy_segments(segments)
-
+    segments = await _transcribe_aligned_segments(
+        session, output, language=language, model=model
+    )
     output = await _burn_and_store(
         session, output, segments, style=style, language=language
     )
     logger.info("captioned %s (%d segments, style=%s)", output_id, len(segments), style)
+    return output
+
+
+async def transcribe_output(
+    session: Session,
+    output_id: str,
+    *,
+    model: str | None = None,
+    language: str | None = None,
+) -> RenderOutput:
+    """Transcribe an output's voice track and STORE the resulting (script-
+    corrected, tidied) segments into captions_json WITHOUT burning a video.
+
+    This refreshes the editable segment list the video editor works on — the
+    user can then hand-edit and re-burn via the existing PUT /captions flow.
+    Style/language/model fall back to the resolver defaults when not given. The
+    captioned_path (if any) is left untouched: it still reflects the last burn
+    until the user explicitly re-burns the freshly transcribed text."""
+    output = session.get(RenderOutput, output_id)
+    if output is None:
+        raise NotFoundError(f"render output {output_id} not found")
+    if not output.video_path or not Path(output.video_path).exists():
+        raise ValidationFailedError(f"output {output_id} has no video file")
+    if model is not None and model not in WHISPER_MODELS:
+        raise ValidationFailedError(
+            f"unknown whisper model '{model}' (have: {', '.join(WHISPER_MODELS)})"
+        )
+
+    defaults = resolved_caption_defaults(session)
+    model = model or defaults["model"]
+    # 'auto' is the resolver sentinel for whisper language autodetection (None).
+    if language is None:
+        language = defaults["language"]
+    if language == "auto":
+        language = None
+    # Keep the previously-burned style when one exists; otherwise the resolved
+    # default. This is the style the editor will pre-select / re-burn with.
+    stored = output.captions_json or {}
+    style = stored.get("style") or defaults["style"]
+    if style not in STYLES:
+        style = default_caption_style(None)
+
+    segments = await _transcribe_aligned_segments(
+        session, output, language=language, model=model
+    )
+
+    output.captions_json = {
+        "segments": [dataclasses.asdict(s) for s in segments],
+        "style": style,
+        "language": language,
+    }
+    output.updated_at = utcnow()
+    session.add(output)
+    session.commit()
+    session.refresh(output)
+    logger.info(
+        "transcribed %s (%d segments, no burn, style=%s)",
+        output_id,
+        len(segments),
+        style,
+    )
     return output

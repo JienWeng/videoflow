@@ -90,9 +90,19 @@ def get_asset(session: Session, asset_id: str) -> Asset:
     return asset
 
 
-def list_assets(session: Session) -> list[Asset]:
+def list_assets(session: Session) -> list[dict]:
+    """Assets for the active project, serialized for the library.
+
+    Each row is returned as its full field set plus a ``display_type`` derived by
+    ``canonical_type`` (unknown/legacy values collapse to 'other'). The raw stored
+    ``type`` is preserved untouched — normalization is display-only, never written
+    back to the row — so existing filters/recogniser behaviour keep working.
+    """
     pid = project_service.active_project_id(session)
-    return list(session.exec(select(Asset).where(Asset.project_id == pid)).all())
+    rows = session.exec(select(Asset).where(Asset.project_id == pid)).all()
+    return [
+        {**a.model_dump(), "display_type": canonical_type(a.type)} for a in rows
+    ]
 
 
 def delete_asset(session: Session, asset_id: str) -> int:

@@ -225,6 +225,43 @@ async def caption_output(
     )
 
 
+class TranscribeRequest(BaseModel):
+    model: str | None = None     # None -> resolved whisper_model default
+    language: str | None = None  # None -> resolved caption_language default
+
+
+@router.post("/outputs/{output_id}/captions/transcribe")
+async def transcribe_captions(
+    output_id: str,
+    body: TranscribeRequest | None = None,
+    background: bool = False,
+    session: Session = Depends(get_session),
+):
+    """Auto-transcribe: run whisper on the output's video and STORE the resulting
+    (script-corrected, tidied) segments into captions_json WITHOUT burning a
+    video — just refreshing the editable caption list the editor works on. The
+    user then hand-edits and re-burns via PUT /captions. With ?background=true
+    the work runs as a tracked op (202 + /ops polling). 404 on unknown output."""
+    from app.services import caption_service, op_service
+
+    body = body or TranscribeRequest()
+    model, language = body.model, body.language
+
+    if background:
+        op = op_service.start_op(
+            "caption",
+            lambda s: caption_service.transcribe_output(
+                s, output_id, model=model, language=language
+            ),
+            output_id=output_id,
+            summarize=lambda o: {"output_id": o.id},
+        )
+        return JSONResponse(status_code=202, content={"op_id": op.id, "status": op.status})
+    return await caption_service.transcribe_output(
+        session, output_id, model=model, language=language
+    )
+
+
 class CaptionLine(BaseModel):
     start: float
     end: float

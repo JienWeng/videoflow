@@ -113,3 +113,54 @@ def test_import_rejects_non_zip(env):
     sess, _active, _storage = env
     with pytest.raises(ValidationFailedError):
         project_service.import_project(sess, b"not a zip file")
+
+
+def _zip_with_manifest(manifest: dict) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("manifest.json", json.dumps(manifest))
+    return buf.getvalue()
+
+
+def test_import_malformed_row_missing_id_raises_422_and_no_orphan(env):
+    """A valid manifest whose row is missing 'id' must yield ValidationFailedError
+    (HTTP 422) and leave NO new project behind (no orphaned empty project)."""
+    sess, _active, _storage = env
+    before = len(sess.exec(select(project_service.Project)).all())
+
+    blob = _zip_with_manifest(
+        {
+            "version": 1,
+            "project": {"name": "Bad", "description": ""},
+            # Character row with no 'id' key — malformed export.
+            "rows": {"characters": [{"name": "NoId"}]},
+            "missing_files": [],
+        }
+    )
+
+    with pytest.raises(ValidationFailedError):
+        project_service.import_project(sess, blob)
+
+    sess.rollback()
+    after = len(sess.exec(select(project_service.Project)).all())
+    assert after == before, "malformed import must not create an orphan project"
+
+
+def test_import_manifest_missing_rows_raises(env):
+    sess, _active, _storage = env
+    blob = _zip_with_manifest({"version": 1, "project": {"name": "Bad"}})
+    with pytest.raises(ValidationFailedError):
+        project_service.import_project(sess, blob)
+
+
+def test_real_export_imports_cleanly(env):
+    """The happy path still works: a real export round-trips to a new project."""
+    sess, active, _storage = env
+    blob = project_service.export_project(sess, active.id)
+    new = project_service.import_project(sess, blob)
+    assert new.id != active.id
+    assert new.is_active is False
+    new_chars = sess.exec(
+        select(Character).where(Character.project_id == new.id)
+    ).all()
+    assert {c.name for c in new_chars} == {"Grace"}

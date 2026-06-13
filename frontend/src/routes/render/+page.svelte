@@ -1,27 +1,24 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { get, post, patch, API_BASE } from '$lib/api';
-  import { runBackgroundOp } from '$lib/ops';
+  import { get, post, API_BASE } from '$lib/api';
   import { subscribeJobs } from '$lib/sse';
   import VideoPreview from '$lib/components/VideoPreview.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Skeleton } from '$lib/components/ui/skeleton';
-  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '$lib/components/ui/collapsible';
+  import { PaneGroup, Pane, Handle } from '$lib/components/ui/resizable';
   import { toast } from 'svelte-sonner';
   import {
     Play,
-    Captions,
     Clapperboard,
     RefreshCw,
     ChevronDown,
     History,
     Download,
     Star,
-    ShieldCheck,
-    AlertTriangle,
-    Loader2
+    Loader2,
+    ListVideo
   } from '@lucide/svelte';
 
   let jobs: any[] = $state([]);
@@ -32,68 +29,23 @@
   let busy = $state(false);
   let loaded = $state(false);
 
+  // Advanced single-shot render form state.
   let sceneId = $state('');
   let shotId = $state('');
+  let showAdvanced = $state(false);
 
-  // Caption defaults from /caption-config — fine-tuning lives in /editor/{id}.
-  let captionStyles: string[] = $state([]);
-  let captionDefaultModel = $state('');
-  let captionDefaultLanguage = $state('zh');
-  let captionDefaultStyle = $state('');
-  // Captioning runs as a background op — per-output so several can run at once.
-  let captioning: Record<string, boolean> = $state({});
-  let retrying = $state('');
-  // Per-output QA / keeper action state.
-  let qaRunning: Record<string, boolean> = $state({});
-  let selecting: Record<string, boolean> = $state({});
+  // Re-run state for a FAILED render (keyed by job id).
+  let rerunning = $state('');
 
-  // Ticks once a second so the elapsed timer on active renders stays live.
+  // Master–detail selection: which scene's render activity is shown on the right.
+  let selectedId: string | null = $state(null);
+
+  // Ticks once a second so elapsed timers on active renders stay live.
   let now = $state(Date.now());
 
   // --- Download links (raw vs captioned) ---
   function downloadUrl(outId: string, variant: 'raw' | 'captioned'): string {
     return `${API_BASE}/outputs/${outId}/download?variant=${variant}`;
-  }
-
-  // --- QA state model (badge + tooltip) ---
-  // Prefer an explicit backend qa_status when present; otherwise derive from the
-  // stored score / qa_json so older outputs still show a sensible badge.
-  type QaState = 'pending' | 'running' | 'scored' | 'failed' | 'skipped';
-  function qaState(out: any): QaState {
-    if (qaRunning[out.id]) return 'running';
-    const s = out.qa_status as string | undefined;
-    if (s === 'running' || s === 'pending' || s === 'failed' || s === 'skipped' || s === 'scored')
-      return s;
-    if (out.score != null || out.qa_json?.recommendation) return 'scored';
-    return 'pending';
-  }
-  function qaBadgeVariant(state: QaState): 'default' | 'destructive' | 'secondary' | 'outline' {
-    if (state === 'scored') return 'default';
-    if (state === 'failed') return 'destructive';
-    if (state === 'running') return 'secondary';
-    return 'outline';
-  }
-  function qaLabel(out: any, state: QaState): string {
-    if (state === 'scored') return `QA ${out.score ?? '—'}/10`;
-    if (state === 'running') return 'QA running';
-    if (state === 'failed') return 'QA failed';
-    if (state === 'skipped') return 'QA skipped';
-    return 'QA pending';
-  }
-  function qaTooltip(out: any, state: QaState): string {
-    if (state === 'scored') {
-      const rec = out.qa_json?.recommendation;
-      const issues = out.qa_json?.issues?.length ?? 0;
-      return `Scored ${out.score ?? '—'}/10${rec ? ` · ${rec}` : ''}${issues ? ` · ${issues} issue(s)` : ''}`;
-    }
-    if (state === 'running') return 'Quality check in progress…';
-    if (state === 'failed') return 'The quality check could not complete — run it again.';
-    if (state === 'skipped') return 'Quality check was skipped for this take.';
-    return 'Not checked yet — run a quality check to score it and unlock Fix & re-render.';
-  }
-  // Fix & re-render is only meaningful once QA has produced issues.
-  function canFixRerender(out: any): boolean {
-    return qaState(out) === 'scored' && (out.qa_json?.issues?.length ?? 0) > 0;
   }
 
   // --- Friendly error mapping (raw provider error -> short human line) ---
@@ -132,12 +84,28 @@
     return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
   }
 
-  async function refreshJobOutputs(jobId: string) {
-    const detail = await get(`/render-jobs/${jobId}`);
-    outputs[jobId] = detail.outputs;
-    outputs = outputs;
+  function relativeTime(iso: string | null): string {
+    if (!iso) return '';
+    const t = new Date(iso.endsWith('Z') ? iso : iso + 'Z').getTime();
+    if (Number.isNaN(t)) return '';
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 60) return `${s}s ago`;
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
   }
 
+  function statusVariant(status: string): 'default' | 'destructive' | 'secondary' | 'outline' {
+    if (status === 'succeeded') return 'default';
+    if (status === 'failed') return 'destructive';
+    return 'secondary';
+  }
+
+  function isActive(status: string) {
+    return status !== 'succeeded' && status !== 'failed';
+  }
 
   async function refresh() {
     [jobs, scenes] = await Promise.all([get('/render-jobs'), get('/scenes')]);
@@ -155,17 +123,6 @@
     refresh()
       .catch((e) => (error = e.message))
       .finally(() => (loaded = true));
-    get('/caption-config')
-      .then((cfg: any) => {
-        captionStyles = cfg.styles ?? [];
-        captionDefaultModel = cfg.default_model ?? '';
-        captionDefaultLanguage = cfg.default_language ?? 'zh';
-        captionDefaultStyle = cfg.default_style ?? '';
-      })
-      .catch(() => {
-        // Fallback to legacy endpoint
-        get('/caption-styles').then((s) => (captionStyles = s)).catch(() => {});
-      });
     const ticker = setInterval(() => (now = Date.now()), 1000);
     const unsubscribe = subscribeJobs(
       () => refresh().catch(() => {}),
@@ -177,89 +134,8 @@
     };
   });
 
-  async function runQualityCheck(jobId: string, out: any) {
-    qaRunning[out.id] = true;
-    try {
-      await runBackgroundOp(
-        `/outputs/${out.id}/run-qa`,
-        undefined,
-        {
-          label: 'Quality check',
-          onDone: async () => {
-            qaRunning[out.id] = false;
-            await refreshJobOutputs(jobId);
-          },
-          onFail: () => (qaRunning[out.id] = false)
-        }
-      );
-    } catch (e: any) {
-      qaRunning[out.id] = false;
-      toast.error(e.message);
-    }
-  }
-
-  async function toggleSelect(jobId: string, out: any) {
-    selecting[out.id] = true;
-    const next = !out.selected;
-    try {
-      await patch(`/outputs/${out.id}/select`, { selected: next });
-      out.selected = next;
-      outputs = outputs;
-      toast.success(next ? 'Marked as the take to keep' : 'Unmarked');
-      // Re-fetch every loaded job's outputs — the backend may make "keeper"
-      // exclusive within a scene, deselecting siblings.
-      await Promise.all(Object.keys(outputs).map((id) => refreshJobOutputs(id)));
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      selecting[out.id] = false;
-    }
-  }
-
-  async function addCaptions(jobId: string, out: any) {
-    captioning[out.id] = true;
-    error = '';
-    const lang = captionDefaultLanguage || 'zh';
-    try {
-      await runBackgroundOp(
-        `/outputs/${out.id}/caption`,
-        {
-          style: captionDefaultStyle || captionStyles[0] || 'kids',
-          model: captionDefaultModel || undefined,
-          language: lang === 'auto' ? null : lang
-        },
-        {
-          label: 'Captioning',
-          onDone: async () => {
-            captioning[out.id] = false;
-            // Refetch the job detail so the output row picks up captioned_path.
-            await refreshJobOutputs(jobId);
-          },
-          onFail: () => (captioning[out.id] = false)
-        }
-      );
-    } catch (e: any) {
-      captioning[out.id] = false;
-      toast.error(e.message);
-    }
-  }
-
-  async function fixAndRerender(out: any) {
-    retrying = out.id;
-    try {
-      const res = await post(`/outputs/${out.id}/retry`);
-      toast.success(`Corrective re-render started — job ${res.job_id}`);
-      await refresh();
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      retrying = '';
-    }
-  }
-
   // Re-run a FAILED render. Uses the originating shot/scene endpoints (a failed
   // job produced no output, so there is nothing to /retry).
-  let rerunning = $state('');
   async function reRenderJob(j: any) {
     rerunning = j.id;
     try {
@@ -299,30 +175,8 @@
     }
   }
 
-  function statusVariant(status: string): 'default' | 'destructive' | 'secondary' | 'outline' {
-    if (status === 'succeeded') return 'default';
-    if (status === 'failed') return 'destructive';
-    return 'secondary';
-  }
-
-  function isActive(status: string) {
-    return status !== 'succeeded' && status !== 'failed';
-  }
-
-  function relativeTime(iso: string | null): string {
-    if (!iso) return '';
-    const t = new Date(iso.endsWith('Z') ? iso : iso + 'Z').getTime();
-    if (Number.isNaN(t)) return '';
-    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
-    if (s < 60) return `${s}s ago`;
-    const m = Math.round(s / 60);
-    if (m < 60) return `${m}m ago`;
-    const h = Math.round(m / 60);
-    if (h < 24) return `${h}h ago`;
-    return `${Math.round(h / 24)}d ago`;
-  }
-
-  // Group jobs by scene — humans browse renders per scene, not per job id.
+  // Group jobs by scene — humans browse renders per scene, not per job id. Only
+  // scenes WITH render activity appear in the master list.
   type SceneGroup = {
     sceneId: string;
     title: string;
@@ -330,7 +184,7 @@
     active: any[];
     succeeded: number;
     failed: number;
-    latest: string; // newest created_at, for ordering cards
+    latest: string; // newest created_at, for ordering
   };
 
   let groups: SceneGroup[] = $derived.by(() => {
@@ -359,6 +213,16 @@
     return out;
   });
 
+  const selectedGroup = $derived(groups.find((g) => g.sceneId === selectedId) ?? null);
+
+  // Keep selection valid as activity changes: default to first group, fall back
+  // when the selected scene's activity disappears.
+  $effect(() => {
+    if (!loaded) return;
+    if (selectedId !== null && groups.some((g) => g.sceneId === selectedId)) return;
+    selectedId = groups.length ? groups[0].sceneId : null;
+  });
+
   function sceneOutputs(g: SceneGroup): { job: any; out: any }[] {
     const res: { job: any; out: any }[] = [];
     for (const j of g.jobs) {
@@ -366,6 +230,42 @@
       for (const out of outputs[j.id] ?? []) res.push({ job: j, out });
     }
     return res;
+  }
+
+  // Compact one-line status for a list row — "2 rendered · 1 failed", etc.
+  function groupStatusLine(g: SceneGroup): string {
+    if (g.active.length) {
+      return g.active.length === 1 ? 'rendering…' : `${g.active.length} rendering…`;
+    }
+    const parts: string[] = [];
+    if (g.succeeded) parts.push(`${g.succeeded} rendered`);
+    if (g.failed) parts.push(`${g.failed} failed`);
+    return parts.length ? parts.join(' · ') : 'no finished renders';
+  }
+
+  // Status-dot colour: amber while anything runs, red if any failed and nothing
+  // succeeded, emerald when there is at least one finished output, else muted.
+  function groupDot(g: SceneGroup): string {
+    if (g.active.length) return 'bg-amber-500/80';
+    if (g.succeeded) return 'bg-emerald-500/80';
+    if (g.failed) return 'bg-red-500/80';
+    return 'bg-border';
+  }
+
+  function selectGroup(id: string) {
+    selectedId = id;
+  }
+
+  // Arrow-key navigation in the left list (when not typing in a field).
+  function listKeydown(e: KeyboardEvent) {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    if (!groups.length) return;
+    const i = groups.findIndex((g) => g.sceneId === selectedId);
+    const next = e.key === 'ArrowDown' ? Math.min(groups.length - 1, i + 1) : Math.max(0, i - 1);
+    if (next !== i || i === -1) {
+      e.preventDefault();
+      selectGroup(groups[next === -1 ? 0 : next].sceneId);
+    }
   }
 </script>
 
@@ -411,268 +311,273 @@
   </div>
 {/snippet}
 
-<div class="p-6">
-  <div class="mb-4">
+<div class="flex h-full flex-col">
+  <!-- Page header -->
+  <div class="px-6 pt-6 pb-3 shrink-0">
     <h1 class="text-lg font-semibold">Render</h1>
-    <p class="text-sm text-muted-foreground">Browse finished renders by scene — run a quality check, caption, download, pick a keeper, or re-run.</p>
+    <p class="text-sm text-muted-foreground">Browse finished renders by scene, then open a take in the editor to caption, fine-tune and export.</p>
   </div>
 
-  <Collapsible class="mb-4 rounded-lg border border-border bg-card">
-    <CollapsibleTrigger
-      class="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground [&[data-state=open]>svg]:rotate-180"
-    >
-      <Play class="size-4" />
-      Advanced: render a single shot
-      <ChevronDown class="size-4 ml-auto transition-transform" />
-    </CollapsibleTrigger>
-    <CollapsibleContent>
-      <form class="px-4 pb-4" onsubmit={renderFromShot}>
-        <div class="flex flex-wrap gap-4 items-end">
-          <div class="flex-1 min-w-[160px]">
-            <label class="block text-xs text-muted-foreground mb-1" for="scene">Scene</label>
-            <select id="scene" bind:value={sceneId} onchange={loadShots}
-              class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm">
-              <option value="">choose…</option>
-              {#each scenes as s}<option value={s.id}>{s.title}</option>{/each}
-            </select>
-          </div>
-          <div class="flex-1 min-w-[160px]">
-            <label class="block text-xs text-muted-foreground mb-1" for="shot">Shot (prompt-agent render)</label>
-            <select id="shot" bind:value={shotId} disabled={!shots.length}
-              class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm">
-              <option value="">choose…</option>
-              {#each shots as sh}<option value={sh.id}>#{sh.shot_order + 1} {sh.prompt.slice(0, 50)}</option>{/each}
-            </select>
-          </div>
-          <div>
-            <Button type="submit" disabled={busy || !shotId} size="sm">
-              <Play class="size-4 mr-1" />Render shot
-            </Button>
-          </div>
+  <PaneGroup direction="horizontal" class="flex-1 min-h-0 border-t border-border">
+    <!-- LEFT: scenes with render activity (the monitor) -->
+    <Pane defaultSize={28} minSize={20} class="min-w-0">
+      <div class="flex h-full flex-col">
+        <!-- Advanced single-shot render affordance -->
+        <div class="shrink-0 border-b border-border p-3">
+          <Collapsible bind:open={showAdvanced} class="rounded-lg border border-border bg-card">
+            <CollapsibleTrigger
+              class="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground [&[data-state=open]>svg]:rotate-180"
+            >
+              <Play class="size-4" />
+              Render a single shot
+              <ChevronDown class="size-4 ml-auto transition-transform" />
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <form class="px-3 pb-3 space-y-2.5" onsubmit={renderFromShot}>
+                <div>
+                  <label class="block text-xs text-muted-foreground mb-1" for="scene">Scene</label>
+                  <select id="scene" bind:value={sceneId} onchange={loadShots}
+                    class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm">
+                    <option value="">choose…</option>
+                    {#each scenes as s}<option value={s.id}>{s.title}</option>{/each}
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs text-muted-foreground mb-1" for="shot">Shot (prompt-agent render)</label>
+                  <select id="shot" bind:value={shotId} disabled={!shots.length}
+                    class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm">
+                    <option value="">choose…</option>
+                    {#each shots as sh}<option value={sh.id}>#{sh.shot_order + 1} {sh.prompt.slice(0, 40)}</option>{/each}
+                  </select>
+                </div>
+                <Button type="submit" disabled={busy || !shotId} size="sm" class="w-full">
+                  <Play class="size-4 mr-1" />Render shot
+                </Button>
+                <p class="text-[11px] text-muted-foreground">Whole-scene multi-shot renders live on the Scenes page (step 4).</p>
+              </form>
+            </CollapsibleContent>
+          </Collapsible>
         </div>
-        <div class="text-xs text-muted-foreground mt-2">Whole-scene multi-shot renders live on the Scenes page (step 4).</div>
-      </form>
-    </CollapsibleContent>
-  </Collapsible>
 
-  {#if !loaded}
-    <div class="space-y-4">
-      {#each Array(2) as _, i (i)}
-        <Card>
-          <CardHeader>
-            <Skeleton class="h-5 w-48" />
-          </CardHeader>
-          <CardContent>
-            <Skeleton class="h-44 w-[320px] rounded-lg" />
-          </CardContent>
-        </Card>
-      {/each}
-    </div>
-  {:else if !jobs.length}
-    <div class="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-      Nothing rendered yet — render a scene from the Scenes page or ask the chat. — 还没有渲染。
-    </div>
-  {:else}
-    <div class="space-y-4">
-      {#each groups as g (g.sceneId)}
-        <Card data-scene-card={g.sceneId}>
-          <CardHeader>
-            <div class="flex flex-wrap items-center gap-2">
-              <CardTitle class="text-base font-bold">{g.title}</CardTitle>
-              <div class="flex items-center gap-1.5 ml-auto">
-                {#if g.active.length}
-                  <Badge variant="secondary" class="animate-pulse">{g.active.length} in progress</Badge>
-                {/if}
-                {#if g.succeeded}
-                  <Badge variant="default">{g.succeeded} succeeded</Badge>
-                {/if}
-                {#if g.failed}
-                  <Badge variant="destructive">{g.failed} failed</Badge>
-                {/if}
+        <!-- The list itself -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div class="min-h-0 flex-1 overflow-y-auto p-2 space-y-1.5 focus:outline-none"
+          tabindex="0" role="listbox" aria-label="Scenes with renders" onkeydown={listKeydown}>
+          {#if !loaded}
+            {#each Array(5) as _, i (i)}
+              <div class="flex items-start gap-2.5 rounded-lg border border-transparent px-2.5 py-2">
+                <Skeleton class="size-10 shrink-0 rounded-md" />
+                <div class="flex-1 space-y-1.5">
+                  <Skeleton class="h-3.5 w-32" />
+                  <Skeleton class="h-3 w-40" />
+                </div>
               </div>
+            {/each}
+          {:else if error}
+            <div class="rounded-lg border border-border p-3">
+              <p class="text-sm text-destructive mb-2">Could not load renders: {error}</p>
+              <Button size="sm" variant="secondary"
+                onclick={() => { error = ''; refresh().catch((e) => (error = e.message)); }}>Retry</Button>
             </div>
-          </CardHeader>
-          <CardContent>
-            {#if g.active.length}
-              <div class="mb-4 space-y-1.5">
-                {#each g.active as j (j.id)}
-                  <div class="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
-                    <Loader2 class="size-3.5 animate-spin text-muted-foreground" />
-                    <Badge variant="secondary">{j.stage || j.status}</Badge>
-                    {#if j.progress}
-                      <span class="text-foreground">{j.progress}</span>
-                    {/if}
-                    <span class="text-muted-foreground">{j.model?.split('/').slice(-2).join('/')}</span>
-                    <span class="ml-auto font-mono tabular-nums text-muted-foreground" title="Elapsed">
-                      {elapsed(j.created_at)}
-                    </span>
-                  </div>
-                {/each}
+          {:else if groups.length === 0}
+            <div class="rounded-lg border border-dashed border-border p-3">
+              <div class="flex items-center gap-2 mb-1">
+                <Clapperboard class="size-4" />
+                <span class="font-medium text-sm">Nothing rendered yet</span>
               </div>
-            {/if}
-
-            {#if sceneOutputs(g).length}
-              <div class="flex flex-wrap gap-4">
-                {#each sceneOutputs(g) as { job, out } (out.id)}
-                  {@const qa = qaState(out)}
-                  <div class="flex-none w-[320px] {out.selected ? 'rounded-lg ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}">
-                    <div class="relative">
-                      <VideoPreview
-                        path={out.captioned_path || out.video_path}
-                        poster={out.thumbnail_path}
-                        href={`/editor/${out.id}`}
-                      />
-                      {#if out.selected}
-                        <Badge class="absolute left-2 top-2 gap-1">
-                          <Star class="size-3 fill-current" />keeper
-                        </Badge>
-                      {/if}
-                    </div>
-
-                    <!-- Status row: QA badge (+tooltip) and captioned marker -->
-                    <div class="text-xs mt-1 flex flex-wrap items-center gap-1.5">
-                      <Badge
-                        variant={qaBadgeVariant(qa)}
-                        class={qa === 'running' ? 'animate-pulse' : ''}
-                        title={qaTooltip(out, qa)}
-                      >
-                        {#if qa === 'scored'}<ShieldCheck class="size-3 mr-0.5" />
-                        {:else if qa === 'failed'}<AlertTriangle class="size-3 mr-0.5" />{/if}
-                        {qaLabel(out, qa)}
-                      </Badge>
-                      {#if qa === 'scored' && out.qa_json?.recommendation}
-                        <span class="text-muted-foreground">{out.qa_json.recommendation}</span>
-                      {/if}
-                      {#if out.captioned_path}<Badge variant="secondary">captioned</Badge>{/if}
-                    </div>
-
-                    <!-- Run quality check when unscored -->
-                    {#if qa === 'pending' || qa === 'failed' || qa === 'skipped'}
-                      <div class="mt-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title="Score this take against the scene requirements — unlocks Fix & re-render"
-                          disabled={qaRunning[out.id]}
-                          onclick={() => runQualityCheck(job.id, out)}
-                        >
-                          <ShieldCheck class="size-3 mr-1" />
-                          {qaRunning[out.id] ? 'checking…' : 'Run quality check'}
-                        </Button>
-                      </div>
-                    {/if}
-
-                    <!-- QA issues + Fix & re-render (only once scored with issues) -->
-                    {#if out.qa_json?.issues?.length}
-                      <ul class="text-xs text-muted-foreground mt-0.5 max-w-56 space-y-0.5">
-                        {#each out.qa_json.issues.slice(0, 3) as issue (issue)}
-                          <li class="truncate" title={issue}>- {issue}</li>
-                        {/each}
-                      </ul>
-                    {/if}
-                    {#if canFixRerender(out)}
-                      <div class="mt-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={!!retrying}
-                          onclick={() => fixAndRerender(out)}
-                        >
-                          <RefreshCw class="size-3 mr-1 {retrying === out.id ? 'animate-spin' : ''}" />
-                          {retrying === out.id ? 'submitting…' : 'Fix & re-render'}
-                        </Button>
-                      </div>
-                    {/if}
-
-                    <!-- Primary actions -->
-                    <div class="flex flex-wrap items-center gap-1 mt-2">
-                      <Button size="sm" href={`/editor/${out.id}`} title="Open in editor">
-                        <Clapperboard class="size-3 mr-1" />Open in editor
-                      </Button>
-                      <Button
-                        variant={out.selected ? 'default' : 'outline'}
-                        size="sm"
-                        title={out.selected ? 'This is the take to keep — click to unmark' : 'Mark this as the take to keep'}
-                        disabled={selecting[out.id]}
-                        onclick={() => toggleSelect(job.id, out)}
-                      >
-                        <Star class="size-3 mr-1 {out.selected ? 'fill-current' : ''}" />
-                        {out.selected ? 'Keeper' : 'Use this take'}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        title="Burn captions with the project defaults — fine-tune in the editor"
-                        disabled={captioning[out.id]}
-                        onclick={() => addCaptions(job.id, out)}
-                      >
-                        <Captions class="size-3 mr-1" />
-                        {captioning[out.id] ? 'transcribing…' : out.captioned_path ? 'Re-caption' : 'Auto captions'}
-                      </Button>
-                    </div>
-
-                    <!-- Download controls (raw vs captioned). Defaults visually to
-                         the captioned copy when available; the keeper take is the
-                         one the backend serves by default. -->
-                    <div class="flex flex-wrap items-center gap-1 mt-1">
-                      {#if out.captioned_path}
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          href={downloadUrl(out.id, 'captioned')}
-                          download
-                          title="Download the captioned video"
-                        >
-                          <Download class="size-3 mr-1" />Captioned
-                        </Button>
-                      {/if}
-                      <Button
-                        variant={out.captioned_path ? 'ghost' : 'secondary'}
-                        size="sm"
-                        href={downloadUrl(out.id, 'raw')}
-                        download
-                        title="Download the original (uncaptioned) video"
-                      >
-                        <Download class="size-3 mr-1" />Raw
-                      </Button>
-                    </div>
+              <p class="text-sm text-muted-foreground">
+                Render a scene from the <span class="font-medium">Scenes</span> page (step 4), or
+                use <span class="font-medium">Render a single shot</span> above. — 还没有渲染。
+              </p>
+            </div>
+          {:else}
+            {#each groups as g (g.sceneId)}
+              <button
+                type="button"
+                data-scene-row={g.sceneId}
+                onclick={() => selectGroup(g.sceneId)}
+                class="group flex w-full items-start gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors
+                  {g.sceneId === selectedId
+                    ? 'border-primary/60 bg-accent'
+                    : 'border-transparent hover:border-border hover:bg-accent/50'}"
+              >
+                <div class="flex size-10 shrink-0 items-center justify-center rounded-md border border-dashed border-border bg-muted/30 text-muted-foreground/50">
+                  {#if g.active.length}
+                    <Loader2 class="size-4 animate-spin text-amber-500/80" />
+                  {:else}
+                    <Clapperboard class="size-4" />
+                  {/if}
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-1.5">
+                    <span class="size-2 shrink-0 rounded-full {groupDot(g)} {g.active.length ? 'animate-pulse' : ''}"></span>
+                    <span class="truncate text-sm font-medium" title={g.title}>{g.title}</span>
                   </div>
-                {/each}
-              </div>
-            {:else if !g.active.length}
-              <div class="text-xs text-muted-foreground">No finished outputs for this scene yet.</div>
-            {/if}
+                  <p class="mt-0.5 truncate text-xs text-muted-foreground">{groupStatusLine(g)}</p>
+                </div>
+              </button>
+            {/each}
+          {/if}
+        </div>
+      </div>
+    </Pane>
 
-            <!-- Compact jobs strip — collapsed behind "history (N)" when there are more than 2 jobs. -->
-            <div class="mt-3 border-t border-border pt-2">
-              {#if g.jobs.length > 2}
-                <Collapsible>
-                  <CollapsibleTrigger
-                    class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground [&[data-state=open]>svg.chev]:rotate-180"
-                  >
-                    <History class="size-3" />
-                    history ({g.jobs.length})
-                    <ChevronDown class="chev size-3 transition-transform" />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <div class="mt-1 divide-y divide-border/60">
-                      {#each g.jobs as j (j.id)}
-                        {@render jobRow(j)}
-                      {/each}
+    <Handle withHandle />
+
+    <!-- RIGHT: selected scene's render detail (the gallery) -->
+    <Pane defaultSize={72} minSize={40} class="min-w-0">
+      <div class="h-full overflow-y-auto">
+        {#if !loaded}
+          <div class="p-5 space-y-4">
+            <Skeleton class="h-6 w-56" />
+            <div class="flex flex-wrap gap-4">
+              <Skeleton class="h-44 w-[320px] rounded-lg" />
+              <Skeleton class="h-44 w-[320px] rounded-lg" />
+            </div>
+          </div>
+        {:else if selectedGroup}
+          {#key selectedGroup.sceneId}
+            {@const g = selectedGroup}
+            <div class="p-5">
+              <!-- Header: scene title + at-a-glance counts -->
+              <div class="flex flex-wrap items-center gap-2 mb-4">
+                <h2 class="font-semibold text-base truncate" title={g.title}>{g.title}</h2>
+                <div class="flex items-center gap-1.5 ml-auto">
+                  {#if g.active.length}
+                    <Badge variant="secondary" class="animate-pulse">{g.active.length} in progress</Badge>
+                  {/if}
+                  {#if g.succeeded}
+                    <Badge variant="default">{g.succeeded} rendered</Badge>
+                  {/if}
+                  {#if g.failed}
+                    <Badge variant="destructive">{g.failed} failed</Badge>
+                  {/if}
+                </div>
+              </div>
+
+              <!-- Running jobs pulse strip (top) -->
+              {#if g.active.length}
+                <div class="mb-4 space-y-1.5">
+                  {#each g.active as j (j.id)}
+                    <div class="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
+                      <Loader2 class="size-3.5 animate-spin text-muted-foreground" />
+                      <Badge variant="secondary">{j.stage || j.status}</Badge>
+                      {#if j.progress}
+                        <span class="text-foreground">{j.progress}</span>
+                      {/if}
+                      <span class="text-muted-foreground">{j.model?.split('/').slice(-2).join('/')}</span>
+                      <span class="ml-auto font-mono tabular-nums text-muted-foreground" title="Elapsed">
+                        {elapsed(j.created_at)}
+                      </span>
                     </div>
-                  </CollapsibleContent>
-                </Collapsible>
-              {:else}
-                <div class="divide-y divide-border/60">
-                  {#each g.jobs as j (j.id)}
-                    {@render jobRow(j)}
                   {/each}
                 </div>
               {/if}
+
+              <!-- Output gallery: each take is a card → open in editor -->
+              {#if sceneOutputs(g).length}
+                <div class="flex flex-wrap gap-4">
+                  {#each sceneOutputs(g) as { out } (out.id)}
+                    <div class="flex-none w-[320px] {out.selected ? 'rounded-lg ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}">
+                      <div class="relative">
+                        <VideoPreview
+                          path={out.captioned_path || out.video_path}
+                          poster={out.thumbnail_path}
+                          href={`/editor/${out.id}`}
+                        />
+                        {#if out.selected}
+                          <Badge class="absolute left-2 top-2 gap-1">
+                            <Star class="size-3 fill-current" />keeper
+                          </Badge>
+                        {/if}
+                        {#if out.captioned_path}
+                          <Badge variant="secondary" class="absolute right-2 top-2">captioned</Badge>
+                        {/if}
+                      </div>
+
+                      <!-- Primary: open in editor (the only place to finish a video) -->
+                      <div class="mt-2">
+                        <Button size="sm" class="w-full" href={`/editor/${out.id}`} title="Open in editor">
+                          <Clapperboard class="size-3.5 mr-1.5" />Open in editor
+                        </Button>
+                      </div>
+
+                      <!-- Download controls (raw vs captioned). Captioned shown
+                           first when available. -->
+                      <div class="flex flex-wrap items-center gap-1 mt-1.5">
+                        {#if out.captioned_path}
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            class="flex-1"
+                            href={downloadUrl(out.id, 'captioned')}
+                            download
+                            title="Download the captioned video"
+                          >
+                            <Download class="size-3 mr-1" />Captioned
+                          </Button>
+                        {/if}
+                        <Button
+                          variant={out.captioned_path ? 'ghost' : 'secondary'}
+                          size="sm"
+                          class="flex-1"
+                          href={downloadUrl(out.id, 'raw')}
+                          download
+                          title="Download the original (uncaptioned) video"
+                        >
+                          <Download class="size-3 mr-1" />Raw
+                        </Button>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {:else if !g.active.length}
+                <div class="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                  No finished outputs for this scene yet.
+                </div>
+              {/if}
+
+              <!-- Compact failed/running jobs strip — collapsed behind "history (N)"
+                   when there are more than 2 jobs. -->
+              <div class="mt-5 border-t border-border pt-3">
+                {#if g.jobs.length > 2}
+                  <Collapsible>
+                    <CollapsibleTrigger
+                      class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground [&[data-state=open]>svg.chev]:rotate-180"
+                    >
+                      <History class="size-3" />
+                      history ({g.jobs.length})
+                      <ChevronDown class="chev size-3 transition-transform" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div class="mt-1 divide-y divide-border/60">
+                        {#each g.jobs as j (j.id)}
+                          {@render jobRow(j)}
+                        {/each}
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                {:else}
+                  <div class="divide-y divide-border/60">
+                    {#each g.jobs as j (j.id)}
+                      {@render jobRow(j)}
+                    {/each}
+                  </div>
+                {/if}
+              </div>
             </div>
-          </CardContent>
-        </Card>
-      {/each}
-    </div>
-  {/if}
+          {/key}
+        {:else}
+          <div class="flex h-full flex-col items-center justify-center text-center text-muted-foreground p-8">
+            <ListVideo class="size-10 mb-3 opacity-40" />
+            <p class="text-sm">No renders to show</p>
+            <p class="text-xs mt-1 max-w-xs">
+              Render a scene from the <span class="font-medium">Scenes</span> page, or use
+              <span class="font-medium">Render a single shot</span> on the left.
+            </p>
+          </div>
+        {/if}
+      </div>
+    </Pane>
+  </PaneGroup>
 </div>

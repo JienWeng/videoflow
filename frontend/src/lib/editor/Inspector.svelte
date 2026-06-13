@@ -11,7 +11,7 @@
   import { Textarea } from '$lib/components/ui/textarea';
   import { Separator } from '$lib/components/ui/separator';
   import { toast } from 'svelte-sonner';
-  import { ArrowUpToLine, RefreshCw, ShieldCheck, Trash2 } from '@lucide/svelte';
+  import { ArrowUpToLine, RefreshCw, ShieldCheck, Sparkles, Trash2 } from '@lucide/svelte';
   import type { EditorOutput, SceneRef, Segment, Selection, Shot } from './types';
 
   let {
@@ -23,11 +23,13 @@
     style = $bindable(),
     styles,
     focusSignal = 0,
+    transcribing = false,
     ondirty,
     ondeletecaption,
     onmergeprev,
     onretried,
-    onqarun
+    onqarun,
+    ontranscribe
   }: {
     selection: Selection;
     segments: Segment[];
@@ -37,12 +39,17 @@
     style?: string;
     styles: string[];
     focusSignal?: number;
+    /** Whether a transcription op is currently in flight (drives button state). */
+    transcribing?: boolean;
     ondirty: () => void;
     ondeletecaption: (i: number) => void;
     onmergeprev: (i: number) => void;
     onretried: () => void;
     /** Called after a quality check completes so the parent can reload the score. */
     onqarun?: () => void;
+    /** Auto-transcribe (whisper -> editable segments). Lives in the editor;
+     * surfaced here too for consistency. Optional -> backward compatible. */
+    ontranscribe?: () => void;
   } = $props();
 
   // QA state, derived from the output (no qa_status on EditorOutput yet -> infer).
@@ -253,6 +260,17 @@
       <h3 class="text-sm font-semibold">Output</h3>
       <p class="break-all font-mono text-xs text-muted-foreground">{output.id}</p>
     </div>
+    {#if ontranscribe && segments.length === 0}
+      <div class="grid gap-1.5 rounded-md border border-dashed border-border bg-muted/30 p-2.5">
+        <p class="text-xs text-muted-foreground">
+          No captions yet. Auto-transcribe to get editable lines on the timeline.
+        </p>
+        <Button variant="secondary" size="sm" disabled={transcribing} onclick={ontranscribe}>
+          <Sparkles class="mr-1 size-3.5 {transcribing ? 'animate-pulse' : ''}" />
+          {transcribing ? 'Transcribing…' : 'Auto-transcribe'}
+        </Button>
+      </div>
+    {/if}
     <div class="grid gap-1.5">
       <Label>QA score</Label>
       <p class="text-sm">{scored ? `${output.score}/10` : 'not scored'}</p>

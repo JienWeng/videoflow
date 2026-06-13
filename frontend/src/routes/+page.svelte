@@ -2,8 +2,8 @@
   import { PaneGroup, Pane, Handle } from '$lib/components/ui/resizable';
   import EntityCanvas from '$lib/canvas/EntityCanvas.svelte';
   import ChatPanel from '$lib/chat/ChatPanel.svelte';
-  import CommandPalette from '$lib/shell/CommandPalette.svelte';
   import Onboarding from '$lib/shell/Onboarding.svelte';
+  import { palette } from '$lib/shell/palette.svelte';
   import * as Card from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { get } from '$lib/api';
@@ -25,8 +25,6 @@
   // Set when the /graph probe fails so we can show a Retry card instead of a
   // blank/stale canvas (mirrors the scenes-page error pattern).
   let graphError = $state('');
-
-  let paletteOpen = $state(false);
 
   async function checkEmpty() {
     try {
@@ -50,21 +48,22 @@
     checkEmpty();
   }
 
-  // Cmd/Ctrl+K toggles the command palette from anywhere on the Studio.
-  function onKeydown(e: KeyboardEvent) {
-    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
-      e.preventDefault();
-      paletteOpen = !paletteOpen;
-    }
-  }
-
+  // The Cmd/Ctrl+K listener and the <CommandPalette> mount live in the root
+  // layout so the palette works on every route. The Studio just registers its
+  // canvas/chat-specific palette callbacks here and clears them on unmount.
   onMount(() => {
     checkEmpty();
-    return subscribeJobs(refreshAll, refreshAll);
+    palette.setHandlers({
+      onfocus: (id) => canvas?.focusNode(id),
+      onnewstory: () => chat?.startNewStory()
+    });
+    const stopJobs = subscribeJobs(refreshAll, refreshAll);
+    return () => {
+      palette.clearHandlers();
+      stopJobs();
+    };
   });
 </script>
-
-<svelte:window onkeydown={onKeydown} />
 
 <PaneGroup direction="horizontal" class="h-full">
   <Pane defaultSize={72} minSize={40}>
@@ -160,10 +159,4 @@
   </Pane>
 </PaneGroup>
 
-<CommandPalette
-  bind:open={paletteOpen}
-  onfocus={(id) => canvas?.focusNode(id)}
-  onnewstory={() => chat?.startNewStory()}
-/>
-
-<Onboarding onpalette={() => (paletteOpen = true)} />
+<Onboarding onpalette={() => (palette.open = true)} />

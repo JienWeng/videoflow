@@ -212,3 +212,32 @@ def test_import_does_not_change_active_project(env):
 def test_export_unknown_project_404(env):
     client, _engine, _storage = env
     assert client.get("/projects/project_nope/export").status_code == 404
+
+
+def test_import_malformed_archive_returns_422_and_no_orphan(env):
+    """POST /projects/import with a valid manifest whose row is missing 'id'
+    must return 422 (not 500) and leave NO new project behind."""
+    client, _engine, _storage = env
+    before = len(client.get("/projects").json())
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "version": 1,
+                    "project": {"name": "Bad", "description": ""},
+                    "rows": {"characters": [{"name": "NoId"}]},
+                    "missing_files": [],
+                }
+            ),
+        )
+
+    resp = client.post(
+        "/projects/import",
+        files={"file": ("bad.zip", buf.getvalue(), "application/zip")},
+    )
+    assert resp.status_code == 422, resp.text
+    # No orphan project was created.
+    assert len(client.get("/projects").json()) == before
