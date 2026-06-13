@@ -54,6 +54,22 @@ def _migrate(target_engine) -> None:
         if cols and "script_id" not in cols:
             conn.exec_driver_sql("ALTER TABLE scenes ADD COLUMN script_id VARCHAR")
             conn.commit()
+        # Settings: per-project agent overrides (NULL = global/default override).
+        cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(agent_settings)")]
+        if cols and "project_id" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE agent_settings ADD COLUMN project_id VARCHAR"
+            )
+            conn.commit()
+        # Render progress/stage — added here (the only file allowed to touch the
+        # schema) so the render workstream can write them without editing this.
+        cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(render_jobs)")]
+        if cols and "progress" not in cols:
+            conn.exec_driver_sql("ALTER TABLE render_jobs ADD COLUMN progress VARCHAR")
+            conn.commit()
+        if cols and "stage" not in cols:
+            conn.exec_driver_sql("ALTER TABLE render_jobs ADD COLUMN stage VARCHAR")
+            conn.commit()
         # Projects: scope columns on every project-owned table. Backfilling
         # NULLs into the default project happens lazily in
         # project_service.get_active (adopt_orphans).

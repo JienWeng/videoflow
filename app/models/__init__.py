@@ -9,12 +9,14 @@ from app.models.render_output import RenderOutput
 from app.models.revision import Revision
 from app.models.scene import Scene
 from app.models.script import Script
-from app.models.setting import AgentSetting
+from app.models.setting import AgentSetting, AppSetting, ProviderSecret
 from app.models.shot import Shot
 from app.models.style_guide import StyleGuide
 
 __all__ = [
     "AgentSetting",
+    "AppSetting",
+    "ProviderSecret",
     "Asset",
     "Character",
     "Op",

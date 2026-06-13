@@ -23,9 +23,29 @@ class AtlasCloudClient:
         self._settings = settings or get_settings()
         self._client = httpx.AsyncClient(
             base_url=self._settings.atlascloud_base_url.rstrip("/"),
-            headers={"Authorization": f"Bearer {self._settings.atlascloud_api_key}"},
+            headers={"Authorization": f"Bearer {self._resolve_key()}"},
             timeout=httpx.Timeout(60.0),
         )
+
+    def _resolve_key(self) -> str:
+        """Prefer a persisted ProviderSecret for 'atlas' over the env key, so a
+        key set from the Settings UI takes effect for image/video too. Only the
+        KEY is taken from the DB — the image/video GATEWAY base url stays the
+        configured atlascloud_base_url (the DB base_url is the LLM endpoint).
+        Degrades to the env key on any DB/import error."""
+        try:
+            from sqlmodel import Session
+
+            from app.database import engine
+            from app.services import settings_service
+
+            with Session(engine) as session:
+                db_key = settings_service.db_provider_key(session, "atlas")
+                if db_key:
+                    return db_key
+        except Exception:
+            pass
+        return self._settings.atlascloud_api_key
 
     async def aclose(self) -> None:
         await self._client.aclose()

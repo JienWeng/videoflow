@@ -90,12 +90,14 @@ def test_put_unconfigured_provider_is_422(client):
     assert resp.status_code == 422, resp.text
 
 
-def test_put_unknown_model_is_422(client):
+def test_put_free_typed_model_is_accepted(client):
+    # Free-typed model ids are accepted for a configured provider (no allowlist).
     resp = client.put(
         "/settings/agents/script_agent",
-        json={"provider": "minimax", "model": "nope"},
+        json={"provider": "minimax", "model": "nope-but-custom"},
     )
-    assert resp.status_code == 422, resp.text
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["model"] == "nope-but-custom"
 
 
 def test_override_changes_effective_skill_resolution(client):

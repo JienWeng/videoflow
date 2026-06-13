@@ -6,7 +6,6 @@ Reads from the environment / `.env`. Required secrets are validated at startup
 
 from __future__ import annotations
 
-from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field
@@ -92,6 +91,20 @@ class Settings(BaseSettings):
     # Auto-captions (faster-whisper model size: tiny/base/small/medium/large-v3)
     whisper_model: str = Field(default="small", alias="WHISPER_MODEL")
 
+    # ---- App defaults (overridable per project/global via app_settings) ----
+    # These are the DEFAULTS layer the settings resolver overlays DB rows on top
+    # of. They live here so a fresh install has sensible behaviour with no DB rows.
+    default_scene_duration: float = Field(
+        default=5.0, alias="DEFAULT_SCENE_DURATION"
+    )
+    caption_style: str = Field(default="default", alias="CAPTION_STYLE")
+    caption_language: str = Field(default="auto", alias="CAPTION_LANGUAGE")
+    dialogue_language: str = Field(default="zh", alias="DIALOGUE_LANGUAGE")
+    # Negative-prompt fragments appended to render requests (empty by default).
+    render_negatives: list[str] = Field(
+        default_factory=list, alias="RENDER_NEGATIVES"
+    )
+
     @property
     def assets_dir(self) -> Path:
         return self.storage_root / "assets"
@@ -118,6 +131,40 @@ class Settings(BaseSettings):
         return missing
 
 
-@lru_cache
+# A manually-managed singleton cache (NOT lru_cache) so a settings WRITE can
+# invalidate it: provider keys / base-urls persisted to the DB are read back into
+# a fresh Settings on the next get_settings() call, taking effect without a
+# restart. settings_service.invalidate_settings_cache() is called on every write.
+_cached_settings: Settings | None = None
+
+
 def get_settings() -> Settings:
-    return Settings()
+    global _cached_settings
+    if _cached_settings is None:
+        _cached_settings = Settings()
+    return _cached_settings
+
+
+def invalidate_settings_cache() -> None:
+    """Drop the cached Settings so the next get_settings() rebuilds from env.
+
+    Called after persisting a provider secret / base-url so live clients that
+    read get_settings() pick up the change. Also resets provider singletons that
+    captured a Settings at construction time (the AtlasCloud client and the LLM
+    structured client) so they rebuild against the new configuration."""
+    global _cached_settings
+    _cached_settings = None
+    # Reset singletons that snapshot Settings at construction — guarded so this
+    # stays import-safe even if those modules aren't loaded yet.
+    try:
+        from app.providers import atlascloud_client
+
+        atlascloud_client._singleton = None
+    except Exception:
+        pass
+    try:
+        from app.llm import structured_client
+
+        structured_client._singleton = None
+    except Exception:
+        pass

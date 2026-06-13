@@ -60,11 +60,13 @@ def test_set_override_rejects_unconfigured_provider(session):
         )
 
 
-def test_set_override_rejects_unknown_model(session):
-    with pytest.raises(ValidationFailedError):
-        settings_service.set_override(
-            session, "script_agent", "minimax", "bogus-model", _settings()
-        )
+def test_set_override_accepts_free_typed_model(session):
+    # Model ids are free-typed now: any non-empty id for a configured provider is
+    # accepted (curated lists are suggestions only, not an allowlist).
+    out = settings_service.set_override(
+        session, "script_agent", "minimax", "bogus-model", _settings()
+    )
+    assert out["model"] == "bogus-model"
 
 
 def test_set_override_rejects_unknown_agent(session):
