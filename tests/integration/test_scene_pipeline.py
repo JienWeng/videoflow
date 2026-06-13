@@ -427,6 +427,85 @@ def test_shot_reorder_via_patch(ctx):
     assert resp.json()["shot_order"] == 5
 
 
+def test_add_shot_appends_blank_at_end(ctx):
+    """POST /scenes/{id}/shots with no body appends a blank shot after the last,
+    inheriting the scene duration."""
+    client, fake = ctx
+    resp = client.post("/scenes/scene_1/shots")
+    assert resp.status_code == 200, resp.text
+    new_shot = resp.json()
+    # scene_1 seeds shot_1 (order 0) and shot_2 (order 1) -> the new shot is order 2.
+    assert new_shot["shot_order"] == 2
+    assert new_shot["prompt"] == ""
+    assert new_shot["duration"] == 6  # scene_1.duration
+    shots = client.get("/scenes/scene_1/shots").json()
+    assert [s["shot_order"] for s in shots] == [0, 1, 2]
+    assert shots[-1]["id"] == new_shot["id"]
+
+
+def test_add_shot_with_fields_and_insert_order(ctx):
+    """A supplied shot_order inserts the shot at that slot and shifts the rest."""
+    client, fake = ctx
+    resp = client.post(
+        "/scenes/scene_1/shots",
+        json={"prompt": "@Grace enters", "duration": 4, "camera": "wide",
+              "movement": "pan", "shot_order": 0},
+    )
+    assert resp.status_code == 200, resp.text
+    new_shot = resp.json()
+    assert new_shot["shot_order"] == 0
+    assert new_shot["prompt"] == "@Grace enters"
+    assert new_shot["duration"] == 4
+    shots = client.get("/scenes/scene_1/shots").json()
+    # Inserted at the front; the seeded shots shifted down to 1 and 2.
+    assert [s["shot_order"] for s in shots] == [0, 1, 2]
+    assert shots[0]["id"] == new_shot["id"]
+    assert shots[1]["id"] == "shot_1"
+    assert shots[2]["id"] == "shot_2"
+
+
+def test_add_shot_unknown_scene_404(ctx):
+    client, fake = ctx
+    assert client.post("/scenes/no_such_scene/shots").status_code == 404
+
+
+def test_reorder_shots(ctx):
+    """PUT /scenes/{id}/shots/order sets shot_order from list position."""
+    client, fake = ctx
+    resp = client.put(
+        "/scenes/scene_1/shots/order", json={"ordered_ids": ["shot_2", "shot_1"]}
+    )
+    assert resp.status_code == 200, resp.text
+    shots = resp.json()
+    assert [s["id"] for s in shots] == ["shot_2", "shot_1"]
+    assert [s["shot_order"] for s in shots] == [0, 1]
+    # Persisted: a fresh list reflects the new order.
+    persisted = client.get("/scenes/scene_1/shots").json()
+    assert [s["id"] for s in persisted] == ["shot_2", "shot_1"]
+
+
+def test_reorder_shots_partial_list_appends_rest(ctx):
+    """Shots omitted from ordered_ids keep their relative order after the named
+    ones; ids not in the scene are ignored."""
+    client, fake = ctx
+    resp = client.put(
+        "/scenes/scene_1/shots/order",
+        json={"ordered_ids": ["shot_2", "not_a_shot"]},
+    )
+    assert resp.status_code == 200, resp.text
+    shots = resp.json()
+    # shot_2 first (named), shot_1 appended after; bogus id ignored.
+    assert [s["id"] for s in shots] == ["shot_2", "shot_1"]
+    assert [s["shot_order"] for s in shots] == [0, 1]
+
+
+def test_reorder_shots_unknown_scene_404(ctx):
+    client, fake = ctx
+    assert client.put(
+        "/scenes/no_such_scene/shots/order", json={"ordered_ids": []}
+    ).status_code == 404
+
+
 def test_delete_shot_and_scene(ctx):
     client, fake = ctx
     from app.models import RenderJob, RenderStatus, Shot

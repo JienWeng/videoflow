@@ -5,8 +5,28 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* CJK-capable bundled face — the product targets Chinese, so 乐乐 / 教室 / 分镜图
+   must render as text, never tofu. The .otf ships in storage/fonts and is served
+   by the backend's /storage mount. It is an ENHANCEMENT: even if it fails to load
+   (backend down, cross-origin), the --font-sans stack below falls back to a
+   platform CJK font (PingFang / Microsoft YaHei / Noto Sans CJK), so glyphs still
+   resolve. unicode-range scopes the download to CJK so Latin text keeps using
+   Inter. font-display:swap avoids blocking first paint. */
+@font-face {
+  font-family: 'Noto Sans SC Local';
+  src: url('http://localhost:8000/storage/fonts/NotoSansCJKsc-Bold.otf') format('opentype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+1100-11FF, U+2E80-A4CF, U+A840-A87F, U+AC00-D7AF,
+    U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF, U+20000-2A6DF, U+3000-303F,
+    U+3040-30FF, U+3400-4DBF, U+4E00-9FFF;
+}
+
 :root {
-  font-family: ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  font-family: ui-sans-serif, system-ui, 'Segoe UI', 'Noto Sans SC Local',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC',
+    'Noto Sans SC', 'Source Han Sans SC', sans-serif;
   /* shadcn-svelte tokens */
   --border: oklch(0.925 0.005 214.3);
   --muted: oklch(0.963 0.002 197.1);
@@ -77,7 +97,12 @@
 }
 
 @theme inline {
-  --font-sans: 'Inter Variable', sans-serif;
+  /* Inter for Latin; the CJK faces below cover 中文 (the product targets Chinese).
+     The browser uses the first family that has a glyph, so Latin renders in Inter
+     and CJK falls through to the bundled/system CJK fonts — no tofu either way. */
+  --font-sans: 'Inter Variable', 'Noto Sans SC Local', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC',
+    'Source Han Sans SC', sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

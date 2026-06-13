@@ -506,6 +506,81 @@ async def _ensure_shot_dialogue(session: Session, scene: Scene, rows: list[Shot]
         session.commit()
 
 
+def add_shot(
+    session: Session,
+    scene_id: str,
+    *,
+    prompt: str = "",
+    duration: int | None = None,
+    camera: str | None = None,
+    movement: str | None = None,
+    shot_order: int | None = None,
+) -> Shot:
+    """Append (or insert) a blank/manual shot on the scene.
+
+    Without shot_order the shot lands at the end (max existing order + 1).
+    With shot_order the new shot takes that slot and every existing shot at or
+    after it is shifted down by one, keeping orders contiguous and stable."""
+    scene = get_scene(session, scene_id)
+    existing = list_shots(session, scene_id)
+    if shot_order is None:
+        order = (max((s.shot_order for s in existing), default=-1)) + 1
+    else:
+        order = max(0, shot_order)
+        # Make room: bump every shot at/after the insertion point.
+        for s in existing:
+            if s.shot_order >= order:
+                s.shot_order += 1
+                s.updated_at = utcnow()
+                session.add(s)
+    row = Shot(
+        scene_id=scene.id,
+        shot_order=order,
+        duration=duration if duration is not None else scene.duration,
+        prompt=prompt,
+        camera=camera,
+        movement=movement,
+    )
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row
+
+
+def reorder_shots(session: Session, scene_id: str, ordered_ids: list[str]) -> list[Shot]:
+    """Set each shot's shot_order from its position in *ordered_ids*.
+
+    Only shots belonging to *scene_id* are touched; ids not in the scene are
+    ignored, and any scene shot omitted from the list keeps its relative order
+    after the supplied ones. Returns the scene's shots in the new order."""
+    get_scene(session, scene_id)
+    rows = list_shots(session, scene_id)
+    by_id = {r.id: r for r in rows}
+    seen: set[str] = set()
+    order = 0
+    for sid in ordered_ids:
+        row = by_id.get(sid)
+        if row is None or sid in seen:
+            continue
+        seen.add(sid)
+        if row.shot_order != order:
+            row.shot_order = order
+            row.updated_at = utcnow()
+            session.add(row)
+        order += 1
+    # Append any shots not named in ordered_ids, preserving their prior order.
+    for row in rows:
+        if row.id in seen:
+            continue
+        if row.shot_order != order:
+            row.shot_order = order
+            row.updated_at = utcnow()
+            session.add(row)
+        order += 1
+    session.commit()
+    return list_shots(session, scene_id)
+
+
 def delete_shot(session: Session, shot_id: str) -> None:
     shot = session.get(Shot, shot_id)
     if shot is None:

@@ -36,6 +36,7 @@
   import CircleX from '@lucide/svelte/icons/circle-x';
   import Eraser from '@lucide/svelte/icons/eraser';
   import MessageSquare from '@lucide/svelte/icons/message-square';
+  import MousePointerClick from '@lucide/svelte/icons/mouse-pointer-click';
   import PenLine from '@lucide/svelte/icons/pen-line';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 
@@ -102,6 +103,20 @@
   let input = $state('');
   let busy = $state(false);
 
+  /**
+   * Follow the user's language for our canned UI copy (hints, the new-story
+   * seed): true when the most recent user turn contains CJK characters. The
+   * project is bilingual, so this keeps prompts and hints in step with the
+   * person typing. Defaults to Chinese — the seeded content is Chinese-first.
+   */
+  const userPrefersZh = $derived.by(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role !== 'user') continue;
+      return /[一-鿿]/.test(messages[i].text);
+    }
+    return true;
+  });
+
   // ---------------------------------------------------------------------
   // Session persistence: messages survive navigating away from Studio.
   // Keyed per project; restore on mount (last 30), save on every change.
@@ -155,6 +170,17 @@
   function clearChat() {
     messages = [greeting()];
     if (storageKey) sessionStorage.removeItem(storageKey);
+  }
+
+  /**
+   * Called from the command palette ("New story"): seed the composer with a
+   * fresh-story prompt in the user's language and focus it, so a new project
+   * is one keystroke from a script. We pre-fill rather than auto-send — the
+   * user still types the actual idea.
+   */
+  export function startNewStory() {
+    input = userPrefersZh ? '写一个新故事：' : 'Write a new story: ';
+    inputWrapper?.querySelector('textarea')?.focus();
   }
 
   let graphData = $state<any>(null);
@@ -575,6 +601,7 @@
 {#snippet chipRow(list: Chip[])}
   {#each list as c (c.label)}
     {#if c.href}
+      <!-- Navigation chip: solid, with the leaving-arrow affordance. -->
       <Button
         variant="secondary"
         size="sm"
@@ -584,7 +611,21 @@
         {c.label}
         <ArrowUpRight class="size-3" />
       </Button>
+    {:else if c.fill}
+      <!-- Pre-fill chip: outline + dashed + pen, so it reads as "edit then send"
+           rather than "run now" (the solid send chips below). -->
+      <Button
+        variant="outline"
+        size="sm"
+        class="h-7 shrink-0 rounded-full border-dashed px-3 text-xs font-normal text-muted-foreground"
+        disabled={busy}
+        onclick={() => applyChip(c)}
+      >
+        <PenLine class="size-3" />
+        {c.label}
+      </Button>
     {:else}
+      <!-- Send chip: solid, runs immediately on click. -->
       <Button
         variant="secondary"
         size="sm"
@@ -592,9 +633,6 @@
         disabled={busy}
         onclick={() => applyChip(c)}
       >
-        {#if c.fill}
-          <PenLine class="size-3 text-muted-foreground" />
-        {/if}
         {c.label}
       </Button>
     {/if}
@@ -602,9 +640,14 @@
 {/snippet}
 
 <div class="h-full flex flex-col">
-  <div class="flex items-center gap-2 border-b border-border px-4 py-2.5">
-    <MessageSquare class="size-4 text-muted-foreground" />
-    <span class="text-sm font-semibold">Chat</span>
+  <div class="flex items-center gap-2 border-b border-border px-4 py-2">
+    <MessageSquare class="size-4 shrink-0 text-muted-foreground" />
+    <div class="min-w-0">
+      <div class="text-sm font-semibold leading-tight">Chat</div>
+      <div class="truncate text-[11px] leading-tight text-muted-foreground">
+        Project command center
+      </div>
+    </div>
     <div class="ml-auto">
       <Tooltip.Provider delayDuration={300}>
         <Tooltip.Root>
@@ -734,6 +777,18 @@
 
   <div class="border-t border-border p-3" bind:this={inputWrapper}>
     {#if chips.length}
+      <!-- The suggestion strip is selection-aware: clicking a canvas node
+           retargets these chips at that node. -->
+      <p class="mb-1.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+        <MousePointerClick class="size-3 shrink-0" />
+        {#if selected}
+          {userPrefersZh
+            ? `下面的操作针对《${selected.label}》`
+            : `Suggestions now target 《${selected.label}》`}
+        {:else}
+          {userPrefersZh ? '点击画布节点可切换下面的操作' : 'Click a node to retarget these'}
+        {/if}
+      </p>
       <div class="mb-2 flex flex-wrap items-center gap-1.5 pb-0.5">
         {@render chipRow(chips)}
       </div>

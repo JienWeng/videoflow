@@ -5,7 +5,7 @@
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
   import {
     Wand2, Save, LayoutGrid, Video, Images, Trash2, Sparkles, ImagePlus,
-    Lightbulb, VolumeX, Check, Maximize2, Clock, Film
+    Lightbulb, VolumeX, Check, Maximize2, Clock, Film, Plus, ChevronUp, ChevronDown
   } from '@lucide/svelte';
 
   // The full detail of the selected scene. The parent owns all state + handlers
@@ -17,6 +17,8 @@
     style,
     busy,
     opBusy,
+    sceneDirty = false,
+    shotDirty = (_sh: any) => false,
     storyboard = null,
     shots = [],
     // bindable per-scene state maps
@@ -35,6 +37,8 @@
     onRefineScene,
     onToggleCast,
     onGenerateShots,
+    onAddShot,
+    onMoveShot,
     onSaveShot,
     onRefineShot,
     onDeleteShot,
@@ -81,6 +85,9 @@
       <div class="flex items-center gap-2 mb-2">
         <h2 class="font-semibold text-base truncate" title={s.title}>{s.title || 'Untitled scene'}</h2>
         <Badge variant="secondary" class="shrink-0 gap-1"><Clock class="size-3" />{s.duration}s</Badge>
+        {#if sceneDirty}
+          <Badge variant="outline" class="shrink-0 border-amber-500/50 text-amber-600">Unsaved</Badge>
+        {/if}
         <span class="ml-auto font-mono text-[10px] text-muted-foreground/40">{s.id}</span>
       </div>
 
@@ -136,12 +143,12 @@
           {/if}
         </div>
       {:else}
-        <Button variant="secondary" size="sm" disabled={busy === `render-${s.id}`} onclick={() => onRenderScene(s)}>
-          <Video class="size-3.5 mr-1" />{busy === `render-${s.id}` ? 'Submitting…' : 'Re-render'}
+        <Button variant="secondary" size="sm" disabled={busy[`render-${s.id}`]} onclick={() => onRenderScene(s)}>
+          <Video class="size-3.5 mr-1" />{busy[`render-${s.id}`] ? 'Submitting…' : 'Re-render'}
         </Button>
       {/if}
       <Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-destructive"
-        title="Delete scene" disabled={!!busy} onclick={() => onDelete(s)}>
+        title="Delete scene" disabled={busy[`delete-${s.id}`]} onclick={() => onDelete(s)}>
         <Trash2 class="size-4" />
       </Button>
     </div>
@@ -170,8 +177,9 @@
           </select>
         </div>
         <div>
-          <Button variant="secondary" size="sm" disabled={!!busy} onclick={() => onSave(s)}>
-            <Save class="size-3 mr-1" />{busy === `save-${s.id}` ? 'Saving…' : 'Save scene'}
+          <Button variant={sceneDirty ? 'default' : 'secondary'} size="sm"
+            disabled={busy[`save-${s.id}`] || !sceneDirty} onclick={() => onSave(s)}>
+            <Save class="size-3 mr-1" />{busy[`save-${s.id}`] ? 'Saving…' : sceneDirty ? 'Save scene *' : 'Saved'}
           </Button>
         </div>
       </div>
@@ -187,8 +195,8 @@
           class="flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
         />
         <Button variant="outline" size="sm"
-          disabled={!!busy || !(sceneRefine[s.id] ?? '').trim()} onclick={() => onRefineScene(s)}>
-          <Sparkles class="size-3 mr-1" />{busy === `refine-${s.id}` ? 'Refining…' : 'AI refine'}
+          disabled={busy[`refine-${s.id}`] || !(sceneRefine[s.id] ?? '').trim()} onclick={() => onRefineScene(s)}>
+          <Sparkles class="size-3 mr-1" />{busy[`refine-${s.id}`] ? 'Refining…' : 'AI refine'}
         </Button>
       </div>
 
@@ -206,8 +214,8 @@
           </label>
         {/each}
       </div>
-      <Button variant="outline" size="sm" disabled={!!busy} onclick={() => onExpand(s)}>
-        <Wand2 class="size-3 mr-1" />{busy === `expand-${s.id}` ? 'Expanding…' : 'Re-expand scene (AI)'}
+      <Button variant="outline" size="sm" disabled={busy[`expand-${s.id}`]} onclick={() => onExpand(s)}>
+        <Wand2 class="size-3 mr-1" />{busy[`expand-${s.id}`] ? 'Expanding…' : 'Re-expand scene (AI)'}
       </Button>
     </div>
 
@@ -217,6 +225,9 @@
       <div class="flex flex-wrap items-center gap-2 mb-2">
         <Button variant="outline" size="sm" disabled={opBusy[`shots-${s.id}`]} onclick={() => onGenerateShots(s)}>
           <LayoutGrid class="size-3 mr-1" />{opBusy[`shots-${s.id}`] ? 'Generating…' : 'Regenerate shots (AI)'}
+        </Button>
+        <Button variant="outline" size="sm" disabled={busy[`add-${s.id}`]} onclick={() => onAddShot(s)}>
+          <Plus class="size-3 mr-1" />{busy[`add-${s.id}`] ? 'Adding…' : 'Add shot'}
         </Button>
         <label class="inline-flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
           <input
@@ -242,7 +253,7 @@
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead class="w-8">#</TableHead>
+                <TableHead class="w-16">#</TableHead>
                 <TableHead class="w-1/2">prompt</TableHead>
                 <TableHead>camera</TableHead>
                 <TableHead>movement</TableHead>
@@ -251,9 +262,27 @@
               </TableRow>
             </TableHeader>
             <TableBody>
-              {#each shots as shot (shot.id)}
+              {#each shots as shot, i (shot.id)}
                 <TableRow>
-                  <TableCell>{shot.shot_order + 1}</TableCell>
+                  <TableCell>
+                    <div class="flex items-center gap-0.5">
+                      <span class="w-4 text-right">{shot.shot_order + 1}</span>
+                      <div class="flex flex-col">
+                        <button type="button" title="Move up"
+                          class="text-muted-foreground/60 hover:text-foreground disabled:opacity-30"
+                          disabled={i === 0 || busy[`reorder-${s.id}`]}
+                          onclick={() => onMoveShot(s, shot, -1)}>
+                          <ChevronUp class="size-3" />
+                        </button>
+                        <button type="button" title="Move down"
+                          class="text-muted-foreground/60 hover:text-foreground disabled:opacity-30"
+                          disabled={i === shots.length - 1 || busy[`reorder-${s.id}`]}
+                          onclick={() => onMoveShot(s, shot, 1)}>
+                          <ChevronDown class="size-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <div class="relative">
                       <textarea class="w-full rounded border border-input bg-background px-2 py-1 text-xs min-h-[46px] resize-y"
@@ -281,15 +310,16 @@
                   </TableCell>
                   <TableCell>
                     <div class="flex items-center gap-0.5">
-                      <Button variant="outline" size="sm" disabled={!!busy} onclick={() => onSaveShot(shot)}>
-                        {busy === `save-${shot.id}` ? 'Saving…' : 'Save'}
+                      <Button variant={shotDirty(shot) ? 'default' : 'outline'} size="sm"
+                        disabled={busy[`save-${shot.id}`] || !shotDirty(shot)} onclick={() => onSaveShot(shot)}>
+                        {busy[`save-${shot.id}`] ? 'Saving…' : shotDirty(shot) ? 'Save *' : 'Saved'}
                       </Button>
                       <Button variant="ghost" size="icon" class="size-7" title="AI refine this shot"
-                        disabled={!!busy || !(shotRefine[s.id] ?? '').trim()} onclick={() => onRefineShot(s, shot)}>
+                        disabled={busy[`refine-${shot.id}`] || !(shotRefine[s.id] ?? '').trim()} onclick={() => onRefineShot(s, shot)}>
                         <Sparkles class="size-3.5" />
                       </Button>
                       <Button variant="ghost" size="icon" class="size-7 text-destructive hover:text-destructive"
-                        title="Delete shot" disabled={!!busy} onclick={() => onDeleteShot(s, shot)}>
+                        title="Delete shot" disabled={busy[`delete-${shot.id}`]} onclick={() => onDeleteShot(s, shot)}>
                         <Trash2 class="size-3.5" />
                       </Button>
                     </div>
@@ -301,10 +331,10 @@
         </div>
         <div class="text-xs text-muted-foreground mt-1">
           Shot durations sum to {shots.reduce((t: number, sh: any) => t + (sh.duration || 0), 0)}s
-          (Kling allows 3–15s per render).
+          (3–15s per render).
         </div>
       {:else}
-        <p class="text-xs text-muted-foreground">No shots yet.</p>
+        <p class="text-xs text-muted-foreground">No shots yet — generate them with AI, or add one manually.</p>
       {/if}
     </div>
 
@@ -323,8 +353,8 @@
           onchange={(e) => (assetMax[s.id] = Number((e.currentTarget as HTMLInputElement).value) || 4)}
           class="w-16 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
         />
-        <Button variant="outline" size="sm" disabled={!!busy} onclick={() => onSuggestAssets(s)}>
-          <Lightbulb class="size-3 mr-1" />{busy === `plan-${s.id}` ? 'Suggesting…' : 'Suggest'}
+        <Button variant="outline" size="sm" disabled={busy[`plan-${s.id}`]} onclick={() => onSuggestAssets(s)}>
+          <Lightbulb class="size-3 mr-1" />{busy[`plan-${s.id}`] ? 'Suggesting…' : 'Suggest'}
         </Button>
         <Button variant="outline" size="sm" disabled={opBusy[`assets-${s.id}`]} onclick={() => onGenerateAssets(s)}>
           <ImagePlus class="size-3 mr-1" />{opBusy[`assets-${s.id}`] ? 'Generating…' : 'Generate assets'}
@@ -404,7 +434,7 @@
         <Button variant="outline" size="sm"
           disabled={opBusy[`sb-${s.id}`] || !(shots?.length)}
           onclick={() => onGenerateStoryboard(s)}>
-          <Images class="size-3 mr-1" />{opBusy[`sb-${s.id}`] ? 'Generating…' : 'Regenerate storyboard (ERNIE)'}
+          <Images class="size-3 mr-1" />{opBusy[`sb-${s.id}`] ? 'Generating…' : 'Regenerate storyboard'}
         </Button>
       </div>
       {#if storyboard}

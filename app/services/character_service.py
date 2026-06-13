@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.agents.character_memory import build_character_bible
 from app.config import get_settings
-from app.errors import NotFoundError
+from app.errors import NotFoundError, ValidationFailedError
 from app.models import Asset, Character, Scene
 from app.models.base import new_id, utcnow
 from app.providers.atlascloud_client import get_atlas_client
@@ -48,6 +48,47 @@ def list_characters(session: Session) -> list[Character]:
     return list(
         session.exec(select(Character).where(Character.project_id == pid)).all()
     )
+
+
+def update_character(
+    session: Session,
+    character_id: str,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    appearance: str | None = None,
+    personality: str | None = None,
+    visual_rules: list[str] | None = None,
+    voice_rules: list[str] | None = None,
+) -> Character:
+    """Patch the editable identity fields of a character.
+
+    Only non-None values are applied (partial update). `name`, if supplied, must be
+    non-empty. The JSON list columns are reassigned, not mutated.
+    """
+    char = get_character(session, character_id)
+
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise ValidationFailedError("name cannot be empty")
+        char.name = name
+    if description is not None:
+        char.description = description
+    if appearance is not None:
+        char.appearance = appearance
+    if personality is not None:
+        char.personality = personality
+    if visual_rules is not None:
+        char.visual_rules_json = list(visual_rules)
+    if voice_rules is not None:
+        char.voice_rules_json = list(voice_rules)
+
+    char.updated_at = utcnow()
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    return char
 
 
 def delete_character(session: Session, character_id: str) -> int:

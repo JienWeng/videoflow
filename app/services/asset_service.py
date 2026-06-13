@@ -13,7 +13,18 @@ from app.errors import NotFoundError
 from app.models import Asset, Character, Scene, Shot
 from app.models.base import new_id, utcnow
 from app.models.style_guide import StyleGuide
+from app.schemas.common import ASSET_TYPES
 from app.services import project_service
+
+
+def canonical_type(value: str | None) -> str:
+    """Map any stored/incoming asset type onto the canonical vocabulary.
+
+    Known canonical values pass through unchanged; anything else (legacy rows,
+    free-typed input, a renamed enum member) collapses to 'other' so the library
+    type filter stays coherent without ever rewriting the underlying row.
+    """
+    return value if value in ASSET_TYPES else "other"
 
 
 def save_upload(

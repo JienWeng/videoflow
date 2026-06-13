@@ -322,7 +322,9 @@ def test_caption_config_endpoint(client):
     assert "kids" in body["styles"]
     assert "large-v3" in body["models"]
     assert body["default_model"] == "small"
-    assert body["default_language"] == "zh"
+    # default_language now comes from the settings resolver (config default
+    # 'auto' = let whisper auto-detect), not the old hardcoded "zh".
+    assert body["default_language"] == "auto"
     # No StyleGuide seeded -> the historical "kids" default.
     assert body["default_style"] == "kids"
 
@@ -757,3 +759,234 @@ def test_editor_endpoint_shot_count_mismatch(client):
     assert shots[0]["shot_id"] == "shot_m1"
     # Second block unmatched -> null.
     assert shots[1]["shot_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# "Finished video out": download, select, run-qa, resubmit, stage tracking
+# ---------------------------------------------------------------------------
+
+def _finished_output(client, scene_id="scene_x", title=None):
+    """Render once and return (job_id, body, output_id). Optionally name the scene
+    so the download filename test can assert the slug."""
+    if title is not None:
+        from app.database import engine as db_engine
+        from app.models import Scene
+
+        with Session(db_engine) as s:
+            s.add(Scene(id=scene_id, title=title, summary="s", duration=5))
+            s.commit()
+    spec = {
+        "scene_id": scene_id,
+        "duration": 5,
+        "prompt": "@Image p",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+    }
+    job_id = client.post("/render", json=spec).json()["job_id"]
+    body = _wait_for_job(client, job_id)
+    assert body["job"]["status"] == "succeeded", body
+    return job_id, body, body["outputs"][0]["id"]
+
+
+def test_download_raw_returns_attachment_with_slug_filename(client):
+    _, _, output_id = _finished_output(client, scene_id="scene_dl", title="乐乐 Big Day")
+    resp = client.get(f"/outputs/{output_id}/download")
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "video/mp4"
+    cd = resp.headers["content-disposition"]
+    assert "attachment" in cd
+    assert ".mp4" in cd
+    assert output_id in cd
+    assert "Big-Day" in cd
+    assert resp.content == b"fake-mp4"
+
+
+def test_download_unknown_output_404(client):
+    assert client.get("/outputs/out_nope/download").status_code == 404
+
+
+def test_download_captioned_missing_404(client):
+    _, _, output_id = _finished_output(client)
+    # Never captioned -> the captioned variant 404s.
+    assert client.get(f"/outputs/{output_id}/download?variant=captioned").status_code == 404
+
+
+def test_download_captioned_after_caption(client, monkeypatch):
+    from app.services import caption_service
+
+    async def fake_transcribe(video_path, language=None, model_size=None):
+        return [caption_service.CaptionSegment(start=0.0, end=2.0, text="hi")]
+
+    async def fake_burn(video_path, ass_path, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"captioned-mp4")
+        return dest
+
+    monkeypatch.setattr(caption_service, "transcribe", fake_transcribe)
+    monkeypatch.setattr(caption_service, "burn_subtitles", fake_burn)
+
+    _, _, output_id = _finished_output(client)
+    assert client.post(
+        f"/outputs/{output_id}/caption", json={"style": "kids", "model": "tiny"}
+    ).status_code == 200
+
+    resp = client.get(f"/outputs/{output_id}/download?variant=captioned")
+    assert resp.status_code == 200, resp.text
+    assert "captioned" in resp.headers["content-disposition"]
+    assert resp.content == b"captioned-mp4"
+
+
+def test_select_output_marks_selected(client):
+    _, _, output_id = _finished_output(client)
+    r = client.patch(f"/outputs/{output_id}/select")
+    assert r.status_code == 200, r.text
+    assert r.json()["selected"] is True
+
+    # Clearing works too.
+    r = client.patch(f"/outputs/{output_id}/select", json={"selected": False})
+    assert r.status_code == 200
+    assert r.json()["selected"] is False
+
+    assert client.patch("/outputs/out_nope/select").status_code == 404
+
+
+def test_run_qa_scores_an_unscored_output(client):
+    """An output with no QA score can be scored on demand, unlocking retry."""
+    from app.database import engine as db_engine
+    from app.models.render_job import RenderJob, RenderStatus
+    from app.models.render_output import RenderOutput
+
+    # Seed a succeeded job + output with a real video file but NO score.
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.ensure_dirs()
+    video = settings.outputs_dir / "manual_qa.mp4"
+    video.write_bytes(b"fake-mp4")
+
+    # The stored spec lets retry rebuild the RenderSpec after QA records issues.
+    spec = {
+        "scene_id": "scene_x",
+        "duration": 5,
+        "prompt": "@Image p",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+    }
+    with Session(db_engine) as s:
+        job = RenderJob(
+            id="job_unscored",
+            scene_id="scene_x",
+            status=RenderStatus.succeeded,
+            request_json={"prompt": "@Image p", "multi_shot": True, "spec": spec},
+        )
+        s.add(job)
+        out = RenderOutput(
+            id="out_unscored", render_job_id="job_unscored", video_path=str(video)
+        )
+        s.add(out)
+        s.commit()
+
+    # QA agent returns issues so the Fix flow is unlocked.
+    from app.schemas import QAResult
+
+    client.fake_llm.qa = QAResult(
+        score=4, passed=False, issues=["face distorted"], recommendation="regenerate"
+    )
+    resp = client.post("/outputs/out_unscored/run-qa")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["score"] == 4
+    assert data["qa_issues"] == ["face distorted"]
+
+    # Now retry is unlocked (issues recorded).
+    assert client.post("/outputs/out_unscored/retry").status_code == 202
+
+
+def test_run_qa_unknown_output_404(client):
+    assert client.post("/outputs/out_nope/run-qa").status_code == 404
+
+
+def test_resubmit_failed_job_replays_stored_spec(client):
+    """A FAILED job can be resubmitted verbatim from its stored spec."""
+    from app.database import engine as db_engine
+    from app.models.render_job import RenderJob, RenderStatus
+
+    spec = {
+        "scene_id": "scene_x",
+        "duration": 5,
+        "prompt": "@Image hero",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+        "sound": True,
+        "keep_original_sound": True,
+        "multi_shot": True,
+        "shot_type": "intelligence",
+    }
+    # Seed a FAILED job carrying its spec (as start_render would have stored).
+    with Session(db_engine) as s:
+        job = RenderJob(
+            id="job_failed",
+            scene_id="scene_x",
+            provider="atlascloud",
+            status=RenderStatus.failed,
+            error="ret:1000 internal error",
+            request_json={"spec": spec},
+        )
+        s.add(job)
+        s.commit()
+
+    resp = client.post("/render-jobs/job_failed/resubmit")
+    assert resp.status_code == 202, resp.text
+    new_job_id = resp.json()["job_id"]
+    assert new_job_id != "job_failed"
+    body = _wait_for_job(client, new_job_id)
+    assert body["job"]["status"] == "succeeded", body
+    # The replayed payload carries the same prompt (verbatim, no corrections).
+    assert client.fake_atlas.payloads[-1]["prompt"] == "@Image hero"
+
+
+def test_resubmit_job_without_spec_rejected(client):
+    from app.database import engine as db_engine
+    from app.models.render_job import RenderJob, RenderStatus
+
+    with Session(db_engine) as s:
+        s.add(RenderJob(id="job_nospec", status=RenderStatus.failed, request_json={}))
+        s.commit()
+    assert client.post("/render-jobs/job_nospec/resubmit").status_code == 422
+    assert client.post("/render-jobs/job_missing/resubmit").status_code == 404
+
+
+def test_successful_job_records_done_stage(client):
+    _, body, _ = _finished_output(client)
+    assert body["job"]["stage"] == "done"
+    assert body["job"]["progress"] == "Done"
+
+
+def test_failed_job_records_humanized_progress(client, monkeypatch):
+    """A provider 'failed' status with a known ret: code lands a human-readable
+    progress label and a failed stage on the job."""
+    from app.providers.atlascloud_video import AtlasCloudVideoProvider
+
+    async def failing_poll(self, job_id):
+        from app.providers.base import PollResult
+
+        return PollResult(
+            status="failed",
+            output_urls=[],
+            error="ret:1201 max number is 7",
+            raw={"status": "failed", "error": "ret:1201 max number is 7"},
+        )
+
+    monkeypatch.setattr(AtlasCloudVideoProvider, "poll", failing_poll)
+
+    spec = {
+        "scene_id": "scene_x",
+        "duration": 5,
+        "prompt": "@Image p",
+        "reference_images": [{"name": "Image", "asset_id": "asset_ref"}],
+    }
+    job_id = client.post("/render", json=spec).json()["job_id"]
+    body = _wait_for_job(client, job_id)
+    assert body["job"]["status"] == "failed", body
+    assert body["job"]["stage"] == "failed"
+    # Humanized progress, not the raw ret: code.
+    assert "reference image" in body["job"]["progress"].lower()
+    # Raw error is preserved for diagnostics.
+    assert "ret:1201" in body["job"]["error"]

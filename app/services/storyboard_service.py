@@ -16,7 +16,7 @@ from app.errors import ValidationFailedError
 from app.models import Asset, Character, StyleGuide
 from app.models.base import new_id
 from app.providers.atlascloud_client import get_atlas_client
-from app.providers.atlascloud_image import AtlasCloudImageProvider
+from app.providers.atlascloud_image import STORYBOARD_IMAGE_CAP, AtlasCloudImageProvider
 from app.providers.polling import poll_until_terminal
 from app.services import project_service, media, style_service
 
@@ -26,8 +26,9 @@ MAX_GRID = 4
 # Types that are never useful as storyboard visual reference inputs.
 _EXCLUDED_ASSET_TYPES = {"video", "storyboard", "character_reference"}
 
-# Provider hard cap: nano-banana-2/edit accepts at most 10 reference images.
-_PROVIDER_IMAGE_CAP = 10
+# Provider hard cap: nano-banana-2/edit accepts at most this many reference
+# images — sourced from the provider's declared capability metadata.
+_PROVIDER_IMAGE_CAP = STORYBOARD_IMAGE_CAP
 
 
 def collect_prop_reference_ids(
@@ -130,7 +131,11 @@ async def generate_storyboard(
     without, it falls back to text-to-image from descriptions alone."""
     settings = get_settings()
     settings.ensure_dirs()
-    provider = image_provider or AtlasCloudImageProvider(get_atlas_client())
+    # Pass the session so image-gen params (steps/guidance/seed/size, model id)
+    # are read through the settings resolver — defaults unchanged.
+    provider = image_provider or AtlasCloudImageProvider(
+        get_atlas_client(), session=session
+    )
     prompt = build_storyboard_prompt(
         beats=beats, character_lines=character_lines, setting=setting, lighting=lighting
     )

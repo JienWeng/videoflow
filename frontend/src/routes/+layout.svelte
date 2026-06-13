@@ -15,6 +15,7 @@
   import ActivityTray from '$lib/components/ActivityTray.svelte';
   import { initActivity } from '$lib/activity.svelte';
   import { get } from '$lib/api';
+  import { watchTheme } from '$lib/shell/theme';
 
   let { children } = $props();
 
@@ -24,9 +25,14 @@
 
   onMount(() => {
     initActivity();
+    // ModeWatcher-style: keep <html> in sync with the saved theme preference
+    // (the Settings appearance toggle writes localStorage['videoflow.theme']).
+    // app.html applied the initial value pre-paint; this reacts to changes.
+    const stopTheme = watchTheme();
     get('/projects/active')
       .then((p) => (activeProject = p))
       .catch(() => {});
+    return stopTheme;
   });
 
   const createNav = [

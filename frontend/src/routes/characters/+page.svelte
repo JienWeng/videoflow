@@ -1,12 +1,28 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { get, post, upload, mediaUrl, isImage } from '$lib/api';
+  import { get, post, patch, del, upload, mediaUrl, isImage } from '$lib/api';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Card, CardContent } from '$lib/components/ui/card';
   import { Skeleton } from '$lib/components/ui/skeleton';
+  import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
+  import { Textarea } from '$lib/components/ui/textarea';
+  import * as Dialog from '$lib/components/ui/dialog';
   import { toast } from 'svelte-sonner';
-  import { UserPlus, BookOpen, Images, Upload, ChevronDown } from '@lucide/svelte';
+  import {
+    UserPlus,
+    BookOpen,
+    Images,
+    Upload,
+    ChevronDown,
+    Pencil,
+    Trash2,
+    Save,
+    X,
+    ChevronLeft,
+    ChevronRight
+  } from '@lucide/svelte';
 
   let characters: any[] = $state([]);
   let assets: Record<string, any> = $state({});
@@ -17,6 +33,22 @@
 
   let name = $state('');
   let description = $state('');
+
+  // --- inline edit ---
+  let editing: string | null = $state(null);
+  let editForm = $state({
+    name: '',
+    description: '',
+    appearance: '',
+    personality: '',
+    visual_rules: '' // one rule per line
+  });
+
+  // --- delete confirm ---
+  let deleteTarget: any = $state(null);
+
+  // --- reference-sheet lightbox ---
+  let lightbox: { items: any[]; index: number; charName: string } | null = $state(null);
 
   async function refresh() {
     characters = await get('/characters');
@@ -64,11 +96,92 @@
     const input = e.target as HTMLInputElement;
     if (!input.files?.length) return;
     const form = new FormData();
-    form.append('file', input.files[0]);
+    for (const f of Array.from(input.files)) form.append('file', f);
     form.append('character_id', c.id);
     run(`photo-${c.id}`, () => upload('/assets/upload', form));
+    input.value = '';
+  }
+
+  // ---- inline edit ----
+  function startEdit(c: any) {
+    editing = c.id;
+    expanded[c.id] = true;
+    editForm = {
+      name: c.name ?? '',
+      description: c.description ?? '',
+      appearance: c.appearance ?? '',
+      personality: c.personality ?? '',
+      visual_rules: (c.visual_rules_json ?? []).join('\n')
+    };
+  }
+
+  function cancelEdit() {
+    editing = null;
+  }
+
+  function saveEdit(c: any) {
+    const body = {
+      name: editForm.name.trim(),
+      description: editForm.description,
+      appearance: editForm.appearance,
+      personality: editForm.personality,
+      visual_rules: editForm.visual_rules
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    };
+    if (!body.name) {
+      toast.error('Name cannot be empty.');
+      return;
+    }
+    run(`save-${c.id}`, async () => {
+      await patch(`/characters/${c.id}`, body);
+      editing = null;
+      toast.success('Character saved.');
+    });
+  }
+
+  // ---- delete ----
+  async function confirmDelete() {
+    const c = deleteTarget;
+    if (!c) return;
+    busy = `delete-${c.id}`;
+    try {
+      const r = await del(`/characters/${c.id}`);
+      deleteTarget = null;
+      toast.success(
+        `Character deleted (detached from ${r.detached_from} place${r.detached_from === 1 ? '' : 's'}; reference images kept).`
+      );
+      await refresh();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      busy = '';
+    }
+  }
+
+  // ---- lightbox ----
+  function openLightbox(c: any, startIndex = 0) {
+    const items = (c.reference_asset_ids_json ?? [])
+      .map((id: string) => assets[id])
+      .filter((a: any) => a && isImage(a.file_path));
+    if (!items.length) return;
+    lightbox = { items, index: Math.min(startIndex, items.length - 1), charName: c.name };
+  }
+  function lightboxStep(delta: number) {
+    if (!lightbox) return;
+    const n = lightbox.items.length;
+    lightbox.index = (lightbox.index + delta + n) % n;
+  }
+  function onLightboxKey(e: KeyboardEvent) {
+    if (!lightbox) return;
+    if (e.key === 'ArrowRight') lightboxStep(1);
+    else if (e.key === 'ArrowLeft') lightboxStep(-1);
+    else if (e.key === 'Escape') lightbox = null;
   }
 </script>
+
+<svelte:window onkeydown={onLightboxKey} />
 
 <div class="p-6">
   <div class="mb-4">
@@ -112,7 +225,7 @@
   </form>
 
   {#if !loaded}
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-4">
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(290px,1fr))] gap-4">
       {#each Array(3) as _, i (i)}
         <div class="rounded-lg border border-border p-3 space-y-2">
           <Skeleton class="w-full aspect-square rounded-md" />
@@ -130,8 +243,11 @@
         <CardContent class="p-3">
           <div class="flex items-center gap-3">
             {#if firstRef && isImage(firstRef.file_path)}
-              <img class="size-12 flex-none aspect-square object-cover rounded-md bg-muted"
-                src={mediaUrl(firstRef.file_path)} alt={c.name} loading="lazy" />
+              <button type="button" class="flex-none" title="View reference sheets"
+                onclick={() => openLightbox(c, 0)}>
+                <img class="size-12 aspect-square object-cover rounded-md bg-muted cursor-zoom-in"
+                  src={mediaUrl(firstRef.file_path)} alt={c.name} loading="lazy" />
+              </button>
             {:else}
               <div class="size-12 flex-none rounded-md bg-muted grid place-items-center text-muted-foreground font-medium">
                 {c.name?.[0] ?? '?'}
@@ -153,45 +269,92 @@
 
           {#if expanded[c.id]}
             <div class="mt-3 space-y-2 border-t border-border pt-3">
-              <div class="text-xs text-muted-foreground">{c.id} · {c.reference_asset_ids_json?.length ?? 0} reference images</div>
-              {#if c.appearance}
-                <div class="text-xs"><span class="text-muted-foreground">Appearance:</span> {c.appearance}</div>
-              {/if}
-              {#if c.personality}
-                <div class="text-xs"><span class="text-muted-foreground">Personality:</span> {c.personality}</div>
-              {/if}
-              {#if c.visual_rules_json?.length}
-                <div class="flex flex-wrap gap-1">
-                  {#each c.visual_rules_json as rule}
-                    <Badge variant="outline" class="max-w-full" title={rule}>
-                      <span class="truncate">{rule}</span>
-                    </Badge>
-                  {/each}
+              {#if editing === c.id}
+                <!-- ---- inline edit form ---- -->
+                <div class="grid gap-2">
+                  <div class="grid gap-1.5">
+                    <Label for="edit-name-{c.id}">Name</Label>
+                    <Input id="edit-name-{c.id}" bind:value={editForm.name} />
+                  </div>
+                  <div class="grid gap-1.5">
+                    <Label for="edit-desc-{c.id}">Description</Label>
+                    <Input id="edit-desc-{c.id}" bind:value={editForm.description} />
+                  </div>
+                  <div class="grid gap-1.5">
+                    <Label for="edit-appear-{c.id}">Appearance</Label>
+                    <Textarea id="edit-appear-{c.id}" rows={2} bind:value={editForm.appearance} />
+                  </div>
+                  <div class="grid gap-1.5">
+                    <Label for="edit-pers-{c.id}">Personality</Label>
+                    <Textarea id="edit-pers-{c.id}" rows={2} bind:value={editForm.personality} />
+                  </div>
+                  <div class="grid gap-1.5">
+                    <Label for="edit-rules-{c.id}">Visual rules (one per line)</Label>
+                    <Textarea id="edit-rules-{c.id}" rows={3} bind:value={editForm.visual_rules}
+                      placeholder="always wears red hoodie&#10;short black hair" />
+                  </div>
+                  <div class="flex gap-2 pt-1">
+                    <Button size="sm" disabled={busy === `save-${c.id}`} onclick={() => saveEdit(c)}>
+                      <Save class="size-3 mr-1" />{busy === `save-${c.id}` ? 'Saving…' : 'Save'}
+                    </Button>
+                    <Button variant="outline" size="sm" disabled={!!busy} onclick={cancelEdit}>
+                      <X class="size-3 mr-1" />Cancel
+                    </Button>
+                  </div>
+                </div>
+              {:else}
+                <!-- ---- read view ---- -->
+                <div class="text-xs text-muted-foreground">{c.id} · {c.reference_asset_ids_json?.length ?? 0} reference images</div>
+                {#if c.appearance}
+                  <div class="text-xs"><span class="text-muted-foreground">Appearance:</span> {c.appearance}</div>
+                {/if}
+                {#if c.personality}
+                  <div class="text-xs"><span class="text-muted-foreground">Personality:</span> {c.personality}</div>
+                {/if}
+                {#if c.visual_rules_json?.length}
+                  <div class="flex flex-wrap gap-1">
+                    {#each c.visual_rules_json as rule}
+                      <Badge variant="outline" class="max-w-full" title={rule}>
+                        <span class="truncate">{rule}</span>
+                      </Badge>
+                    {/each}
+                  </div>
+                {/if}
+                {#if c.reference_asset_ids_json?.length}
+                  <div class="grid grid-cols-3 gap-2">
+                    {#each c.reference_asset_ids_json as refId, i (refId)}
+                      {@const ref = assets[refId]}
+                      {#if ref && isImage(ref.file_path)}
+                        <button type="button" class="block" title="View {ref.name || 'reference'}"
+                          onclick={() => openLightbox(c, i)}>
+                          <img class="w-full aspect-square object-cover rounded-md bg-muted cursor-zoom-in"
+                            src={mediaUrl(ref.file_path)} alt={ref.name || c.name} loading="lazy" />
+                        </button>
+                      {/if}
+                    {/each}
+                  </div>
+                {/if}
+
+                <div class="flex flex-wrap gap-1 pt-1">
+                  <Button variant="outline" size="sm" disabled={!!busy} onclick={() => startEdit(c)}>
+                    <Pencil class="size-3 mr-1" />Edit
+                  </Button>
+                  <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateBible(c)}>
+                    <BookOpen class="size-3 mr-1" />{busy === `bible-${c.id}` ? 'Generating…' : 'Generate bible'}
+                  </Button>
+                  <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateSheets(c)}>
+                    <Images class="size-3 mr-1" />{busy === `sheets-${c.id}` ? 'Generating…' : 'Reference sheets (ERNIE)'}
+                  </Button>
+                  <label class="inline-flex items-center gap-1 cursor-pointer rounded-md border border-border px-2 py-1 text-xs hover:bg-accent">
+                    <Upload class="size-3" />Upload reference photo
+                    <input type="file" class="hidden" multiple accept="image/*" onchange={(e) => uploadPhoto(c, e)} />
+                  </label>
+                  <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive"
+                    disabled={!!busy} onclick={() => (deleteTarget = c)}>
+                    <Trash2 class="size-3 mr-1" />Delete
+                  </Button>
                 </div>
               {/if}
-              {#if c.reference_asset_ids_json?.length}
-                <div class="grid grid-cols-3 gap-2">
-                  {#each c.reference_asset_ids_json as refId (refId)}
-                    {@const ref = assets[refId]}
-                    {#if ref && isImage(ref.file_path)}
-                      <img class="w-full aspect-square object-cover rounded-md bg-muted"
-                        src={mediaUrl(ref.file_path)} alt={ref.name || c.name} title={ref.name} loading="lazy" />
-                    {/if}
-                  {/each}
-                </div>
-              {/if}
-              <div class="flex flex-wrap gap-1 pt-1">
-                <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateBible(c)}>
-                  <BookOpen class="size-3 mr-1" />{busy === `bible-${c.id}` ? 'Generating…' : 'Generate bible'}
-                </Button>
-                <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateSheets(c)}>
-                  <Images class="size-3 mr-1" />{busy === `sheets-${c.id}` ? 'Generating…' : 'Reference sheets (ERNIE)'}
-                </Button>
-                <label class="inline-flex items-center gap-1 cursor-pointer rounded-md border border-border px-2 py-1 text-xs hover:bg-accent">
-                  <Upload class="size-3" />Upload reference photo
-                  <input type="file" class="hidden" onchange={(e) => uploadPhoto(c, e)} />
-                </label>
-              </div>
             </div>
           {/if}
         </CardContent>
@@ -199,3 +362,55 @@
     {/each}
   </div>
 </div>
+
+<!-- Delete confirm dialog (app confirm pattern) -->
+<Dialog.Root open={deleteTarget !== null} onOpenChange={(open) => !open && (deleteTarget = null)}>
+  <Dialog.Content>
+    <Dialog.Header>
+      <Dialog.Title>Delete character?</Dialog.Title>
+      <Dialog.Description>
+        "{deleteTarget?.name}" will be removed and detached from every scene cast.
+        Its reference images stay in the asset library.
+      </Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Button variant="outline" size="sm" onclick={() => (deleteTarget = null)}>Cancel</Button>
+      <Button variant="destructive" size="sm" disabled={!!busy} onclick={confirmDelete}>
+        <Trash2 class="size-3 mr-1" />{busy === `delete-${deleteTarget?.id}` ? 'Deleting…' : 'Delete'}
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+
+<!-- Reference-sheet lightbox -->
+<Dialog.Root open={lightbox !== null} onOpenChange={(open) => !open && (lightbox = null)}>
+  <Dialog.Content class="max-w-3xl sm:max-w-3xl">
+    <Dialog.Header>
+      <Dialog.Title class="truncate">
+        {lightbox?.charName} — reference {(lightbox?.index ?? 0) + 1} / {lightbox?.items.length ?? 0}
+      </Dialog.Title>
+      {#if lightbox?.items[lightbox.index]?.name}
+        <Dialog.Description class="truncate">{lightbox.items[lightbox.index].name}</Dialog.Description>
+      {/if}
+    </Dialog.Header>
+    {#if lightbox}
+      <div class="relative flex items-center justify-center bg-muted rounded-md">
+        <img class="max-h-[70vh] w-auto max-w-full rounded-md object-contain"
+          src={mediaUrl(lightbox.items[lightbox.index].file_path)}
+          alt={lightbox.items[lightbox.index].name || lightbox.charName} />
+        {#if lightbox.items.length > 1}
+          <button type="button" aria-label="Previous"
+            class="absolute left-2 grid size-9 place-items-center rounded-full bg-background/80 border border-border shadow hover:bg-background"
+            onclick={() => lightboxStep(-1)}>
+            <ChevronLeft class="size-4" />
+          </button>
+          <button type="button" aria-label="Next"
+            class="absolute right-2 grid size-9 place-items-center rounded-full bg-background/80 border border-border shadow hover:bg-background"
+            onclick={() => lightboxStep(1)}>
+            <ChevronRight class="size-4" />
+          </button>
+        {/if}
+      </div>
+    {/if}
+  </Dialog.Content>
+</Dialog.Root>

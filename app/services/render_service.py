@@ -23,7 +23,7 @@ from app.config import get_settings
 from app.errors import NotFoundError, ValidationFailedError
 from app.jobs import worker
 from app.models import Asset, Character, RenderJob, RenderOutput, RenderStatus, Scene
-from app.models.base import new_id
+from app.models.base import new_id, utcnow
 from app.providers.atlascloud_client import get_atlas_client
 from app.providers.registry import get_video_provider
 from app.providers.url_resolver import AtlasCloudUploadResolver
@@ -35,6 +35,43 @@ logger = logging.getLogger(__name__)
 
 # Name of the previous-scene anchor frame reference (@-token in the prompt).
 ANCHOR_NAME = "上一场景"
+
+
+def resolve_dialogue_language(session: Session) -> str:
+    """The effective spoken-dialogue language for a render, via the settings
+    resolver (project override -> global -> config default). Used by BOTH render
+    paths so the language of 「」 lines is configurable, not hardcoded."""
+    from app.services import settings_service
+
+    return settings_service.resolve(
+        session,
+        "dialogue_language",
+        default="English",
+        project_id=project_service.active_project_id(session),
+    )
+
+
+def resolve_render_negatives(session: Session) -> tuple[str, str, list[str]]:
+    """Resolver-backed negative-prompt fragments for a render:
+    (no_text_negative, no_clone_negative, extra_negatives).
+
+    The first two keep the prompt-agent defaults (NO_TEXT_NEGATIVE /
+    NO_CLONE_NEGATIVE) unless overridden via app settings keys
+    'no_text_negative' / 'no_clone_negative'; `extra_negatives` is the
+    render_negatives list (resolver-backed, empty by default)."""
+    from app.services import settings_service
+
+    pid = project_service.active_project_id(session)
+    no_text = settings_service.get_app_setting(
+        session, "no_text_negative", NO_TEXT_NEGATIVE, scope="global"
+    ) or NO_TEXT_NEGATIVE
+    no_clone = settings_service.get_app_setting(
+        session, "no_clone_negative", NO_CLONE_NEGATIVE, scope="global"
+    ) or NO_CLONE_NEGATIVE
+    extras = settings_service.resolve(
+        session, "render_negatives", default=[], project_id=pid
+    ) or []
+    return no_text, no_clone, list(extras)
 
 
 def pick_previous_scene(current: Scene, scenes: list[Scene]) -> Scene | None:
@@ -281,17 +318,21 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
     # Deterministic voice direction from the cast's voice_rules, placed before
     # the negatives so every render of this cast uses the same voices.
     voices = voice_line(bibles)
+    # Resolver-backed dialogue language + negatives (configurable per project).
+    dialogue_language = resolve_dialogue_language(session)
+    no_text, no_clone, extra_negatives = resolve_render_negatives(session)
+    extra_neg = (", " + ", ".join(extra_negatives)) if extra_negatives else ""
     prompt = (
         f"{scene.summary}. "
         + ("Follow the @分镜图 storyboard panels in order for composition, scene "
            "continuity and lighting. " if storyboard_kept else "")
         + (f"Match the lighting, color grading and character appearance of "
            f"@{ANCHOR_NAME} (the previous scene's final frame). " if anchored else "")
-        + "Spoken dialogue, clear and natural. "
+        + f"Spoken dialogue in {dialogue_language}, clear and natural. "
         + (f"{voices}. " if voices else "")
         + "Negative: "
-        f"{NO_TEXT_NEGATIVE}, no watermark, no outfit changes, no extra "
-        f"characters, no distorted faces, {NO_CLONE_NEGATIVE}."
+        f"{no_text}, no watermark, no outfit changes, no extra "
+        f"characters, no distorted faces, {no_clone}{extra_neg}."
     )
     # Deterministic style enforcement on the whole-scene video prompt.
     prompt = style_service.apply_style(prompt, style_service.get_style(session))
@@ -356,6 +397,131 @@ async def retry_output(session: Session, output_id: str) -> RenderJob:
 
     logger.info("corrective re-render for output %s (job %s)", output_id, job.id)
     return await start_render(session, spec)
+
+
+def _slugify(text: str, *, max_len: int = 60) -> str:
+    """A filesystem/Content-Disposition-safe slug.
+
+    Keeps CJK and alphanumerics (Chinese scene titles are common here), turns
+    runs of spaces/punctuation into single hyphens, trims to max_len. Empty input
+    yields '' so the caller can fall back to the output id."""
+    import re
+
+    # \w is Unicode-aware in Python 3 str patterns, so CJK (Chinese scene titles)
+    # is preserved; everything else collapses to single hyphens.
+    slug = re.sub(r"[^\w-]+", "-", text).strip("-")
+    return slug[:max_len].strip("-")
+
+
+def download_filename(session: Session, output: RenderOutput, variant: str) -> str:
+    """A friendly download filename: '<scene-title>-<output-id>[-captioned].mp4'.
+
+    Falls back to the output id alone when the scene has no title (or the job
+    isn't tied to a scene). The output id keeps the name unique across takes."""
+    title = ""
+    job = session.get(RenderJob, output.render_job_id)
+    if job and job.scene_id:
+        scene = session.get(Scene, job.scene_id)
+        if scene and scene.title:
+            title = scene.title
+    slug = _slugify(title)
+    stem = f"{slug}-{output.id}" if slug else output.id
+    if variant == "captioned":
+        stem = f"{stem}-captioned"
+    return f"{stem}.mp4"
+
+
+def download_path(output: RenderOutput, variant: str) -> Path:
+    """The on-disk path for the requested variant (raw | captioned).
+
+    Raises NotFoundError when the requested file is missing (e.g. captioned was
+    asked for but the output was never captioned, or the raw file is gone)."""
+    if variant not in ("raw", "captioned"):
+        raise ValidationFailedError(
+            f"unknown download variant '{variant}' (use raw|captioned)"
+        )
+    path_str = output.captioned_path if variant == "captioned" else output.video_path
+    if not path_str:
+        raise NotFoundError(
+            f"output {output.id} has no {variant} video"
+        )
+    path = Path(path_str)
+    if not path.exists():
+        raise NotFoundError(f"output {output.id} {variant} video file is missing")
+    return path
+
+
+def get_output(session: Session, output_id: str) -> RenderOutput:
+    output = session.get(RenderOutput, output_id)
+    if output is None:
+        raise NotFoundError(f"output {output_id} not found")
+    return output
+
+
+async def resubmit_job(session: Session, job_id: str) -> RenderJob:
+    """Resubmit a job's stored RenderSpec verbatim (no QA corrections).
+
+    The primary use is recovering a FAILED job: the original request is rebuilt
+    from request_json['spec'] and submitted again unchanged. Unlike retry_output
+    (which folds QA issues into the prompt and needs a successful, scored output),
+    this works straight off the job and never mutates the prompt — handy when the
+    failure was transient (a gateway 5xx, a timeout) rather than a content issue.
+    """
+    job = get_job(session, job_id)
+    spec_dict = (job.request_json or {}).get("spec")
+    if not spec_dict:
+        raise ValidationFailedError(
+            f"job {job.id} did not store its render spec — cannot resubmit it"
+        )
+    spec = RenderSpec.model_validate(spec_dict)
+    logger.info("resubmitting job %s (status was %s)", job.id, job.status)
+    return await start_render(session, spec)
+
+
+async def run_qa_for_output(session: Session, output_id: str) -> RenderOutput:
+    """Score an output that hasn't been QA'd yet (or whose QA crashed).
+
+    Unlocks the Fix & re-render flow: retry_output needs recorded QA issues, so an
+    output produced when the QA agent was unavailable can be scored on demand.
+    Re-running on an already-scored output is allowed (re-review)."""
+    from app.services import qa_service
+
+    output = session.get(RenderOutput, output_id)
+    if output is None:
+        raise NotFoundError(f"output {output_id} not found")
+    if not output.video_path or not Path(output.video_path).exists():
+        raise ValidationFailedError(
+            f"output {output_id} has no video file on disk to review"
+        )
+    job = get_job(session, output.render_job_id)
+    return await qa_service.run_qa(session, job, output, Path(output.video_path))
+
+
+def select_output(session: Session, output_id: str, selected: bool = True) -> RenderOutput:
+    """Mark an output as the selected take for its render job.
+
+    Selecting one output deselects every other output of the SAME job, so a job
+    has at most one selected take (the human's chosen take among retries)."""
+    output = session.get(RenderOutput, output_id)
+    if output is None:
+        raise NotFoundError(f"output {output_id} not found")
+    if selected:
+        for other in session.exec(
+            select(RenderOutput).where(
+                RenderOutput.render_job_id == output.render_job_id,
+                RenderOutput.id != output.id,
+            )
+        ).all():
+            if other.selected:
+                other.selected = False
+                other.updated_at = utcnow()
+                session.add(other)
+    output.selected = selected
+    output.updated_at = utcnow()
+    session.add(output)
+    session.commit()
+    session.refresh(output)
+    return output
 
 
 def get_job(session: Session, job_id: str) -> RenderJob:

@@ -18,6 +18,10 @@
 
   const kind = $derived(String(data.kind ?? ''));
   const Icon = $derived(icons[kind] ?? Film);
+  // Scenes are authored roots; render_job/output are machine-derived. Tinting
+  // the card background by family makes that hierarchy readable at a glance.
+  const isScene = $derived(kind === 'scene');
+  const isDerived = $derived(kind === 'render_job' || kind === 'output');
   const preview = $derived(
     kind === 'asset' && isImage(data.file_path as string)
       ? mediaUrl(data.file_path as string)
@@ -32,11 +36,18 @@
 </script>
 
 <!-- Kind-tinted left border: at far zoom levels labels vanish, but the accent
-  colors keep the graph readable as structure-by-color (matches the minimap). -->
+  colors keep the graph readable as structure-by-color (matches the minimap).
+  Scenes (authored roots) get a thicker, primary-ringed card; render_job/output
+  (machine-derived) get a dashed border + muted background so the authored vs
+  generated hierarchy reads at a glance. -->
 <div
-  class="w-[180px] rounded-md border border-l-2 bg-card px-2 py-1.5 text-xs shadow-sm
-    {kind === 'scene' ? 'border-primary/60' : 'border-border'}"
-  style="border-left-color: {kindColor(kind)}"
+  class="rounded-md border border-l-2 px-2 py-1.5 text-xs shadow-sm
+    {isScene
+      ? 'w-[190px] border-primary/60 bg-card ring-1 ring-primary/30'
+      : isDerived
+        ? 'w-[180px] border-dashed border-border bg-muted/40'
+        : 'w-[180px] border-border bg-card'}"
+  style="border-left-color: {kindColor(kind)}; border-left-style: solid;"
 >
   <!-- A large, grabbable handle on EACH side. The default xyflow handles are
     ~2-3px wide — effectively un-grabbable once the user zooms to a workable
@@ -44,7 +55,13 @@
     (set on SvelteFlow) every handle acts as both source and target, so a drag
     can begin/end on either side regardless of cluster layout direction.
     handleConnect normalizes by kind, so orientation doesn't matter. -->
-  <Handle id="l" type="source" position={Position.Left} class="entity-handle" />
+  <Handle
+    id="l"
+    type="source"
+    position={Position.Left}
+    class="entity-handle"
+    title="Drag to connect"
+  />
   <div class="flex items-center gap-1.5">
     <Icon class="size-3.5 shrink-0 text-muted-foreground" />
     <span class="truncate font-medium" title={String(data.label ?? '')}>{data.label}</span>
@@ -57,7 +74,13 @@
       <Badge variant={badgeVariant}>{status}</Badge>
     </div>
   {/if}
-  <Handle id="r" type="source" position={Position.Right} class="entity-handle" />
+  <Handle
+    id="r"
+    type="source"
+    position={Position.Right}
+    class="entity-handle"
+    title="Drag to connect"
+  />
 </div>
 
 <style>

@@ -71,6 +71,36 @@ def default_caption_style(style) -> str:
     return "clean"
 
 
+def resolved_caption_defaults(session: Session) -> dict:
+    """Resolver-backed caption defaults for the UI / caption pipeline:
+    {style, language, model}.
+
+    - model: app setting 'whisper_model' (-> config default 'small').
+    - language: app setting 'caption_language' (-> config default 'auto').
+    - style: app setting 'caption_style' when it names a real STYLES preset;
+      otherwise the project StyleGuide-derived default (kids vs clean). The
+      config default for caption_style is the sentinel 'default', which is NOT a
+      real preset, so it transparently falls through to the style-guide logic —
+      preserving the historical behaviour while letting a user pin a preset."""
+    from app.services import project_service, settings_service, style_service
+
+    pid = project_service.active_project_id(session)
+    model = settings_service.resolve(
+        session, "whisper_model", default="small", project_id=pid
+    )
+    language = settings_service.resolve(
+        session, "caption_language", default="auto", project_id=pid
+    )
+    configured_style = settings_service.resolve(
+        session, "caption_style", default=None, project_id=pid
+    )
+    if configured_style in STYLES:
+        style = configured_style
+    else:
+        style = default_caption_style(style_service.get_style(session))
+    return {"style": style, "language": language, "model": model}
+
+
 QUOTE_RE = re.compile(r'[「『"“]([^」』"”]{1,80})[」』"”]')
 
 _NORM_RE = re.compile(r"[\s，。！？、,.!?…~～]")

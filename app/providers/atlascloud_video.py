@@ -22,6 +22,29 @@ from app.providers.base import PollResult, normalise_status
 from app.providers.url_resolver import AssetUrlResolver
 from app.schemas import RenderSpec
 
+# ---------------------------------------------------------------------------
+# Declared provider capabilities — Kling o3-pro reference-to-video hard limits,
+# consolidated here as module metadata instead of scattered magic numbers.
+#   - duration: the live API accepts 3-15s; out-of-range values are clamped.
+#   - reference images: ret:1201 "max number is 7" above 7 (live-verified,
+#     despite docs claiming 10). The effective cap is read from the settings
+#     resolver (key 'max_video_refs'); this is the fallback default.
+# ---------------------------------------------------------------------------
+VIDEO_MIN_DURATION = 3
+VIDEO_MAX_DURATION = 15
+DEFAULT_VIDEO_MAX_REFS = 7
+
+CAPABILITIES: dict = {
+    "min_duration_s": VIDEO_MIN_DURATION,
+    "max_duration_s": VIDEO_MAX_DURATION,
+    "max_reference_images": DEFAULT_VIDEO_MAX_REFS,
+}
+
+
+def clamp_duration(duration: int) -> int:
+    """Clamp a requested duration into the provider's accepted range."""
+    return max(VIDEO_MIN_DURATION, min(duration, VIDEO_MAX_DURATION))
+
 
 class AtlasCloudVideoProvider:
     name = "atlascloud_video"
@@ -29,6 +52,23 @@ class AtlasCloudVideoProvider:
     def __init__(self, client: AtlasCloudClient | None = None) -> None:
         self._client = client or get_atlas_client()
         self._settings = get_settings()
+
+    def _max_refs(self, resolver: AssetUrlResolver) -> int:
+        """Effective reference-image cap: read from the settings resolver when a
+        session is reachable (the real resolver carries one), else the config /
+        metadata default. Behaviour is identical by default — a fresh DB resolves
+        to atlas_video_max_refs (7)."""
+        session = getattr(resolver, "_session", None)
+        if session is None:
+            return self._settings.atlas_video_max_refs
+        from app.services import settings_service
+
+        return settings_service.resolve(
+            session,
+            "max_video_refs",
+            default=self._settings.atlas_video_max_refs,
+            settings=self._settings,
+        )
 
     async def build_payload(self, spec: RenderSpec, resolver: AssetUrlResolver) -> dict:
         images = await resolver.resolve(spec.all_reference_image_asset_ids)
@@ -38,7 +78,7 @@ class AtlasCloudVideoProvider:
             )
         # Belt-and-braces: the live API rejects more images than this with
         # ret:1201; the upstream priority cap should already hold the limit.
-        images = images[: self._settings.atlas_video_max_refs]
+        images = images[: self._max_refs(resolver)]
 
         video_url = None
         if spec.video_asset_id:
@@ -47,7 +87,7 @@ class AtlasCloudVideoProvider:
         payload: dict = {
             "model": spec.model or self._settings.atlas_video_model,
             "aspect_ratio": spec.aspect_ratio,
-            "duration": max(3, min(spec.duration, 15)),
+            "duration": clamp_duration(spec.duration),
             "prompt": spec.prompt,
             "images": images,
             "sound": spec.sound,

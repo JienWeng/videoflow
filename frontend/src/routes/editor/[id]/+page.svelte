@@ -9,13 +9,13 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { beforeNavigate } from '$app/navigation';
-  import { get, mediaUrl } from '$lib/api';
+  import { get, mediaUrl, API_BASE } from '$lib/api';
   import { runBackgroundOp } from '$lib/ops';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Skeleton } from '$lib/components/ui/skeleton';
   import { toast } from 'svelte-sonner';
-  import { ArrowLeft, Pause, Play, Save, ZoomIn, ZoomOut } from '@lucide/svelte';
+  import { ArrowLeft, Download, Pause, Play, Save, ZoomIn, ZoomOut } from '@lucide/svelte';
   import Timeline from '$lib/editor/Timeline.svelte';
   import Inspector from '$lib/editor/Inspector.svelte';
   import type { EditorOutput, SceneRef, Segment, Selection, Shot } from '$lib/editor/types';
@@ -211,7 +211,59 @@
       toast.error(err.message);
     }
   }
+
+  function downloadUrl(variant: 'raw' | 'captioned'): string {
+    return `${API_BASE}/outputs/${outputId}/download?variant=${variant}`;
+  }
+
+  // --- Keyboard shortcuts (guarded against typing in inputs) ---
+  function isTyping(t: EventTarget | null): boolean {
+    const el = t as HTMLElement | null;
+    if (!el) return false;
+    const tag = el.tagName;
+    return (
+      tag === 'INPUT' ||
+      tag === 'TEXTAREA' ||
+      tag === 'SELECT' ||
+      el.isContentEditable === true
+    );
+  }
+
+  function onKeydown(e: KeyboardEvent) {
+    // Cmd/Ctrl+S works even from inputs (a deliberate save), everything else is
+    // suppressed while typing so it doesn't hijack normal text entry.
+    const save_combo = (e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S');
+    if (save_combo) {
+      e.preventDefault();
+      if (dirty && !saving) void save();
+      return;
+    }
+    if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+
+    switch (e.key) {
+      case ' ':
+        e.preventDefault();
+        togglePlay();
+        break;
+      case 'ArrowLeft':
+        e.preventDefault();
+        seek(Math.max(0, currentTime - (e.shiftKey ? 5 : 1)));
+        break;
+      case 'ArrowRight':
+        e.preventDefault();
+        seek(Math.min(totalDuration, currentTime + (e.shiftKey ? 5 : 1)));
+        break;
+      case 'Delete':
+        if (selection?.kind === 'caption') {
+          e.preventDefault();
+          deleteCaption(selection.index);
+        }
+        break;
+    }
+  }
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <svelte:head>
   <title>Editor — {scene?.title ?? outputId}</title>
@@ -251,6 +303,27 @@
       {#if dirty}
         <span class="text-xs text-muted-foreground">unsaved changes</span>
       {/if}
+      <!-- Download: captioned copy when it exists, plus the raw original. -->
+      {#if output.captioned_path}
+        <Button
+          variant="secondary"
+          size="sm"
+          href={downloadUrl('captioned')}
+          download
+          title="Download the captioned video"
+        >
+          <Download class="mr-1 size-3.5" />Captioned
+        </Button>
+      {/if}
+      <Button
+        variant={output.captioned_path ? 'ghost' : 'secondary'}
+        size="sm"
+        href={downloadUrl('raw')}
+        download
+        title="Download the original (uncaptioned) video"
+      >
+        <Download class="mr-1 size-3.5" />Raw
+      </Button>
       <Button size="sm" disabled={!dirty || saving} onclick={save}>
         <Save class="mr-1 size-3.5" />
         {saving ? 'Re-burning…' : 'Save'}
@@ -267,6 +340,7 @@
             <video
               bind:this={videoEl}
               src={videoSrc}
+              poster={mediaUrl(output?.thumbnail_path) ?? undefined}
               class="h-full w-full rounded-lg border border-border bg-black object-contain"
               onclick={togglePlay}
               onplay={() => {
@@ -362,6 +436,7 @@
           ondeletecaption={deleteCaption}
           onmergeprev={mergePrevCaption}
           onretried={() => {}}
+          onqarun={() => void load()}
         />
       </aside>
     </div>

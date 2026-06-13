@@ -17,6 +17,17 @@ class CreateCharacter(BaseModel):
     description: str = ""
 
 
+class UpdateCharacter(BaseModel):
+    """Partial update — only provided fields are applied."""
+
+    name: str | None = None
+    description: str | None = None
+    appearance: str | None = None
+    personality: str | None = None
+    visual_rules: list[str] | None = None
+    voice_rules: list[str] | None = None
+
+
 class BibleRequest(BaseModel):
     notes: str
 
@@ -40,6 +51,24 @@ def list_characters(session: Session = Depends(get_session)):
 @router.get("/{character_id}")
 def get_character(character_id: str, session: Session = Depends(get_session)):
     return character_service.get_character(session, character_id)
+
+
+@router.patch("/{character_id}")
+def update_character(
+    character_id: str,
+    body: UpdateCharacter,
+    session: Session = Depends(get_session),
+):
+    return character_service.update_character(
+        session,
+        character_id,
+        name=body.name,
+        description=body.description,
+        appearance=body.appearance,
+        personality=body.personality,
+        visual_rules=body.visual_rules,
+        voice_rules=body.voice_rules,
+    )
 
 
 @router.delete("/{character_id}")

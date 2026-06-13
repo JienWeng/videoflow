@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { get, post, patch, del } from '$lib/api';
+  import { goto, invalidateAll } from '$app/navigation';
+  import { get, post, patch, del, upload, API_BASE } from '$lib/api';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Card, CardContent } from '$lib/components/ui/card';
@@ -8,7 +9,7 @@
   import { Skeleton } from '$lib/components/ui/skeleton';
   import * as Dialog from '$lib/components/ui/dialog';
   import { toast } from 'svelte-sonner';
-  import { FolderPlus, Pencil, Trash2, Check, X } from '@lucide/svelte';
+  import { FolderPlus, Pencil, Trash2, Check, X, Download, Upload } from '@lucide/svelte';
 
   let projects: any[] = $state([]);
   let loaded = $state(false);
@@ -21,6 +22,7 @@
   let renameValue = $state('');
 
   let deleteTarget: any = $state(null);
+  let importInput: HTMLInputElement | null = $state(null);
 
   async function refresh() {
     projects = await get('/projects');
@@ -43,21 +45,52 @@
   }
 
   // The active project transparently scopes every backend endpoint. After
-  // creating or switching, we do a full page reload to the Studio so every
-  // page refetches its data under the new project scope.
+  // creating or switching we soft-navigate to the Studio with invalidateAll so
+  // every page refetches its data under the new project scope (no full reload).
   const createProject = (e: Event) => {
     e.preventDefault();
     run('create', async () => {
       await post('/projects', { name, description });
-      window.location.href = '/';
+      name = '';
+      description = '';
+      await invalidateAll();
+      await goto('/');
     });
   };
 
   const activate = (p: any) =>
     run(`open-${p.id}`, async () => {
       await post(`/projects/${p.id}/activate`);
-      window.location.href = '/';
+      await invalidateAll();
+      await goto('/');
     });
+
+  // Export downloads a portable bundle of the project. The endpoint is being
+  // added by another workstream; the link 404s gracefully until then.
+  function exportProject(p: any) {
+    const a = document.createElement('a');
+    a.href = `${API_BASE}/projects/${p.id}/export`;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  const importProject = (e: Event) => {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    run('import', async () => {
+      const form = new FormData();
+      form.append('file', file);
+      await upload('/projects/import', form);
+      input.value = '';
+      await refresh();
+      toast.success('Project imported');
+    }).finally(() => {
+      if (input) input.value = '';
+    });
+  };
 
   function startRename(p: any) {
     renamingId = p.id;
@@ -92,11 +125,26 @@
 </script>
 
 <div class="p-6">
-  <div class="mb-4">
-    <h1 class="text-lg font-semibold">Projects</h1>
-    <p class="text-sm text-muted-foreground">
-      Each project is a separate workspace — its own scenes, characters, assets and renders.
-    </p>
+  <div class="mb-4 flex items-start justify-between gap-3">
+    <div>
+      <h1 class="text-lg font-semibold">Projects</h1>
+      <p class="text-sm text-muted-foreground">
+        Each project is a separate workspace — its own scenes, characters, assets and renders.
+      </p>
+    </div>
+    <div>
+      <input
+        bind:this={importInput}
+        type="file"
+        accept=".zip,.json,application/zip,application/json"
+        class="hidden"
+        onchange={importProject}
+      />
+      <Button variant="outline" size="sm" disabled={busy === 'import'} onclick={() => importInput?.click()}>
+        <Upload class="size-4 mr-1" />
+        {busy === 'import' ? 'Importing…' : 'Import'}
+      </Button>
+    </div>
   </div>
 
   <form class="mb-6 rounded-lg border border-border bg-card p-4" onsubmit={createProject}>
@@ -173,11 +221,16 @@
             {/if}
             <p class="text-xs text-muted-foreground mb-0.5">{countsLine(p.counts)}</p>
             <p class="text-xs text-muted-foreground mb-3">Created {fmtDate(p.created_at)}</p>
-            <div class="flex gap-1.5">
+            <div class="flex flex-wrap gap-1.5">
               {#if !p.is_active}
                 <Button variant="secondary" size="sm" disabled={!!busy} onclick={() => activate(p)}>
                   {busy === `open-${p.id}` ? 'Opening…' : 'Open'}
                 </Button>
+              {/if}
+              <Button variant="ghost" size="sm" disabled={!!busy} onclick={() => exportProject(p)}>
+                <Download class="size-3.5 mr-1" />Export
+              </Button>
+              {#if !p.is_active}
                 <Button
                   variant="ghost"
                   size="sm"

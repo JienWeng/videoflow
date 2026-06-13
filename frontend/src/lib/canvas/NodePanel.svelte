@@ -317,11 +317,16 @@
 <svelte:window onkeydown={onWindowKeydown} />
 
 {#if shown}
-  <!-- Non-modal side panel: fixed right, no overlay, no focus trap — the
-    canvas stays interactive and clicking another node switches the panel. -->
+  <!-- Docked overlay card: absolutely positioned INSIDE the canvas pane (its
+    parent is `relative`), top-right with a small inset and a capped height.
+    Deliberately NOT a viewport-fixed full-height slab — that used to cover the
+    chat composer + selection chips and the minimap. As an in-pane card the
+    canvas stays pannable behind/around it, the chat stays reachable, and
+    clicking another node just switches the panel. -->
   <aside
-    class="bg-popover text-popover-foreground fixed inset-y-0 right-0 z-50 flex w-[380px] flex-col gap-4 border-l border-border text-sm shadow-lg"
+    class="bg-popover/95 text-popover-foreground absolute right-3 top-3 z-40 flex max-h-[calc(100%-12rem)] w-[340px] max-w-[calc(100%-1.5rem)] flex-col gap-4 rounded-lg border border-border text-sm shadow-xl backdrop-blur"
     aria-label="{kind} details"
+    data-testid="node-panel"
   >
     <header class="flex flex-col gap-1.5 p-4 pb-0">
       <h2 class="font-semibold capitalize">{kind.replace('_', ' ')}</h2>
@@ -330,7 +335,7 @@
     <Button
       variant="ghost"
       size="icon-sm"
-      class="absolute top-3 right-3"
+      class="absolute top-2 right-2"
       onclick={requestClose}
     >
       <X />

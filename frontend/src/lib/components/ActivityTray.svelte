@@ -8,10 +8,51 @@
     LayoutGrid,
     Captions,
     Palette,
-    Film
+    Film,
+    RefreshCw
   } from '@lucide/svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { activity, type ActivityItem } from '$lib/activity.svelte';
+
+  /**
+   * Map a raw provider/transport error onto a short, human-friendly line.
+   * Falls back to the original text (trimmed) when nothing matches, so we never
+   * hide a real message — we only soften the noisy ones.
+   */
+  function friendlyError(raw: string | null | undefined): string {
+    const text = (raw ?? '').trim();
+    if (!text) return 'Something went wrong (no detail provided).';
+    const t = text.toLowerCase();
+    if (t.includes('timeout') || t.includes('timed out'))
+      return 'The provider took too long to respond — try again.';
+    if (t.includes('rate limit') || t.includes('429') || t.includes('too many requests'))
+      return 'Rate limited by the provider — wait a moment and retry.';
+    if (t.includes('insufficient') && (t.includes('balance') || t.includes('credit') || t.includes('quota')))
+      return 'The provider account is out of credit/quota.';
+    if (t.includes('401') || t.includes('unauthorized') || t.includes('api key') || t.includes('forbidden') || t.includes('403'))
+      return 'Provider rejected the API key — check Settings.';
+    if (t.includes('content') && (t.includes('policy') || t.includes('moderation') || t.includes('blocked') || t.includes('safety')))
+      return 'The prompt was blocked by the provider content filter.';
+    if (t.includes('download failed'))
+      return 'The finished video could not be downloaded — try again.';
+    if (t.includes('ffmpeg') || t.includes('no frames'))
+      return 'Could not process the video file (ffmpeg).';
+    if (t.includes('connection') || t.includes('network') || t.includes('econn') || t.includes('failed to fetch'))
+      return 'Network error reaching the provider — check the connection.';
+    if (t.includes('500') || t.includes('internal server error') || t.includes('bad gateway') || t.includes('502') || t.includes('503'))
+      return 'The provider had a server error — try again shortly.';
+    // Unknown — surface the original, capped so the tray stays tidy.
+    return text.length > 160 ? text.slice(0, 157) + '…' : text;
+  }
+
+  /** Where a "retry" CTA should take the user for a failed item. */
+  function retryHref(item: ActivityItem): string {
+    if (item.output_id) return `/editor/${item.output_id}`;
+    return '/render';
+  }
+  function retryLabel(item: ActivityItem): string {
+    return item.kind === 'render' ? 'Re-render' : 'Retry';
+  }
 
   let open = $state(false);
   let root: HTMLDivElement | undefined = $state();
@@ -124,8 +165,20 @@
                 </div>
               {/if}
               {#if item.status === 'failed'}
-                {@const errorText = item.error?.trim() || 'failed (no detail)'}
-                <div class="mt-0.5 pl-5 truncate text-[10px] text-destructive" title={errorText}>{errorText}</div>
+                {@const errorText = friendlyError(item.error)}
+                <div class="mt-0.5 pl-5 text-[10px] text-destructive" title={item.error?.trim() || errorText}>
+                  {errorText}
+                </div>
+                <div class="mt-1 pl-5">
+                  <a
+                    href={retryHref(item)}
+                    onclick={() => (open = false)}
+                    class="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:bg-accent"
+                  >
+                    <RefreshCw class="size-3" />
+                    {retryLabel(item)}
+                  </a>
+                </div>
               {/if}
             </li>
           {/each}

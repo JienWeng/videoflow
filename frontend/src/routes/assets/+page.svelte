@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { get, patch, del, upload, mediaUrl, isImage, isVideo } from '$lib/api';
+  import { get, post, patch, del, upload, mediaUrl, isImage, isVideo } from '$lib/api';
   import { runBackgroundOp } from '$lib/ops';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -11,7 +11,7 @@
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
   import { toast } from 'svelte-sonner';
-  import { Upload, Palette, Wand2, Pin, Trash2, X } from '@lucide/svelte';
+  import { Upload, Palette, Wand2, Pin, Trash2, X, Sparkles, Maximize2 } from '@lucide/svelte';
 
   let assets: any[] = $state([]);
   let characters: any[] = $state([]);
@@ -19,6 +19,24 @@
   let busy = $state(false);
   let search = $state('');
   let loaded = $state(false);
+
+  // canonical asset vocabulary — fetched from the backend so the upload dropdown
+  // and the type filter never drift from the AssetType enum. Falls back to the
+  // known set if the endpoint is unavailable.
+  let canonicalTypes: string[] = $state([
+    'prop',
+    'background',
+    'character_reference',
+    'storyboard',
+    'video',
+    'effect',
+    'tool',
+    'other'
+  ]);
+
+  // --- filter + sort ---
+  let typeFilter = $state(''); // '' = all
+  let sortBy = $state('newest'); // newest | oldest | name | type
 
   // --- Project style guide ---
   let style: any = $state(null);
@@ -31,12 +49,29 @@
   // Ingest derives the style FROM the story — gate it until one exists.
   let hasStory = $state(true);
 
+  // --- lightbox / detail ---
+  let detail: any = $state(null);
+
+  // --- describe with AI ---
+  let describeTarget: any = $state(null);
+  let describeText = $state('');
+  let describeBusy = $state(false);
+
   async function loadStoryPresence() {
     try {
       const [scenes, scripts] = await Promise.all([get('/scenes'), get('/scripts')]);
       hasStory = (scenes?.length ?? 0) > 0 || (scripts?.length ?? 0) > 0;
     } catch {
       hasStory = true; // fail open — the backend will still reject sensibly
+    }
+  }
+
+  async function loadTypes() {
+    try {
+      const r = await get('/assets/types');
+      if (Array.isArray(r?.types) && r.types.length) canonicalTypes = r.types;
+    } catch {
+      /* keep the built-in fallback */
     }
   }
 
@@ -133,6 +168,7 @@
     try {
       const r = await del(`/assets/${a.id}`);
       deleteTarget = null;
+      if (detail?.id === a.id) detail = null;
       toast.success(`Asset deleted (detached from ${r.detached_from} place${r.detached_from === 1 ? '' : 's'}).`);
       await Promise.all([refresh(), loadStyle()]);
     } catch (e: any) {
@@ -142,11 +178,37 @@
     }
   }
 
-  let file: FileList | null = $state(null);
+  // ---- describe with AI (structures uploader-provided text into metadata) ----
+  function openDescribe(asset: any) {
+    describeTarget = asset;
+    describeText = asset.description ?? '';
+  }
+
+  async function runDescribe() {
+    const a = describeTarget;
+    if (!a) return;
+    const text = describeText.trim();
+    if (!text) {
+      toast.error('Add a few words describing the asset first.');
+      return;
+    }
+    describeBusy = true;
+    try {
+      const updated = await post(`/assets/${a.id}/recognise`, { description: text });
+      describeTarget = null;
+      if (detail?.id === a.id) detail = updated;
+      toast.success('Asset described — name, type and tags updated.');
+      await refresh();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      describeBusy = false;
+    }
+  }
+
+  let files: FileList | null = $state(null);
   let assetType = $state('');
   let characterId = $state('');
-
-  const ASSET_TYPES = ['', 'character_reference', 'location', 'prop', 'video_reference', 'audio_reference', 'voice'];
 
   async function refresh() {
     [assets, characters] = await Promise.all([get('/assets'), get('/characters')]);
@@ -157,20 +219,23 @@
       .finally(() => (loaded = true));
     loadStyle();
     loadStoryPresence();
+    loadTypes();
   });
 
   async function doUpload(e: Event) {
     e.preventDefault();
-    if (!file?.length) return;
+    if (!files?.length) return;
     busy = true;
     error = '';
     try {
       const form = new FormData();
-      form.append('file', file[0]);
+      for (const f of Array.from(files)) form.append('file', f);
       if (assetType) form.append('asset_type', assetType);
       if (characterId) form.append('character_id', characterId);
-      await upload('/assets/upload', form);
-      file = null;
+      const r = await upload('/assets/upload', form);
+      const n = Array.isArray(r) ? r.length : 1;
+      files = null;
+      toast.success(`Uploaded ${n} file${n === 1 ? '' : 's'}.`);
       await refresh();
     } catch (e: any) {
       toast.error(e.message);
@@ -179,14 +244,42 @@
     }
   }
 
-  let filtered = $derived(search
-    ? assets.filter((a) =>
+  // Map any stored type onto the canonical vocabulary for coherent filtering —
+  // legacy/unknown values collapse to "other" (mirrors the backend canonicaliser).
+  const canonical = (t: string | null | undefined) =>
+    t && canonicalTypes.includes(t) ? t : 'other';
+
+  // Distinct types actually present (canonicalised), for the filter chips.
+  const presentTypes = $derived(
+    Array.from(new Set(assets.map((a) => canonical(a.type)))).sort(
+      (x, y) => canonicalTypes.indexOf(x) - canonicalTypes.indexOf(y)
+    )
+  );
+
+  let filtered = $derived.by(() => {
+    let out = assets;
+    if (search) {
+      const q = search.toLowerCase();
+      out = out.filter((a) =>
         [a.name, a.type, a.description, ...(a.tags_json ?? [])]
           .join(' ')
           .toLowerCase()
-          .includes(search.toLowerCase())
-      )
-    : assets);
+          .includes(q)
+      );
+    }
+    if (typeFilter) out = out.filter((a) => canonical(a.type) === typeFilter);
+
+    const sorted = out.slice();
+    if (sortBy === 'newest')
+      sorted.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
+    else if (sortBy === 'oldest')
+      sorted.sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''));
+    else if (sortBy === 'name')
+      sorted.sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
+    else if (sortBy === 'type')
+      sorted.sort((a, b) => canonical(a.type).localeCompare(canonical(b.type)));
+    return sorted;
+  });
 </script>
 
 <div class="p-6">
@@ -299,15 +392,16 @@
   <form class="mb-4 rounded-lg border border-border bg-card p-4" onsubmit={doUpload}>
     <div class="flex flex-wrap gap-4 items-end">
       <div class="flex-1 min-w-[160px]">
-        <label class="block text-xs text-muted-foreground mb-1" for="file">File</label>
-        <input id="file" type="file" bind:files={file}
+        <label class="block text-xs text-muted-foreground mb-1" for="file">File(s)</label>
+        <input id="file" type="file" multiple bind:files
           class="block w-full text-sm rounded-md border border-input bg-background px-2 py-1.5" />
       </div>
       <div class="flex-1 min-w-[160px]">
         <label class="block text-xs text-muted-foreground mb-1" for="type">Type (auto if blank)</label>
         <select id="type" bind:value={assetType}
           class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm">
-          {#each ASSET_TYPES as t}<option value={t}>{t || 'auto'}</option>{/each}
+          <option value="">auto</option>
+          {#each canonicalTypes as t}<option value={t}>{t}</option>{/each}
         </select>
       </div>
       <div class="flex-1 min-w-[160px]">
@@ -319,18 +413,39 @@
         </select>
       </div>
       <div>
-        <Button type="submit" disabled={busy || !file?.length} size="sm">
-          <Upload class="size-4 mr-1" />Upload
+        <Button type="submit" disabled={busy || !files?.length} size="sm">
+          <Upload class="size-4 mr-1" />Upload{files && files.length > 1 ? ` (${files.length})` : ''}
         </Button>
       </div>
     </div>
   </form>
 
-  <input
-    placeholder="Search by name, tag, type…"
-    bind:value={search}
-    class="mb-4 w-full max-w-sm rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-  />
+  <!-- search + filter + sort -->
+  <div class="mb-4 flex flex-wrap items-center gap-3">
+    <input
+      placeholder="Search by name, tag, type…"
+      bind:value={search}
+      class="w-full max-w-sm rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+    />
+    <div class="flex items-center gap-2">
+      <Button variant={typeFilter === '' ? 'default' : 'outline'} size="sm"
+        onclick={() => (typeFilter = '')}>All</Button>
+      {#each presentTypes as t (t)}
+        <Button variant={typeFilter === t ? 'default' : 'outline'} size="sm"
+          onclick={() => (typeFilter = typeFilter === t ? '' : t)}>{t}</Button>
+      {/each}
+    </div>
+    <div class="ml-auto flex items-center gap-1.5">
+      <label class="text-xs text-muted-foreground" for="sort">Sort</label>
+      <select id="sort" bind:value={sortBy}
+        class="rounded-md border border-input bg-background px-2 py-1.5 text-sm">
+        <option value="newest">Newest</option>
+        <option value="oldest">Oldest</option>
+        <option value="name">Name</option>
+        <option value="type">Type</option>
+      </select>
+    </div>
+  </div>
 
   {#if !loaded}
     <div class="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-4">
@@ -346,26 +461,31 @@
     <p class="text-sm text-muted-foreground">
       Generated props, reference sheets and rendered videos will appear here.
     </p>
+  {:else if !filtered.length}
+    <p class="text-sm text-muted-foreground">No assets match the current filter.</p>
   {/if}
 
   <div class="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-4">
-    {#each filtered.slice().reverse() as asset (asset.id)}
+    {#each filtered as asset (asset.id)}
       <Card>
         <CardContent class="p-3">
-          {#if asset.type === 'video' || isVideo?.(asset.file_path)}
-            <!-- svelte-ignore a11y_media_has_caption -->
-            <video controls preload="metadata" src={mediaUrl(asset.file_path)}
-              class="w-full rounded-md bg-black mb-2 aspect-video object-contain"></video>
-          {:else if asset.file_path && mediaUrl(asset.file_path)}
-            <img class="w-full aspect-square object-cover rounded-md bg-muted mb-2"
-              src={mediaUrl(asset.file_path)} alt={asset.name} loading="lazy" />
-          {:else}
-            <div class="w-full aspect-square rounded-md bg-muted mb-2 grid place-items-center text-muted-foreground text-2xl">
-              {asset.type?.includes('video') ? 'V' : 'F'}
-            </div>
-          {/if}
+          <button type="button" class="block w-full text-left" title="Open"
+            onclick={() => (detail = asset)}>
+            {#if asset.type === 'video' || isVideo?.(asset.file_path)}
+              <!-- svelte-ignore a11y_media_has_caption -->
+              <video preload="metadata" src={mediaUrl(asset.file_path)}
+                class="w-full rounded-md bg-black mb-2 aspect-video object-contain pointer-events-none"></video>
+            {:else if asset.file_path && mediaUrl(asset.file_path)}
+              <img class="w-full aspect-square object-cover rounded-md bg-muted mb-2 cursor-zoom-in"
+                src={mediaUrl(asset.file_path)} alt={asset.name} loading="lazy" />
+            {:else}
+              <div class="w-full aspect-square rounded-md bg-muted mb-2 grid place-items-center text-muted-foreground text-2xl">
+                {asset.type?.includes('video') ? 'V' : 'F'}
+              </div>
+            {/if}
+          </button>
           <div class="font-medium text-sm mb-0.5">{asset.name || asset.id}</div>
-          <div class="text-xs text-muted-foreground mb-1">{asset.type} · {asset.id}</div>
+          <div class="text-xs text-muted-foreground mb-1">{canonical(asset.type)} · {asset.id}</div>
           {#if asset.description}
             <div class="text-xs text-muted-foreground mb-1">{asset.description.slice(0, 90)}</div>
           {/if}
@@ -381,6 +501,14 @@
             {/each}
           </div>
           <div class="flex items-center gap-1">
+            <Button variant="ghost" size="icon" class="size-8" title="Open detail"
+              onclick={() => (detail = asset)}>
+              <Maximize2 class="size-3.5" />
+            </Button>
+            <Button variant="ghost" size="icon" class="size-8" title="Describe with AI"
+              disabled={busy} onclick={() => openDescribe(asset)}>
+              <Sparkles class="size-3.5" />
+            </Button>
             {#if isImage(asset.file_path)}
               <Button variant="ghost" size="icon" class="size-8" title="Use as style ref"
                 disabled={busy || !!styleBusy} onclick={() => addStyleRef(asset)}>
@@ -397,6 +525,108 @@
     {/each}
   </div>
 </div>
+
+<!-- Asset detail / lightbox -->
+<Dialog.Root open={detail !== null} onOpenChange={(open) => !open && (detail = null)}>
+  <Dialog.Content class="max-w-4xl sm:max-w-4xl">
+    <Dialog.Header>
+      <Dialog.Title class="truncate">{detail?.name || detail?.id}</Dialog.Title>
+      <Dialog.Description>{canonical(detail?.type)} · {detail?.id}</Dialog.Description>
+    </Dialog.Header>
+    {#if detail}
+      <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_260px]">
+        <div class="flex items-center justify-center bg-muted rounded-md min-h-[240px]">
+          {#if detail.type === 'video' || isVideo?.(detail.file_path)}
+            <!-- svelte-ignore a11y_media_has_caption -->
+            <video controls preload="metadata" src={mediaUrl(detail.file_path)}
+              class="max-h-[70vh] w-full rounded-md bg-black object-contain"></video>
+          {:else if mediaUrl(detail.file_path)}
+            <img class="max-h-[70vh] w-auto max-w-full rounded-md object-contain"
+              src={mediaUrl(detail.file_path)} alt={detail.name || detail.id} />
+          {:else}
+            <div class="p-8 text-sm text-muted-foreground">No previewable media.</div>
+          {/if}
+        </div>
+        <div class="space-y-3 text-xs">
+          {#if detail.description}
+            <div>
+              <div class="text-muted-foreground mb-0.5">Description</div>
+              <div>{detail.description}</div>
+            </div>
+          {/if}
+          {#if detail.character_id}
+            <div>
+              <div class="text-muted-foreground mb-0.5">Character</div>
+              <div>{characters.find((c) => c.id === detail.character_id)?.name ?? detail.character_id}</div>
+            </div>
+          {/if}
+          {#if detail.tags_json?.length}
+            <div>
+              <div class="text-muted-foreground mb-1">Tags</div>
+              <div class="flex flex-wrap gap-1">
+                {#each detail.tags_json as tag}<Badge variant="outline">{tag}</Badge>{/each}
+              </div>
+            </div>
+          {/if}
+          <div>
+            <div class="text-muted-foreground mb-0.5">File</div>
+            <div class="break-all">{detail.file_path ?? '—'}</div>
+          </div>
+          {#if detail.created_at}
+            <div>
+              <div class="text-muted-foreground mb-0.5">Created</div>
+              <div>{detail.created_at}</div>
+            </div>
+          {/if}
+          {#if detail.metadata_json && Object.keys(detail.metadata_json).length}
+            <div>
+              <div class="text-muted-foreground mb-0.5">Metadata</div>
+              <pre class="whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-[11px]">{JSON.stringify(detail.metadata_json, null, 2)}</pre>
+            </div>
+          {/if}
+          <div class="flex flex-wrap gap-1 pt-1">
+            <Button variant="outline" size="sm" onclick={() => openDescribe(detail)}>
+              <Sparkles class="size-3 mr-1" />Describe with AI
+            </Button>
+            {#if isImage(detail.file_path)}
+              <Button variant="outline" size="sm" disabled={!!styleBusy} onclick={() => addStyleRef(detail)}>
+                <Pin class="size-3 mr-1" />Pin as style
+              </Button>
+            {/if}
+            <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive"
+              onclick={() => (deleteTarget = detail)}>
+              <Trash2 class="size-3 mr-1" />Delete
+            </Button>
+          </div>
+        </div>
+      </div>
+    {/if}
+  </Dialog.Content>
+</Dialog.Root>
+
+<!-- Describe with AI -->
+<Dialog.Root open={describeTarget !== null} onOpenChange={(open) => !open && (describeTarget = null)}>
+  <Dialog.Content>
+    <Dialog.Header>
+      <Dialog.Title>Describe with AI</Dialog.Title>
+      <Dialog.Description>
+        The assistant structures the text you provide into a name, type and searchable
+        tags. It reads your words, not the pixels — describe what's in the asset.
+      </Dialog.Description>
+    </Dialog.Header>
+    <div class="grid gap-1.5">
+      <Label for="describe-text">What is this asset?</Label>
+      <Textarea id="describe-text" rows={4} bind:value={describeText}
+        placeholder="e.g. a red lipstick bullet on a black background, product shot" />
+    </div>
+    <Dialog.Footer>
+      <Button variant="outline" size="sm" onclick={() => (describeTarget = null)}>Cancel</Button>
+      <Button size="sm" disabled={describeBusy} onclick={runDescribe}>
+        <Sparkles class="size-3 mr-1" />{describeBusy ? 'Structuring…' : 'Structure metadata'}
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root open={reingestOpen} onOpenChange={(open) => !open && (reingestOpen = false)}>
   <Dialog.Content>

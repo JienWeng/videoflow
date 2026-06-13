@@ -4,13 +4,14 @@
    * driven by the timeline selection.
    */
   import { patch, post } from '$lib/api';
+  import { runBackgroundOp } from '$lib/ops';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
   import { Separator } from '$lib/components/ui/separator';
   import { toast } from 'svelte-sonner';
-  import { ArrowUpToLine, RefreshCw, Trash2 } from '@lucide/svelte';
+  import { ArrowUpToLine, RefreshCw, ShieldCheck, Trash2 } from '@lucide/svelte';
   import type { EditorOutput, SceneRef, Segment, Selection, Shot } from './types';
 
   let {
@@ -25,7 +26,8 @@
     ondirty,
     ondeletecaption,
     onmergeprev,
-    onretried
+    onretried,
+    onqarun
   }: {
     selection: Selection;
     segments: Segment[];
@@ -39,7 +41,12 @@
     ondeletecaption: (i: number) => void;
     onmergeprev: (i: number) => void;
     onretried: () => void;
+    /** Called after a quality check completes so the parent can reload the score. */
+    onqarun?: () => void;
   } = $props();
+
+  // QA state, derived from the output (no qa_status on EditorOutput yet -> infer).
+  const scored = $derived(output.score != null);
 
   const seg = $derived(selection?.kind === 'caption' ? segments[selection.index] : null);
   const shot = $derived(selection?.kind === 'shot' ? shots[selection.index] : null);
@@ -105,6 +112,24 @@
       toast.error(err.message);
     } finally {
       retrying = false;
+    }
+  }
+
+  let qaRunning = $state(false);
+  async function runQualityCheck() {
+    qaRunning = true;
+    try {
+      await runBackgroundOp(`/outputs/${output.id}/run-qa`, undefined, {
+        label: 'Quality check',
+        onDone: () => {
+          qaRunning = false;
+          onqarun?.();
+        },
+        onFail: () => (qaRunning = false)
+      });
+    } catch (err: any) {
+      qaRunning = false;
+      toast.error(err.message);
     }
   }
 </script>
@@ -230,8 +255,20 @@
     </div>
     <div class="grid gap-1.5">
       <Label>QA score</Label>
-      <p class="text-sm">{output.score != null ? `${output.score}/10` : 'not scored'}</p>
+      <p class="text-sm">{scored ? `${output.score}/10` : 'not scored'}</p>
     </div>
+    {#if !scored}
+      <Button
+        variant="outline"
+        size="sm"
+        title="Score this take against the scene requirements — unlocks Fix & re-render"
+        disabled={qaRunning}
+        onclick={runQualityCheck}
+      >
+        <ShieldCheck class="mr-1 size-3.5" />
+        {qaRunning ? 'Checking…' : 'Run quality check'}
+      </Button>
+    {/if}
     {#if output.qa_issues.length}
       <div class="grid gap-1.5">
         <Label>Issues</Label>

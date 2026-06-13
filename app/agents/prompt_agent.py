@@ -184,7 +184,7 @@ async def build_render_spec(
     character_bibles: list[CharacterBible] | None = None,
     asset_names: dict[str, str] | None = None,
     video_asset_id: str | None = None,
-    dialogue_language: str = "English",
+    dialogue_language: str | None = None,
     style: dict | None = None,
     story: dict | None = None,
     client=None,
@@ -193,7 +193,10 @@ async def build_render_spec(
     should reference by @name and echo into reference_images verbatim. Character
     bible reference images and the shot's asset_ids (display names supplied via
     `asset_names`) are merged in so every available image reaches Kling images[].
-    `dialogue_language` controls the language of the spoken 「 」 lines."""
+    `dialogue_language` controls the language of the spoken 「 」 lines; when None
+    it falls back to the config default (the resolver-backed value is threaded in
+    by the caller via render_service)."""
+    dialogue_language = dialogue_language or get_settings().dialogue_language
     character_bibles = character_bibles or []
     named_references = collect_named_references(
         named_references=named_references or [],

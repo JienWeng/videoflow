@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlmodel import Session
 
@@ -97,6 +97,9 @@ async def render_from_shot(
         character_bibles=bibles,
         asset_names=asset_names,
         video_asset_id=body.video_asset_id,
+        # Resolver-backed spoken-dialogue language (project -> global -> config),
+        # so 「」 lines aren't hardcoded to English.
+        dialogue_language=render_service.resolve_dialogue_language(session),
         style=style_service.style_context(style_service.get_style(session)),
         story=scene_service.story_context(session, scene),
     )
@@ -110,6 +113,84 @@ async def retry_output(output_id: str, session: Session = Depends(get_session)):
     QA issues folded into the prompt. Manual trigger only."""
     job = await render_service.retry_output(session, output_id)
     return _job_response(job)
+
+
+@router.post("/render-jobs/{job_id}/resubmit")
+async def resubmit_job(job_id: str, session: Session = Depends(get_session)):
+    """Resubmit a job's stored RenderSpec verbatim — the recovery path for a
+    FAILED job whose failure was transient (gateway 5xx / timeout). No QA
+    corrections are applied; the spec is rebuilt from request_json['spec']."""
+    job = await render_service.resubmit_job(session, job_id)
+    return _job_response(job)
+
+
+def _qa_summary(output: RenderOutput) -> dict:
+    return {
+        "id": output.id,
+        "output_id": output.id,
+        "score": output.score,
+        "qa_issues": (output.qa_json or {}).get("issues") or [],
+        "recommendation": output.notes,
+    }
+
+
+@router.post("/outputs/{output_id}/run-qa")
+async def run_qa(
+    output_id: str,
+    background: bool = False,
+    session: Session = Depends(get_session),
+):
+    """Score an unscored output (or re-review a scored one). Unlocks the Fix &
+    re-render flow, which needs recorded QA issues to correct against. With
+    ?background=true the work runs as a tracked op (202 + /ops polling) so the
+    frontend's runBackgroundOp flow can await it."""
+    if background:
+        from app.services import op_service
+
+        op = op_service.start_op(
+            "qa",
+            lambda s: render_service.run_qa_for_output(s, output_id),
+            output_id=output_id,
+            summarize=_qa_summary,
+        )
+        return JSONResponse(status_code=202, content={"op_id": op.id, "status": op.status})
+    output = await render_service.run_qa_for_output(session, output_id)
+    return _qa_summary(output)
+
+
+class SelectRequest(BaseModel):
+    selected: bool = True
+
+
+@router.patch("/outputs/{output_id}/select")
+def select_output(
+    output_id: str,
+    body: SelectRequest | None = None,
+    session: Session = Depends(get_session),
+):
+    """Mark this output as the selected take for its render job (deselects the
+    other takes of the same job). Body {selected: false} clears the flag."""
+    selected = body.selected if body is not None else True
+    output = render_service.select_output(session, output_id, selected)
+    return {"id": output.id, "selected": output.selected}
+
+
+@router.get("/outputs/{output_id}/download")
+def download_output(
+    output_id: str,
+    variant: str = "raw",
+    session: Session = Depends(get_session),
+):
+    """Download a finished video as an attachment. `variant=raw` (default) serves
+    the rendered video; `variant=captioned` serves the burned-in caption copy.
+    404 when the output or the requested file is missing."""
+    output = render_service.get_output(session, output_id)
+    path = render_service.download_path(output, variant)
+    filename = render_service.download_filename(session, output, variant)
+    # Starlette builds an RFC 5987 Content-Disposition (filename + filename*) from
+    # `filename`, correctly encoding non-ASCII (Chinese scene titles). Building the
+    # header by hand would break on CJK (headers are latin-1).
+    return FileResponse(path, media_type="video/mp4", filename=filename)
 
 
 class CaptionRequest(BaseModel):
@@ -202,15 +283,19 @@ def caption_styles():
 
 @router.get("/caption-config")
 def caption_config(session: Session = Depends(get_session)):
-    from app.config import get_settings
-    from app.services.caption_service import STYLES, WHISPER_MODELS, default_caption_style
+    from app.services.caption_service import (
+        STYLES,
+        WHISPER_MODELS,
+        resolved_caption_defaults,
+    )
 
+    defaults = resolved_caption_defaults(session)
     return {
         "styles": list(STYLES),
         "models": WHISPER_MODELS,
-        "default_model": get_settings().whisper_model,
-        "default_language": "zh",
-        "default_style": default_caption_style(style_service.get_style(session)),
+        "default_model": defaults["model"],
+        "default_language": defaults["language"],
+        "default_style": defaults["style"],
     }
 
 

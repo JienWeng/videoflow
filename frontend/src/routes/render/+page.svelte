@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { get, post } from '$lib/api';
+  import { get, post, patch, API_BASE } from '$lib/api';
   import { runBackgroundOp } from '$lib/ops';
   import { subscribeJobs } from '$lib/sse';
   import VideoPreview from '$lib/components/VideoPreview.svelte';
@@ -10,7 +10,19 @@
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '$lib/components/ui/collapsible';
   import { toast } from 'svelte-sonner';
-  import { Play, Captions, Clapperboard, RefreshCw, ChevronDown, History } from '@lucide/svelte';
+  import {
+    Play,
+    Captions,
+    Clapperboard,
+    RefreshCw,
+    ChevronDown,
+    History,
+    Download,
+    Star,
+    ShieldCheck,
+    AlertTriangle,
+    Loader2
+  } from '@lucide/svelte';
 
   let jobs: any[] = $state([]);
   let scenes: any[] = $state([]);
@@ -31,6 +43,94 @@
   // Captioning runs as a background op — per-output so several can run at once.
   let captioning: Record<string, boolean> = $state({});
   let retrying = $state('');
+  // Per-output QA / keeper action state.
+  let qaRunning: Record<string, boolean> = $state({});
+  let selecting: Record<string, boolean> = $state({});
+
+  // Ticks once a second so the elapsed timer on active renders stays live.
+  let now = $state(Date.now());
+
+  // --- Download links (raw vs captioned) ---
+  function downloadUrl(outId: string, variant: 'raw' | 'captioned'): string {
+    return `${API_BASE}/outputs/${outId}/download?variant=${variant}`;
+  }
+
+  // --- QA state model (badge + tooltip) ---
+  // Prefer an explicit backend qa_status when present; otherwise derive from the
+  // stored score / qa_json so older outputs still show a sensible badge.
+  type QaState = 'pending' | 'running' | 'scored' | 'failed' | 'skipped';
+  function qaState(out: any): QaState {
+    if (qaRunning[out.id]) return 'running';
+    const s = out.qa_status as string | undefined;
+    if (s === 'running' || s === 'pending' || s === 'failed' || s === 'skipped' || s === 'scored')
+      return s;
+    if (out.score != null || out.qa_json?.recommendation) return 'scored';
+    return 'pending';
+  }
+  function qaBadgeVariant(state: QaState): 'default' | 'destructive' | 'secondary' | 'outline' {
+    if (state === 'scored') return 'default';
+    if (state === 'failed') return 'destructive';
+    if (state === 'running') return 'secondary';
+    return 'outline';
+  }
+  function qaLabel(out: any, state: QaState): string {
+    if (state === 'scored') return `QA ${out.score ?? '—'}/10`;
+    if (state === 'running') return 'QA running';
+    if (state === 'failed') return 'QA failed';
+    if (state === 'skipped') return 'QA skipped';
+    return 'QA pending';
+  }
+  function qaTooltip(out: any, state: QaState): string {
+    if (state === 'scored') {
+      const rec = out.qa_json?.recommendation;
+      const issues = out.qa_json?.issues?.length ?? 0;
+      return `Scored ${out.score ?? '—'}/10${rec ? ` · ${rec}` : ''}${issues ? ` · ${issues} issue(s)` : ''}`;
+    }
+    if (state === 'running') return 'Quality check in progress…';
+    if (state === 'failed') return 'The quality check could not complete — run it again.';
+    if (state === 'skipped') return 'Quality check was skipped for this take.';
+    return 'Not checked yet — run a quality check to score it and unlock Fix & re-render.';
+  }
+  // Fix & re-render is only meaningful once QA has produced issues.
+  function canFixRerender(out: any): boolean {
+    return qaState(out) === 'scored' && (out.qa_json?.issues?.length ?? 0) > 0;
+  }
+
+  // --- Friendly error mapping (raw provider error -> short human line) ---
+  function friendlyError(raw: string | null | undefined): string {
+    const text = (raw ?? '').trim();
+    if (!text) return 'Something went wrong (no detail provided).';
+    const t = text.toLowerCase();
+    if (t.includes('timeout') || t.includes('timed out'))
+      return 'The provider took too long to respond — try again.';
+    if (t.includes('rate limit') || t.includes('429') || t.includes('too many requests'))
+      return 'Rate limited by the provider — wait a moment and retry.';
+    if (t.includes('insufficient') && (t.includes('balance') || t.includes('credit') || t.includes('quota')))
+      return 'The provider account is out of credit/quota.';
+    if (t.includes('401') || t.includes('unauthorized') || t.includes('api key') || t.includes('forbidden') || t.includes('403'))
+      return 'Provider rejected the API key — check Settings.';
+    if (t.includes('content') && (t.includes('policy') || t.includes('moderation') || t.includes('blocked') || t.includes('safety')))
+      return 'The prompt was blocked by the provider content filter.';
+    if (t.includes('download failed'))
+      return 'The finished video could not be downloaded — try again.';
+    if (t.includes('ffmpeg') || t.includes('no frames'))
+      return 'Could not process the video file (ffmpeg).';
+    if (t.includes('connection') || t.includes('network') || t.includes('econn') || t.includes('failed to fetch'))
+      return 'Network error reaching the provider — check the connection.';
+    if (t.includes('500') || t.includes('internal server error') || t.includes('bad gateway') || t.includes('502') || t.includes('503'))
+      return 'The provider had a server error — try again shortly.';
+    return text.length > 160 ? text.slice(0, 157) + '…' : text;
+  }
+
+  function elapsed(iso: string | null): string {
+    if (!iso) return '';
+    const t = new Date(iso.endsWith('Z') ? iso : iso + 'Z').getTime();
+    if (Number.isNaN(t)) return '';
+    const s = Math.max(0, Math.round((now - t) / 1000));
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+  }
 
   async function refreshJobOutputs(jobId: string) {
     const detail = await get(`/render-jobs/${jobId}`);
@@ -66,11 +166,55 @@
         // Fallback to legacy endpoint
         get('/caption-styles').then((s) => (captionStyles = s)).catch(() => {});
       });
-    return subscribeJobs(
+    const ticker = setInterval(() => (now = Date.now()), 1000);
+    const unsubscribe = subscribeJobs(
       () => refresh().catch(() => {}),
       () => refresh().catch(() => {})
     );
+    return () => {
+      clearInterval(ticker);
+      unsubscribe();
+    };
   });
+
+  async function runQualityCheck(jobId: string, out: any) {
+    qaRunning[out.id] = true;
+    try {
+      await runBackgroundOp(
+        `/outputs/${out.id}/run-qa`,
+        undefined,
+        {
+          label: 'Quality check',
+          onDone: async () => {
+            qaRunning[out.id] = false;
+            await refreshJobOutputs(jobId);
+          },
+          onFail: () => (qaRunning[out.id] = false)
+        }
+      );
+    } catch (e: any) {
+      qaRunning[out.id] = false;
+      toast.error(e.message);
+    }
+  }
+
+  async function toggleSelect(jobId: string, out: any) {
+    selecting[out.id] = true;
+    const next = !out.selected;
+    try {
+      await patch(`/outputs/${out.id}/select`, { selected: next });
+      out.selected = next;
+      outputs = outputs;
+      toast.success(next ? 'Marked as the take to keep' : 'Unmarked');
+      // Re-fetch every loaded job's outputs — the backend may make "keeper"
+      // exclusive within a scene, deselecting siblings.
+      await Promise.all(Object.keys(outputs).map((id) => refreshJobOutputs(id)));
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      selecting[out.id] = false;
+    }
+  }
 
   async function addCaptions(jobId: string, out: any) {
     captioning[out.id] = true;
@@ -110,6 +254,29 @@
       toast.error(e.message);
     } finally {
       retrying = '';
+    }
+  }
+
+  // Re-run a FAILED render. Uses the originating shot/scene endpoints (a failed
+  // job produced no output, so there is nothing to /retry).
+  let rerunning = $state('');
+  async function reRenderJob(j: any) {
+    rerunning = j.id;
+    try {
+      if (j.shot_id) {
+        await post('/render/from-shot', { scene_id: j.scene_id, shot_id: j.shot_id });
+      } else if (j.scene_id) {
+        await post(`/scenes/${j.scene_id}/render`);
+      } else {
+        toast.error('This render has no scene to re-run.');
+        return;
+      }
+      toast.success('Re-render started');
+      await refresh();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      rerunning = '';
     }
   }
 
@@ -203,12 +370,43 @@
 </script>
 
 {#snippet jobRow(j: any)}
-  <div class="flex items-center gap-2 text-xs py-1">
-    <Badge variant={statusVariant(j.status)} class={isActive(j.status) ? 'animate-pulse' : ''}>{j.status}</Badge>
-    <span class="text-muted-foreground">{j.model?.split('/').slice(-2).join('/')}</span>
-    <span class="text-muted-foreground">{relativeTime(j.created_at)}</span>
-    {#if j.error}
-      <span class="text-destructive max-w-[320px] truncate" title={j.error}>{j.error}</span>
+  <div class="py-1 text-xs">
+    <div class="flex flex-wrap items-center gap-2">
+      <Badge variant={statusVariant(j.status)} class={isActive(j.status) ? 'animate-pulse' : ''}>{j.status}</Badge>
+      <span class="text-muted-foreground">{j.model?.split('/').slice(-2).join('/')}</span>
+      <span class="text-muted-foreground">{relativeTime(j.created_at)}</span>
+      {#if j.status === 'failed'}
+        <Button
+          variant="outline"
+          size="sm"
+          class="ml-auto"
+          disabled={!!rerunning}
+          onclick={() => reRenderJob(j)}
+        >
+          <RefreshCw class="size-3 mr-1 {rerunning === j.id ? 'animate-spin' : ''}" />
+          {rerunning === j.id ? 'submitting…' : 'Re-render'}
+        </Button>
+      {/if}
+    </div>
+    {#if j.status === 'failed'}
+      <!-- Friendly mapped error + raw-detail expander -->
+      <Collapsible class="mt-0.5">
+        <div class="flex items-start gap-1.5">
+          <span class="text-destructive" title={j.error || ''}>{friendlyError(j.error)}</span>
+          {#if j.error}
+            <CollapsibleTrigger
+              class="shrink-0 inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground [&[data-state=open]>svg]:rotate-180"
+            >
+              details<ChevronDown class="size-3 transition-transform" />
+            </CollapsibleTrigger>
+          {/if}
+        </div>
+        {#if j.error}
+          <CollapsibleContent>
+            <pre class="mt-1 whitespace-pre-wrap break-words rounded-md border border-border bg-muted/40 p-2 text-[10px] text-muted-foreground">{j.error}</pre>
+          </CollapsibleContent>
+        {/if}
+      </Collapsible>
     {/if}
   </div>
 {/snippet}
@@ -216,7 +414,7 @@
 <div class="p-6">
   <div class="mb-4">
     <h1 class="text-lg font-semibold">Render</h1>
-    <p class="text-sm text-muted-foreground">Browse finished renders by scene — caption, edit or re-run the outputs.</p>
+    <p class="text-sm text-muted-foreground">Browse finished renders by scene — run a quality check, caption, download, pick a keeper, or re-run.</p>
   </div>
 
   <Collapsible class="mb-4 rounded-lg border border-border bg-card">
@@ -298,10 +496,16 @@
             {#if g.active.length}
               <div class="mb-4 space-y-1.5">
                 {#each g.active as j (j.id)}
-                  <div class="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
-                    <Badge variant="secondary" class="animate-pulse">{j.status}</Badge>
+                  <div class="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
+                    <Loader2 class="size-3.5 animate-spin text-muted-foreground" />
+                    <Badge variant="secondary">{j.stage || j.status}</Badge>
+                    {#if j.progress}
+                      <span class="text-foreground">{j.progress}</span>
+                    {/if}
                     <span class="text-muted-foreground">{j.model?.split('/').slice(-2).join('/')}</span>
-                    <span class="text-muted-foreground ml-auto">{relativeTime(j.created_at)}</span>
+                    <span class="ml-auto font-mono tabular-nums text-muted-foreground" title="Elapsed">
+                      {elapsed(j.created_at)}
+                    </span>
                   </div>
                 {/each}
               </div>
@@ -310,18 +514,63 @@
             {#if sceneOutputs(g).length}
               <div class="flex flex-wrap gap-4">
                 {#each sceneOutputs(g) as { job, out } (out.id)}
-                  <div class="flex-none">
-                    <VideoPreview path={out.captioned_path || out.video_path} href={`/editor/${out.id}`} />
-                    <div class="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                      QA: {out.score ?? '—'} {out.qa_json?.recommendation ?? ''}
-                      {#if out.captioned_path}<Badge class="ml-1">captioned</Badge>{/if}
+                  {@const qa = qaState(out)}
+                  <div class="flex-none w-[320px] {out.selected ? 'rounded-lg ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}">
+                    <div class="relative">
+                      <VideoPreview
+                        path={out.captioned_path || out.video_path}
+                        poster={out.thumbnail_path}
+                        href={`/editor/${out.id}`}
+                      />
+                      {#if out.selected}
+                        <Badge class="absolute left-2 top-2 gap-1">
+                          <Star class="size-3 fill-current" />keeper
+                        </Badge>
+                      {/if}
                     </div>
+
+                    <!-- Status row: QA badge (+tooltip) and captioned marker -->
+                    <div class="text-xs mt-1 flex flex-wrap items-center gap-1.5">
+                      <Badge
+                        variant={qaBadgeVariant(qa)}
+                        class={qa === 'running' ? 'animate-pulse' : ''}
+                        title={qaTooltip(out, qa)}
+                      >
+                        {#if qa === 'scored'}<ShieldCheck class="size-3 mr-0.5" />
+                        {:else if qa === 'failed'}<AlertTriangle class="size-3 mr-0.5" />{/if}
+                        {qaLabel(out, qa)}
+                      </Badge>
+                      {#if qa === 'scored' && out.qa_json?.recommendation}
+                        <span class="text-muted-foreground">{out.qa_json.recommendation}</span>
+                      {/if}
+                      {#if out.captioned_path}<Badge variant="secondary">captioned</Badge>{/if}
+                    </div>
+
+                    <!-- Run quality check when unscored -->
+                    {#if qa === 'pending' || qa === 'failed' || qa === 'skipped'}
+                      <div class="mt-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          title="Score this take against the scene requirements — unlocks Fix & re-render"
+                          disabled={qaRunning[out.id]}
+                          onclick={() => runQualityCheck(job.id, out)}
+                        >
+                          <ShieldCheck class="size-3 mr-1" />
+                          {qaRunning[out.id] ? 'checking…' : 'Run quality check'}
+                        </Button>
+                      </div>
+                    {/if}
+
+                    <!-- QA issues + Fix & re-render (only once scored with issues) -->
                     {#if out.qa_json?.issues?.length}
                       <ul class="text-xs text-muted-foreground mt-0.5 max-w-56 space-y-0.5">
                         {#each out.qa_json.issues.slice(0, 3) as issue (issue)}
                           <li class="truncate" title={issue}>- {issue}</li>
                         {/each}
                       </ul>
+                    {/if}
+                    {#if canFixRerender(out)}
                       <div class="mt-1">
                         <Button
                           variant="outline"
@@ -334,9 +583,21 @@
                         </Button>
                       </div>
                     {/if}
-                    <div class="flex flex-wrap items-center gap-1 mt-1">
+
+                    <!-- Primary actions -->
+                    <div class="flex flex-wrap items-center gap-1 mt-2">
                       <Button size="sm" href={`/editor/${out.id}`} title="Open in editor">
                         <Clapperboard class="size-3 mr-1" />Open in editor
+                      </Button>
+                      <Button
+                        variant={out.selected ? 'default' : 'outline'}
+                        size="sm"
+                        title={out.selected ? 'This is the take to keep — click to unmark' : 'Mark this as the take to keep'}
+                        disabled={selecting[out.id]}
+                        onclick={() => toggleSelect(job.id, out)}
+                      >
+                        <Star class="size-3 mr-1 {out.selected ? 'fill-current' : ''}" />
+                        {out.selected ? 'Keeper' : 'Use this take'}
                       </Button>
                       <Button
                         variant="outline"
@@ -347,6 +608,32 @@
                       >
                         <Captions class="size-3 mr-1" />
                         {captioning[out.id] ? 'transcribing…' : out.captioned_path ? 'Re-caption' : 'Auto captions'}
+                      </Button>
+                    </div>
+
+                    <!-- Download controls (raw vs captioned). Defaults visually to
+                         the captioned copy when available; the keeper take is the
+                         one the backend serves by default. -->
+                    <div class="flex flex-wrap items-center gap-1 mt-1">
+                      {#if out.captioned_path}
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          href={downloadUrl(out.id, 'captioned')}
+                          download
+                          title="Download the captioned video"
+                        >
+                          <Download class="size-3 mr-1" />Captioned
+                        </Button>
+                      {/if}
+                      <Button
+                        variant={out.captioned_path ? 'ghost' : 'secondary'}
+                        size="sm"
+                        href={downloadUrl(out.id, 'raw')}
+                        download
+                        title="Download the original (uncaptioned) video"
+                      >
+                        <Download class="size-3 mr-1" />Raw
                       </Button>
                     </div>
                   </div>

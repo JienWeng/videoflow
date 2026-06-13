@@ -5,7 +5,10 @@ Everything else scopes implicitly to the server-side ACTIVE project.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import io
+
+from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session
 
@@ -58,6 +61,30 @@ def create_project(body: CreateProject, session: Session = Depends(get_session))
 @router.post("/{project_id}/activate")
 def activate_project(project_id: str, session: Session = Depends(get_session)):
     return _project_dict(session, project_service.activate(session, project_id))
+
+
+@router.get("/{project_id}/export")
+def export_project(project_id: str, session: Session = Depends(get_session)):
+    """Download a portable zip of the project: every row as JSON plus referenced
+    media. 404 when the project is unknown."""
+    blob = project_service.export_project(session, project_id)
+    filename = f"project-{project_id}.zip"
+    return StreamingResponse(
+        io.BytesIO(blob),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/import")
+async def import_project(
+    file: UploadFile = File(...), session: Session = Depends(get_session)
+):
+    """Recreate a project from an export zip as a NEW (inactive) project.
+    422 when the upload is not a valid export archive."""
+    blob = await file.read()
+    project = project_service.import_project(session, blob)
+    return _project_dict(session, project)
 
 
 @router.patch("/{project_id}")

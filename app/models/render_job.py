@@ -29,6 +29,12 @@ class RenderJob(SQLModel, table=True):
     model: str = ""
     provider_job_id: str | None = None
     status: RenderStatus = Field(default=RenderStatus.pending)
+    # Human-readable lifecycle markers updated by poll_service as the job moves:
+    # stage in {submitted, generating, downloading, qa, done, failed}; progress
+    # is a short user-facing label ("Generating video…"). Columns added by the
+    # Foundation migration (render_jobs.progress / render_jobs.stage).
+    stage: str | None = None
+    progress: str | None = None
     request_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
     response_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
     error: str | None = None

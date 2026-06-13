@@ -17,26 +17,6 @@
   } from '@lucide/svelte';
   import { post, del } from '$lib/api';
 
-  let {
-    node,
-    x,
-    y,
-    nodes,
-    edges,
-    onclose,
-    onselect,
-    onmutate
-  }: {
-    node: Node;
-    x: number;
-    y: number;
-    nodes: Node[];
-    edges: Edge[];
-    onclose: () => void;
-    onselect: (node: Node) => void;
-    onmutate: () => Promise<void> | void;
-  } = $props();
-
   type View =
     | 'root'
     | 'add-cast'
@@ -46,7 +26,35 @@
     | 'add-to-scene'
     | 'attach-to-shot'
     | 'confirm-delete';
-  let view = $state<View>('root');
+
+  let {
+    node,
+    x,
+    y,
+    nodes,
+    edges,
+    initialView = 'root',
+    onclose,
+    onselect,
+    onmutate
+  }: {
+    node: Node;
+    x: number;
+    y: number;
+    nodes: Node[];
+    edges: Edge[];
+    // Opening directly on a sub-view (e.g. the Delete/Backspace gesture jumps
+    // straight to 'confirm-delete' to reuse this exact confirm flow).
+    initialView?: View;
+    onclose: () => void;
+    onselect: (node: Node) => void;
+    onmutate: () => Promise<void> | void;
+  } = $props();
+
+  // Intentional: capture the prop's initial value only; the menu is re-created
+  // (keyed) per open, so later prop changes shouldn't reactively override the view.
+  // svelte-ignore state_referenced_locally
+  let view = $state<View>(initialView);
   let busy = $state(false);
   let el: HTMLDivElement | undefined = $state();
 

@@ -147,6 +147,41 @@ def list_shots(scene_id: str, session: Session = Depends(get_session)):
     return scene_service.list_shots(session, scene_id)
 
 
+class ShotCreate(BaseModel):
+    """Manual blank-shot create — all fields optional; omitted ones default."""
+
+    prompt: str = ""
+    duration: int | None = None
+    camera: str | None = None
+    movement: str | None = None
+    shot_order: int | None = None
+
+
+@router.post("/scenes/{scene_id}/shots")
+def add_shot(scene_id: str, body: ShotCreate | None = None, session: Session = Depends(get_session)):
+    """Append a manual shot (or insert it at body.shot_order, shifting the rest)."""
+    payload = body or ShotCreate()
+    return scene_service.add_shot(
+        session,
+        scene_id,
+        prompt=payload.prompt,
+        duration=payload.duration,
+        camera=payload.camera,
+        movement=payload.movement,
+        shot_order=payload.shot_order,
+    )
+
+
+class ShotReorder(BaseModel):
+    ordered_ids: list[str]
+
+
+@router.put("/scenes/{scene_id}/shots/order")
+def reorder_shots(scene_id: str, body: ShotReorder, session: Session = Depends(get_session)):
+    """Set each shot's shot_order from its position in ordered_ids."""
+    return scene_service.reorder_shots(session, scene_id, body.ordered_ids)
+
+
 @router.patch("/scenes/{scene_id}")
 def edit_scene(scene_id: str, body: SceneEdit, session: Session = Depends(get_session)):
     return scene_service.update_scene(session, scene_id, **body.model_dump(exclude_none=True))
