@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import {
     SvelteFlow,
+    ConnectionMode,
     Background,
     Controls,
     MiniMap,
@@ -179,6 +180,7 @@
     bind:nodes
     bind:edges
     {nodeTypes}
+    connectionMode={ConnectionMode.Loose}
     fitView
     fitViewOptions={{ padding: 0.1 }}
     minZoom={0.1}

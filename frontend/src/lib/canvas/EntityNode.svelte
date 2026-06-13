@@ -38,7 +38,13 @@
     {kind === 'scene' ? 'border-primary/60' : 'border-border'}"
   style="border-left-color: {kindColor(kind)}"
 >
-  <Handle type="target" position={Position.Left} />
+  <!-- A large, grabbable handle on EACH side. The default xyflow handles are
+    ~2-3px wide — effectively un-grabbable once the user zooms to a workable
+    level (the reported "can't drag asset→shot" bug). With connectionMode="loose"
+    (set on SvelteFlow) every handle acts as both source and target, so a drag
+    can begin/end on either side regardless of cluster layout direction.
+    handleConnect normalizes by kind, so orientation doesn't matter. -->
+  <Handle id="l" type="source" position={Position.Left} class="entity-handle" />
   <div class="flex items-center gap-1.5">
     <Icon class="size-3.5 shrink-0 text-muted-foreground" />
     <span class="truncate font-medium" title={String(data.label ?? '')}>{data.label}</span>
@@ -51,5 +57,25 @@
       <Badge variant={badgeVariant}>{status}</Badge>
     </div>
   {/if}
-  <Handle type="source" position={Position.Right} />
+  <Handle id="r" type="source" position={Position.Right} class="entity-handle" />
 </div>
+
+<style>
+  /* Big, reliably grabbable hit area above the node content/image. The visible
+     dot stays modest, but the pointer target is generous so a hand-aimed drag
+     actually starts/ends on the handle. */
+  :global(.svelte-flow__handle.entity-handle) {
+    width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    background: hsl(0 0% 60%);
+    border: 2px solid hsl(0 0% 18%);
+    z-index: 20;
+    pointer-events: all;
+  }
+  /* Overlapping source+target on the same side: keep both fully clickable by
+     letting the topmost win the visual but both share the same center. */
+  :global(.svelte-flow__handle.entity-handle:hover) {
+    background: hsl(150 60% 50%);
+  }
+</style>
