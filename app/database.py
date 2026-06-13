@@ -24,6 +24,16 @@ def init_db() -> None:
 
     SQLModel.metadata.create_all(engine)
     _migrate(engine)
+    _load_agent_overrides()
+
+
+def _load_agent_overrides() -> None:
+    """Mirror persisted per-agent LLM overrides into the in-process routing cache
+    so live agent calls honour the user's Settings choices from the first request."""
+    from app.services import settings_service
+
+    with Session(engine) as session:
+        settings_service.load_overrides(session)
 
 
 def _migrate(target_engine) -> None:

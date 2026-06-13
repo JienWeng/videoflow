@@ -2,7 +2,15 @@
   import '../app.css';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
-  import { Clapperboard, Image, Users, ListVideo, Film, FolderOpen } from '@lucide/svelte';
+  import {
+    Clapperboard,
+    Image,
+    Users,
+    ListVideo,
+    Film,
+    FolderOpen,
+    SlidersHorizontal
+  } from '@lucide/svelte';
   import { Toaster } from '$lib/components/ui/sonner';
   import ActivityTray from '$lib/components/ActivityTray.svelte';
   import { initActivity } from '$lib/activity.svelte';
@@ -32,6 +40,8 @@
     { href: '/characters', label: 'Characters', icon: Users },
     { href: '/assets', label: 'Assets', icon: Image }
   ];
+
+  const systemNav = [{ href: '/settings', label: 'Settings', icon: SlidersHorizontal }];
 
   // The editor is contextual (reached from a render output), so it highlights Render.
   function isActive(href: string, pathname: string): boolean {
@@ -90,6 +100,21 @@
       Library
     </div>
     {#each libraryNav as item}
+      <a
+        href={item.href}
+        class="flex items-center gap-2 rounded-md pl-2 pr-2 py-1.5 text-sm hover:bg-accent
+               {isActive(item.href, page.url.pathname) ? 'bg-accent font-medium' : 'text-muted-foreground'}"
+      >
+        <item.icon class="size-4" />
+        {item.label}
+      </a>
+    {/each}
+
+    <!-- System group -->
+    <div class="px-2 pt-4 pb-1 text-[10px] tracking-wider text-muted-foreground/70 uppercase">
+      System
+    </div>
+    {#each systemNav as item}
       <a
         href={item.href}
         class="flex items-center gap-2 rounded-md pl-2 pr-2 py-1.5 text-sm hover:bg-accent

@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from app.config import Settings, get_settings
 from app.llm.exceptions import LLMProviderError, LLMTimeout, LLMValidationError
 from app.llm.providers import Backend, ProviderName, build_backend, default_model
-from app.llm.skills import get_skill
+from app.llm.skills import get_effective_skill
 
 logger = logging.getLogger("videoflow.llm")
 
@@ -65,7 +65,7 @@ class StructuredLLMClient:
         """`images`: local file paths (inlined as base64 data URLs) or http(s)
         URLs, attached to the user message for vision-capable models. Supported
         on OpenAI-compatible backends (minimax/openai/gemini/atlas)."""
-        skill = get_skill(agent) if agent else None
+        skill = get_effective_skill(agent) if agent else None
 
         # Resolve config: explicit kwarg > skill > settings/default.
         provider = provider or (skill.provider if skill else "minimax")

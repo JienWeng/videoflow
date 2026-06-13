@@ -65,5 +65,64 @@ SKILLS: dict[str, AgentSkill] = {
 }
 
 
+# Friendly labels for the Settings UI (every agent in SKILLS must appear here).
+AGENT_LABELS: dict[str, str] = {
+    "script_agent": "Script writer",
+    "scene_agent": "Scene director",
+    "shot_agent": "Shot planner",
+    "prompt_agent": "Prompt engineer",
+    "qa_agent": "Vision QA",
+    "idea_agent": "Idea developer",
+    "asset_planner": "Asset planner",
+    "refine_agent": "Editor (refine)",
+    "intent_agent": "Intent classifier",
+    "asset_recogniser": "Asset recogniser",
+    "character_memory": "Character bible",
+    "style_agent": "Style designer",
+}
+
+
+def agent_label(agent: str) -> str:
+    return AGENT_LABELS.get(agent, agent)
+
+
+# In-process per-agent routing overrides, mirrored from the DB. Loaded at startup
+# (see settings_service.load_overrides) and updated whenever the user saves a
+# change. Empty by default => behaviour identical to the skill defaults.
+_OVERRIDES: dict[str, tuple[str | None, str | None]] = {}
+
+
+def set_override(agent: str, provider: str | None, model: str | None) -> None:
+    """Update (or clear) the in-process override for one agent."""
+    if provider is None and model is None:
+        _OVERRIDES.pop(agent, None)
+    else:
+        _OVERRIDES[agent] = (provider, model)
+
+
+def clear_overrides() -> None:
+    _OVERRIDES.clear()
+
+
 def get_skill(agent: str) -> AgentSkill | None:
     return SKILLS.get(agent)
+
+
+def get_effective_skill(agent: str) -> AgentSkill | None:
+    """The skill an agent actually runs with: base skill merged with any
+    in-process override (provider and/or model). Returns None for unknown agents.
+    """
+    base = SKILLS.get(agent)
+    if base is None:
+        return None
+    override = _OVERRIDES.get(agent)
+    if override is None:
+        return base
+    provider, model = override
+    from dataclasses import replace
+
+    return replace(
+        base,
+        provider=provider or base.provider,
+        model=model if model is not None else base.model,
+    )
