@@ -10,7 +10,7 @@
   import { Skeleton } from '$lib/components/ui/skeleton';
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
   import { toast } from 'svelte-sonner';
-  import { Wand2, Save, LayoutGrid, Video, Images, Trash2, Sparkles, ImagePlus, Lightbulb, VolumeX, Check, ChevronDown } from '@lucide/svelte';
+  import { Wand2, Save, LayoutGrid, Video, Images, Trash2, Sparkles, ImagePlus, Lightbulb, VolumeX, Check, ChevronDown, Film, Clapperboard, Maximize2, Clock } from '@lucide/svelte';
 
   let scenes: any[] = $state([]);
   let characters: any[] = $state([]);
@@ -39,6 +39,8 @@
   let planSelected: Record<string, boolean[]> = $state({});
   let detailsOpen: Record<string, boolean> = $state({});
   let style: any = $state(null);
+  // Storyboard lightbox: the asset currently shown enlarged in a Dialog.
+  let lightbox: any = $state(null);
 
   async function refresh() {
     [scenes, characters] = await Promise.all([get('/scenes'), get('/characters')]);
@@ -205,6 +207,40 @@
     ];
   }
 
+  // Furthest-completed stage index (-1 = nothing done) → drives the left accent
+  // colour and the at-a-glance status line.
+  function progressIndex(s: any) {
+    const steps = sceneSteps(s);
+    let last = -1;
+    for (let i = 0; i < steps.length; i++) if (steps[i].done) last = i;
+    return last;
+  }
+
+  const ACCENT = [
+    'before:bg-sky-500/70', // expanded
+    'before:bg-violet-500/70', // shots
+    'before:bg-amber-500/70', // storyboard
+    'before:bg-emerald-500/70' // rendered
+  ];
+  function accentClass(s: any) {
+    const i = progressIndex(s);
+    return i >= 0 ? ACCENT[i] : 'before:bg-border';
+  }
+
+  // One-line, human status derived purely from already-loaded data.
+  function statusLine(s: any): string {
+    const shots = shotsByScene[s.id]?.length ?? 0;
+    const parts: string[] = [];
+    if (renderedScenes[s.id]) parts.push('Rendered');
+    else if (storyboards[s.id]) parts.push('Storyboard ready');
+    else if (shots > 0) parts.push('Shots ready');
+    else if (s.scene_json && Object.keys(s.scene_json).length > 1) parts.push('Expanded');
+    else parts.push('New — needs expanding');
+    if (shots > 0) parts.push(`${shots} shot${shots === 1 ? '' : 's'}`);
+    if (s.duration) parts.push(`${s.duration}s`);
+    return parts.join(' · ');
+  }
+
   function toggleCast(sceneId: string, charId: string) {
     const cur = castSelection[sceneId] ?? [];
     castSelection[sceneId] = cur.includes(charId)
@@ -363,26 +399,39 @@
     <p class="text-sm text-muted-foreground">Turn a story idea into scenes, then walk each one through Expand, Shots, Storyboard and Render.</p>
   </div>
 
-  <form class="mb-4 rounded-lg border border-border bg-card p-4" onsubmit={generateScript}>
-    <label class="block text-xs text-muted-foreground mb-1" for="idea">Story idea → script + scenes</label>
-    <textarea id="idea" bind:value={idea}
-      placeholder="e.g. A short video about a kid learning to read..."
-      class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm min-h-[70px] resize-y mb-2"></textarea>
-    <div class="flex flex-wrap gap-4 items-end">
-      <div class="flex-1 min-w-[160px]">
-        <label class="block text-xs text-muted-foreground mb-1" for="dur">Target duration (s, optional)</label>
-        <input id="dur" type="number" bind:value={targetDuration} min="3"
-          class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm" />
-      </div>
-      <div class="min-w-[120px]">
-        <label class="block text-xs text-muted-foreground mb-1" for="scene-count">Scenes (optional)</label>
-        <input id="scene-count" type="number" bind:value={sceneCount} min="1" max="20" placeholder="auto"
-          class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm" />
-        <p class="text-xs text-muted-foreground mt-1">1 scene = 1 video</p>
+  <form class="mb-6 rounded-xl border border-border bg-card/60 p-5 shadow-sm" onsubmit={generateScript}>
+    <div class="flex items-center gap-2 mb-3">
+      <div class="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <Clapperboard class="size-4" />
       </div>
       <div>
+        <h2 class="text-sm font-semibold leading-tight">Start a new story</h2>
+        <p class="text-xs text-muted-foreground">Describe an idea — AI writes a script and splits it into scenes.</p>
+      </div>
+    </div>
+    <label class="sr-only" for="idea">Story idea</label>
+    <textarea id="idea" bind:value={idea}
+      placeholder="e.g. A short video about a kid learning to read…"
+      class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm min-h-[76px] resize-y mb-3"></textarea>
+    <div class="flex flex-wrap gap-4 items-end">
+      <div class="min-w-[150px]">
+        <label class="block text-xs text-muted-foreground mb-1" for="dur">Target duration</label>
+        <div class="relative">
+          <Clock class="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground/70 pointer-events-none" />
+          <input id="dur" type="number" bind:value={targetDuration} min="3" placeholder="auto"
+            class="w-full rounded-md border border-input bg-background pl-8 pr-2 py-1.5 text-sm" />
+          <span class="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground/70 pointer-events-none">sec</span>
+        </div>
+      </div>
+      <div class="min-w-[120px]">
+        <label class="block text-xs text-muted-foreground mb-1" for="scene-count">Scenes</label>
+        <input id="scene-count" type="number" bind:value={sceneCount} min="1" max="20" placeholder="auto"
+          class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm" />
+      </div>
+      <p class="text-xs text-muted-foreground self-center pb-1.5">1 scene = 1 video</p>
+      <div class="ml-auto">
         <Button type="submit" disabled={busy === 'script' || !idea} size="sm">
-          <Wand2 class="size-4 mr-1" />Generate script
+          <Wand2 class="size-4 mr-1" />{busy === 'script' ? 'Generating…' : 'Generate script'}
         </Button>
       </div>
     </div>
@@ -390,14 +439,16 @@
 
   {#if !loaded}
     {#each Array(3) as _, i (i)}
-      <div class="mb-4 rounded-lg border border-border p-4 space-y-3">
-        <div class="flex items-center gap-3">
-          <Skeleton class="h-5 w-56" />
-          <Skeleton class="h-5 w-10" />
-          <Skeleton class="h-6 w-72" />
-          <Skeleton class="ml-auto h-8 w-28" />
+      <div class="mb-4 rounded-xl border border-border p-4">
+        <div class="flex items-center gap-4">
+          <Skeleton class="size-16 shrink-0 rounded-lg" />
+          <div class="flex-1 space-y-2">
+            <Skeleton class="h-5 w-56" />
+            <Skeleton class="h-3 w-44" />
+            <Skeleton class="h-6 w-80" />
+          </div>
+          <Skeleton class="h-8 w-28" />
         </div>
-        <Skeleton class="h-3 w-44" />
       </div>
     {/each}
   {/if}
@@ -414,88 +465,112 @@
     {@const laterDone = firstNotDone !== -1 && steps.some((st, i) => i > firstNotDone && st.done)}
     {@const currentIdx = laterDone ? -1 : firstNotDone}
     {@const current = currentIdx === -1 ? null : steps[currentIdx]}
-    <Card class="mb-4">
-      <CardContent class="p-4">
-        <!-- Header: title + duration + pipeline stepper + one primary next-step action -->
-        <div class="flex flex-wrap items-center gap-3 mb-1">
-          <div class="flex items-center gap-2 min-w-0">
-            <span class="font-medium text-sm truncate max-w-[260px]" title={s.title}>
-              {s.title || 'Untitled scene'}
-            </span>
-            <Badge variant="secondary" class="shrink-0">{s.duration}s</Badge>
+    <Card class="mb-4 relative overflow-hidden before:absolute before:inset-y-0 before:left-0 before:w-1 {accentClass(s)}">
+      <CardContent class="p-4 pl-5">
+        <!-- Header: thumbnail + title/status + pipeline stepper + primary action -->
+        <div class="flex items-start gap-4">
+          <!-- Thumbnail for instant recognition (storyboard if present, else placeholder) -->
+          {#if storyboards[s.id]}
+            <button type="button"
+              class="group relative size-16 shrink-0 overflow-hidden rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-ring"
+              title="View storyboard" onclick={() => (lightbox = storyboards[s.id])}>
+              <img class="size-full object-cover transition-transform group-hover:scale-105"
+                src={mediaUrl(storyboards[s.id].file_path)} alt="Storyboard" loading="lazy" />
+              <span class="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/40 transition-colors">
+                <Maximize2 class="size-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+              </span>
+            </button>
+          {:else}
+            <div class="flex size-16 shrink-0 items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 text-muted-foreground/50">
+              <Film class="size-5" />
+            </div>
+          {/if}
+
+          <div class="min-w-0 flex-1">
+            <!-- Title + status line -->
+            <div class="flex items-center gap-2 mb-2">
+              <h3 class="font-semibold text-sm truncate" title={s.title}>{s.title || 'Untitled scene'}</h3>
+              <Badge variant="secondary" class="shrink-0 gap-1"><Clock class="size-3" />{s.duration}s</Badge>
+            </div>
+            <p class="text-xs text-muted-foreground mb-3">{statusLine(s)}</p>
+
+            <!-- Pipeline stepper: connected segments, primary visual element -->
+            <div class="flex items-center gap-0">
+              {#each steps as st, i (st.key)}
+                {#if i > 0}
+                  <div class="h-0.5 w-4 sm:w-6 shrink-0 {st.done && steps[i - 1].done ? 'bg-primary/50' : 'bg-border'}"></div>
+                {/if}
+                {#if st.done}
+                  <span class="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                    <Check class="size-3" />{st.label}{#if st.key === 'shots' && shotsByScene[s.id]?.length}<span class="opacity-70">{shotsByScene[s.id].length}</span>{/if}
+                  </span>
+                {:else if i === currentIdx}
+                  <button type="button"
+                    class="inline-flex items-center gap-1.5 rounded-full bg-background px-2.5 py-1 text-xs font-medium ring-2 ring-primary/70 hover:bg-accent disabled:opacity-60"
+                    disabled={st.busy} onclick={st.action}>
+                    <st.icon class="size-3" />{st.busy ? st.busyLabel : st.label}
+                  </button>
+                {:else if !st.done && laterDone}
+                  <!-- Skipped earlier step on a complete-ish scene: muted, still clickable. -->
+                  <button type="button"
+                    class="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground/60 hover:text-foreground disabled:opacity-60"
+                    title="Skipped — later steps are already done. Click to run it anyway."
+                    disabled={st.busy} onclick={st.action}>
+                    <st.icon class="size-3" />{st.busy ? st.busyLabel : st.label}
+                  </button>
+                {:else}
+                  <span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs text-muted-foreground/50">
+                    <st.icon class="size-3" />{st.label}
+                  </span>
+                {/if}
+              {/each}
+            </div>
           </div>
 
-          <div class="flex items-center gap-1 rounded-md border border-border bg-muted/30 px-1.5 py-1">
-            {#each steps as st, i (st.key)}
-              {#if i > 0}
-                <div class="h-px w-3 bg-border shrink-0"></div>
-              {/if}
-              {#if st.done}
-                <span class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-primary font-medium">
-                  <Check class="size-3" />{st.label}
-                </span>
-              {:else if i === currentIdx}
-                <button type="button"
-                  class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium bg-background ring-2 ring-primary/60 disabled:opacity-60"
-                  disabled={st.busy} onclick={st.action}>
-                  <st.icon class="size-3" />{st.busy ? st.busyLabel : st.label}
-                </button>
-              {:else if !st.done && laterDone}
-                <!-- Skipped earlier step on a complete-ish scene: muted, but
-                     still clickable for users who really want to run it. -->
-                <button type="button"
-                  class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground/60 hover:text-foreground disabled:opacity-60"
-                  title="Skipped — later steps are already done. Click to run it anyway."
-                  disabled={st.busy} onclick={st.action}>
-                  <st.icon class="size-3" />{st.busy ? st.busyLabel : st.label}
-                </button>
-              {:else}
-                <span class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground/60">
-                  <st.icon class="size-3" />{st.label}
-                </span>
-              {/if}
-            {/each}
-          </div>
-
-          <div class="flex items-center gap-2 ml-auto">
+          <!-- Primary next-step action + delete -->
+          <div class="flex shrink-0 items-center gap-2">
             {#if current}
-              <Button size="sm" disabled={current.busy} onclick={current.action}>
-                <current.icon class="size-3.5 mr-1" />
-                {current.busy ? current.busyLabel : `Next: ${current.label}`}
-              </Button>
-              {#if current.key === 'shots'}
-                <label class="inline-flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    class="w-auto"
-                    checked={autoProps[s.id] ?? true}
-                    onchange={(e) => (autoProps[s.id] = (e.currentTarget as HTMLInputElement).checked)}
-                  />
-                  auto props
-                </label>
-              {/if}
+              <div class="flex flex-col items-end gap-1">
+                <Button size="sm" disabled={current.busy} onclick={current.action}>
+                  <current.icon class="size-3.5 mr-1" />
+                  {current.busy ? current.busyLabel : `Next: ${current.label}`}
+                </Button>
+                {#if current.key === 'shots'}
+                  <label class="inline-flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      class="w-auto"
+                      checked={autoProps[s.id] ?? true}
+                      onchange={(e) => (autoProps[s.id] = (e.currentTarget as HTMLInputElement).checked)}
+                    />
+                    auto props
+                  </label>
+                {/if}
+              </div>
             {:else}
               <Button variant="secondary" size="sm" disabled={busy === `render-${s.id}`} onclick={() => renderScene(s)}>
                 <Video class="size-3.5 mr-1" />{busy === `render-${s.id}` ? 'Submitting…' : 'Re-render'}
               </Button>
             {/if}
-            <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive"
-              disabled={!!busy} onclick={() => (deleteTarget = s)}>
-              <Trash2 class="size-3 mr-1" />Delete
+            <Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-destructive"
+              title="Delete scene" disabled={!!busy} onclick={() => (deleteTarget = s)}>
+              <Trash2 class="size-4" />
             </Button>
           </div>
         </div>
 
         <!-- Everything else lives behind the Details expander -->
         <Collapsible.Root open={detailsOpen[s.id] ?? false} onOpenChange={(v) => (detailsOpen[s.id] = v)}>
-          <Collapsible.Trigger
-            class="flex w-full items-center gap-1 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
-            <ChevronDown class="size-3.5 transition-transform {detailsOpen[s.id] ? 'rotate-180' : ''}" />
-            Details
-            <span class="opacity-50 ml-1">({s.id})</span>
-          </Collapsible.Trigger>
+          <div class="mt-3 border-t border-border/60 pt-2">
+            <Collapsible.Trigger
+              class="flex w-full items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
+              <ChevronDown class="size-3.5 transition-transform {detailsOpen[s.id] ? 'rotate-180' : ''}" />
+              {detailsOpen[s.id] ? 'Hide details' : 'Edit details, shots & assets'}
+              <span class="ml-auto font-mono text-[10px] opacity-40">{s.id}</span>
+            </Collapsible.Trigger>
+          </div>
           <Collapsible.Content>
-            <div class="pt-2 space-y-4">
+            <div class="pt-3 space-y-4">
               <!-- Scene -->
               <div>
                 <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Scene</div>
@@ -756,7 +831,14 @@
                   </Button>
                 </div>
                 {#if storyboards[s.id]}
-                  <img class="max-w-[420px] w-full rounded-lg" src={mediaUrl(storyboards[s.id].file_path)} alt="Storyboard" loading="lazy" />
+                  <button type="button"
+                    class="group relative block max-w-[420px] w-full overflow-hidden rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-ring"
+                    title="Click to enlarge" onclick={() => (lightbox = storyboards[s.id])}>
+                    <img class="w-full transition-transform group-hover:scale-[1.02]" src={mediaUrl(storyboards[s.id].file_path)} alt="Storyboard" loading="lazy" />
+                    <span class="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/60 px-2 py-1 text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Maximize2 class="size-3" />Enlarge
+                    </span>
+                  </button>
                 {:else}
                   <p class="text-xs text-muted-foreground">No storyboard yet.</p>
                 {/if}
@@ -801,6 +883,17 @@
     {/if}
   {/each}
 </div>
+
+<Dialog.Root open={lightbox !== null} onOpenChange={(open) => !open && (lightbox = null)}>
+  <Dialog.Content class="max-w-4xl">
+    <Dialog.Header>
+      <Dialog.Title class="flex items-center gap-2"><Images class="size-4" />Storyboard</Dialog.Title>
+    </Dialog.Header>
+    {#if lightbox}
+      <img class="w-full rounded-lg" src={mediaUrl(lightbox.file_path)} alt="Storyboard" />
+    {/if}
+  </Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root open={deleteTarget !== null} onOpenChange={(open) => !open && (deleteTarget = null)}>
   <Dialog.Content>
