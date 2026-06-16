@@ -509,27 +509,39 @@ def _validate(
         raise ValidationFailedError("model id cannot be empty")
 
 
+def _scan_fields(text: str) -> set[str]:
+    """Every `{field}` reference in a format template, INCLUDING auto/positional
+    (`{}` / `{0}` -> reported as '') and fields nested inside format specs
+    (`{x:>{y}}` -> x and y). Raises ValueError on malformed braces. Escaped
+    `{{ }}` yields nothing (literal text)."""
+    found: set[str] = set()
+    for _, name, spec, _ in Formatter().parse(text):
+        if name is not None:
+            found.add(name.split(".")[0].split("[")[0])
+        if spec:
+            found |= _scan_fields(spec)
+    return found
+
+
 def _validate_prompt(agent: str, text: str) -> None:
     """A prompt override may not introduce `{placeholders}` the agent can't fill
     (the default carries none) and may not contain malformed braces — either
-    would silently break formatting at call time. Escaped `{{ }}` is fine."""
+    would silently break str.format at call time. Escaped `{{ }}` is fine."""
     allowed = prompts.extract_placeholders(skills.get_skill(agent).system_prompt)
     try:
-        used = {
-            name.split(".")[0].split("[")[0]
-            for _, name, _, _ in Formatter().parse(text)
-            if name
-        }
+        used = _scan_fields(text)
     except (ValueError, IndexError) as exc:
         raise ValidationFailedError(
             "the prompt has unbalanced or invalid { } braces "
             "(use {{ }} for literal braces)"
         ) from exc
+    # '' marks an auto/positional field ({} or {0}) — always rejected.
     unknown = used - allowed
     if unknown:
+        shown = sorted(k if k else "{}" for k in unknown)
         allowed_str = ", ".join(sorted(allowed)) or "no placeholders"
         raise ValidationFailedError(
-            f"unknown placeholder(s) {sorted(unknown)} — this agent provides "
+            f"unknown placeholder(s) {shown} — this agent provides "
             f"{allowed_str}. Write rules as plain text; context is supplied "
             "automatically."
         )

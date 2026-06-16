@@ -211,6 +211,8 @@
     try {
       const updated = await put(`/settings/agents/${a.agent}`, { provider, model });
       agents = agents.map((x) => (x.agent === a.agent ? updated : x));
+      // Keep an open studio panel's cached detail in sync with the new routing.
+      if (detail[a.agent]) await loadDetail(a.agent);
       toast.success(`${a.label} → ${providerLabels[provider] ?? provider} / ${model}`);
     } catch (e: any) {
       toast.error(e.message);
@@ -255,6 +257,7 @@
     try {
       const updated = await put(`/settings/agents/${a.agent}`, { provider: null, model: null });
       agents = agents.map((x) => (x.agent === a.agent ? updated : x));
+      if (detail[a.agent]) await loadDetail(a.agent);
       agentCustomOpen[a.agent] = false;
       toast.success(`${a.label} reset to default`);
     } catch (e: any) {
@@ -348,12 +351,20 @@
     excludeBuf[agent] = cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key];
   }
 
+  // Coerce a number-input buffer; a blank / non-numeric field falls back to the
+  // default rather than silently becoming 0.
+  function numOr(v: unknown, fallback: number): number {
+    const n = Number(v);
+    return Number.isFinite(n) && String(v).trim() !== '' ? n : fallback;
+  }
+
   function studioDirty(agent: string): boolean {
     const d = detail[agent];
     if (!d) return false;
     const promptChanged = (promptBuf[agent] ?? '').trim() !== d.default_prompt.trim();
-    const tempChanged = tempBuf[agent] !== d.default_temperature;
-    const retriesChanged = retriesBuf[agent] !== d.default_max_retries;
+    const tempChanged = numOr(tempBuf[agent], d.default_temperature) !== d.default_temperature;
+    const retriesChanged =
+      numOr(retriesBuf[agent], d.default_max_retries) !== d.default_max_retries;
     const exclChanged = (excludeBuf[agent] ?? []).length > 0;
     return promptChanged || tempChanged || retriesChanged || exclChanged;
   }
@@ -365,10 +376,12 @@
     busy = `studio-${agent}`;
     // Normalise to default => null so the "Customized" badge stays honest.
     const prompt = (promptBuf[agent] ?? '').trim();
+    const temp = numOr(tempBuf[agent], d.default_temperature);
+    const retries = numOr(retriesBuf[agent], d.default_max_retries);
     const body = {
       system_prompt: prompt && prompt !== d.default_prompt.trim() ? prompt : null,
-      temperature: tempBuf[agent] === d.default_temperature ? null : tempBuf[agent],
-      max_retries: retriesBuf[agent] === d.default_max_retries ? null : retriesBuf[agent],
+      temperature: temp === d.default_temperature ? null : temp,
+      max_retries: retries === d.default_max_retries ? null : retries,
       context_excludes: (excludeBuf[agent] ?? []).length ? excludeBuf[agent] : null
     };
     try {

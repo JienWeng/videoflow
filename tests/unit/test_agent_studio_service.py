@@ -106,6 +106,14 @@ def test_set_customization_rejects_malformed_braces(session):
         )
 
 
+def test_set_customization_rejects_positional_placeholder(session):
+    # `{}` / `{0}` are auto-/positional fields that crash str.format at call time.
+    with pytest.raises(ValidationFailedError):
+        settings_service.set_customization(
+            session, "script_agent", system_prompt="rules then {} oops", settings=_settings()
+        )
+
+
 def test_set_customization_accepts_plain_text(session):
     out = settings_service.set_customization(
         session, "script_agent", system_prompt="Plain rules, no braces.", settings=_settings()
