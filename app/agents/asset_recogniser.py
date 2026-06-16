@@ -6,7 +6,7 @@ Foundation phase: structures an uploader-supplied description into AssetMetadata
 
 from __future__ import annotations
 
-from app.agents.base import as_block, run_agent
+from app.agents.base import as_block, gated_block, run_agent
 from app.schemas import AssetMetadata
 
 
@@ -23,7 +23,12 @@ async def recognise_asset(
             as_block("Asset id", asset_id),
             as_block("Filename", filename),
             as_block("Uploader description", description),
-            as_block("Known character ids", known_character_ids or []),
+            *gated_block(
+                "asset_recogniser",
+                "known_character_ids",
+                "Known character ids",
+                known_character_ids,
+            ),
             "Produce AssetMetadata. Set asset_id to the given id. Only set "
             "character_id if the description clearly references one of the known "
             "character ids.",

@@ -35,6 +35,15 @@ class AgentSetting(SQLModel, table=True):
     project_id: str | None = Field(default=None, index=True)
     provider: str | None = None
     model: str | None = None
+    # Agent Studio customization (NULL = use the code default for that field):
+    #   system_prompt   — full prompt override
+    #   temperature     — sampling temperature override
+    #   max_retries     — schema-retry budget override
+    #   context_excludes— optional context keys the user switched OFF
+    system_prompt: str | None = None
+    temperature: float | None = None
+    max_retries: int | None = None
+    context_excludes: list | None = Field(default=None, sa_column=Column(JSON))
     updated_at: datetime = Field(default_factory=utcnow)
 
 

@@ -3,7 +3,7 @@ scene still needs, each with a standalone text-to-image prompt."""
 
 from __future__ import annotations
 
-from app.agents.base import as_block, run_agent
+from app.agents.base import as_block, gated_block, run_agent
 from app.llm.structured_client import StructuredLLMClient
 from app.schemas import AssetPlan
 
@@ -26,24 +26,24 @@ async def plan_assets(
         as_block("Scene spec", scene_json or {}),
         as_block("Existing assets (do NOT duplicate)", existing_assets or []),
     ]
-    if library:
-        parts.append(
-            as_block(
-                "Asset library (REUSE these by exact name instead of proposing "
-                "similar new ones)",
-                library,
-            )
-        )
-    if characters:
-        parts.append(as_block("Cast (props must fit these characters)", characters))
-    if story:
-        parts.append(
-            as_block("Overall story and sibling scenes (keep continuity)", story)
-        )
-    if style:
-        parts.append(as_block("Style guide", style))
-    if shots:
-        parts.append(as_block("Scene shots", shots))
+    parts += gated_block(
+        "asset_planner",
+        "library",
+        "Asset library (REUSE these by exact name instead of proposing "
+        "similar new ones)",
+        library,
+    )
+    parts += gated_block(
+        "asset_planner", "characters", "Cast (props must fit these characters)", characters
+    )
+    parts += gated_block(
+        "asset_planner",
+        "story",
+        "Overall story and sibling scenes (keep continuity)",
+        story,
+    )
+    parts += gated_block("asset_planner", "style", "Style guide", style)
+    parts += gated_block("asset_planner", "shots", "Scene shots", shots)
     if instruction:
         parts.append(as_block("User instruction", instruction))
     return await run_agent(

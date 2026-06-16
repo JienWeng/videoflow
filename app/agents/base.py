@@ -12,6 +12,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
+from app.llm import skills
 from app.llm.structured_client import StructuredLLMClient, get_llm_client
 
 T = TypeVar("T", bound=BaseModel)
@@ -45,3 +46,15 @@ def as_block(label: str, value: object) -> str:
     else:
         body = str(value)
     return f"### {label}\n{body}"
+
+
+def gated_block(agent: str, key: str, label: str, value: object) -> list[str]:
+    """A context block the user can switch off per agent. Returns
+    `[as_block(label, value)]`, or `[]` when the value is empty OR the user has
+    disabled this context `key` for `agent` (see skills.context_excludes). Splat
+    the result into the prompt's block list: `parts += gated_block(...)`."""
+    if value is None or value == "" or value == [] or value == {}:
+        return []
+    if key in skills.context_excludes(agent):
+        return []
+    return [as_block(label, value)]

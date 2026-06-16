@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from app.agents.base import as_block, run_agent
+from app.agents.base import as_block, gated_block, run_agent
 from app.config import get_settings
 from app.schemas import CharacterBible, ReferenceImage, RenderSpec, ShotSpec
 
@@ -205,23 +205,27 @@ async def build_render_spec(
         asset_names=asset_names or {},
     )
     aspect_ratio = aspect_ratio or get_settings().default_aspect_ratio
-    style_blocks = [as_block("Project style guide", style)] if style else []
-    story_blocks = (
-        [as_block("Overall story and sibling scenes (keep continuity)", story)]
-        if story
-        else []
-    )
     prompt = "\n\n".join(
         [
             as_block("Scene id", scene_id),
             as_block("Scene summary", scene_summary),
             as_block("Shot", shot),
             as_block("Aspect ratio", aspect_ratio),
-            *style_blocks,
-            *story_blocks,
+            *gated_block("prompt_agent", "style", "Project style guide", style),
+            *gated_block(
+                "prompt_agent",
+                "story",
+                "Overall story and sibling scenes (keep continuity)",
+                story,
+            ),
             as_block("DIALOGUE LANGUAGE (write all spoken 「」 lines in this language)", dialogue_language),
             as_block("Named reference images (use @name, echo into reference_images)", named_references),
-            as_block("Character bibles", [b.model_dump() for b in character_bibles]),
+            *gated_block(
+                "prompt_agent",
+                "character_bibles",
+                "Character bibles",
+                [b.model_dump() for b in character_bibles] if character_bibles else None,
+            ),
             as_block("Reference video asset id", video_asset_id or "none"),
             "Produce a RenderSpec as a SHOT SCRIPT. Set scene_id and shot_id "
             "(shot.shot_id). Set duration to the shot duration (3-15). Each shot "

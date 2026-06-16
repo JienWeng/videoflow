@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
-from app.agents.base import as_block, run_agent
+from app.agents.base import as_block, gated_block, run_agent
 from app.schemas import SceneRefinement, ShotRefinement
 
 
 def _context_blocks(style: dict | None, story: dict | None) -> list[str]:
-    blocks: list[str] = []
-    if style:
-        blocks.append(as_block("Project style guide", style))
-    if story:
-        blocks.append(
-            as_block("Overall story and sibling scenes (keep continuity)", story)
-        )
-    return blocks
+    return [
+        *gated_block("refine_agent", "style", "Project style guide", style),
+        *gated_block(
+            "refine_agent",
+            "story",
+            "Overall story and sibling scenes (keep continuity)",
+            story,
+        ),
+    ]
 
 
 async def refine_scene(

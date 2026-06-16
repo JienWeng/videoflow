@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.agents.base import as_block, run_agent
+from app.agents.base import gated_block, run_agent
 from app.llm.structured_client import StructuredLLMClient
 from app.schemas import StyleSpec
 
@@ -16,10 +16,10 @@ async def derive_style(
     client: StructuredLLMClient | None = None,
 ) -> StyleSpec:
     parts = [
-        as_block("Scripts (overall story)", scripts or []),
-        as_block("Scenes", scenes or []),
-        as_block("Characters", characters or []),
-        as_block("Assets", assets or []),
+        *gated_block("style_agent", "scripts", "Scripts (overall story)", scripts),
+        *gated_block("style_agent", "scenes", "Scenes", scenes),
+        *gated_block("style_agent", "characters", "Characters", characters),
+        *gated_block("style_agent", "assets", "Assets", assets),
     ]
     return await run_agent(
         agent="style_agent",

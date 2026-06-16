@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.agents.base import as_block, run_agent
+from app.agents.base import as_block, gated_block, run_agent
 from app.llm.structured_client import StructuredLLMClient
 from app.schemas import Intent
 
@@ -18,19 +18,19 @@ async def classify_intent(
     client: StructuredLLMClient | None = None,
 ) -> Intent:
     parts = []
-    if history:
-        parts.append(as_block("Conversation so far", history))
+    parts += gated_block("intent_agent", "history", "Conversation so far", history)
     parts += [
         as_block("User message", message),
         as_block("Scenes catalog", scenes),
         as_block("Characters catalog", characters),
     ]
-    if outputs:
-        parts.append(as_block("Render outputs catalog", outputs))
-    if state:
-        parts.append(
-            as_block("Project state (counts and pipeline progress)", state)
-        )
+    parts += gated_block("intent_agent", "outputs", "Render outputs catalog", outputs)
+    parts += gated_block(
+        "intent_agent",
+        "state",
+        "Project state (counts and pipeline progress)",
+        state,
+    )
     return await run_agent(
         agent="intent_agent",
         response_model=Intent,

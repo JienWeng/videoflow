@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.agents.base import as_block, run_agent
+from app.agents.base import as_block, gated_block, run_agent
 from app.schemas import ScriptDraft
 
 
@@ -19,14 +19,15 @@ async def generate_script(
         as_block("Story idea", idea),
         as_block("Target total duration (s)", target_duration or "unspecified"),
     ]
-    if style:
-        parts.append(as_block("Project style guide", style))
-    if characters:
-        # Contract: the agent writes EXACT catalog names; downstream
-        # auto_link_scene converts those bare names to @tags and DB links.
-        parts.append(
-            as_block("Existing characters (cast them by their EXACT names)", characters)
-        )
+    parts += gated_block("script_agent", "style", "Project style guide", style)
+    # Contract: the agent writes EXACT catalog names; downstream auto_link_scene
+    # converts those bare names to @tags and DB links.
+    parts += gated_block(
+        "script_agent",
+        "characters",
+        "Existing characters (cast them by their EXACT names)",
+        characters,
+    )
     if scene_count is not None:
         parts.append(f"Produce EXACTLY {scene_count} scene(s).")
     parts.append("Produce a ScriptDraft with an ordered list of scenes.")

@@ -7,6 +7,8 @@ so prompts describe INTENT and RULES, never the schema shape.
 
 from __future__ import annotations
 
+from string import Formatter
+
 PROMPTS: dict[str, str] = {
     "asset_recogniser": (
         "You are an asset-cataloguing assistant for a video studio. "
@@ -235,6 +237,21 @@ PROMPTS: dict[str, str] = {
         "belongs in 「」."
     ),
 }
+
+
+def extract_placeholders(template: str) -> set[str]:
+    """The `{field}` names a template expects from `str.format`. Escaped braces
+    (`{{ }}`) are literal text and yield no field, so they are ignored. Returns
+    an empty set for malformed templates (a lone brace) — callers that need to
+    reject malformed input parse separately."""
+    try:
+        return {
+            name.split(".")[0].split("[")[0]
+            for _, name, _, _ in Formatter().parse(template)
+            if name
+        }
+    except (ValueError, IndexError):
+        return set()
 
 
 def get_system_prompt(agent: str, context: dict | None = None) -> str:

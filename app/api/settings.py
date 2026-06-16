@@ -28,10 +28,21 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 
 class AgentOverride(BaseModel):
-    """Null provider+model clears the override (revert to skill default)."""
+    """Null provider+model clears the routing override (revert to skill default)."""
 
     provider: str | None = None
     model: str | None = None
+
+
+class AgentCustomization(BaseModel):
+    """Agent Studio customization. REPLACE semantics — send the complete intended
+    state; an unset (null/empty) field reverts to the code default for that field.
+    Routing (provider/model) is set separately via PUT /settings/agents/{a}."""
+
+    system_prompt: str | None = None
+    temperature: float | None = None
+    max_retries: int | None = None
+    context_excludes: list[str] | None = None
 
 
 class ProviderConfig(BaseModel):
@@ -65,11 +76,35 @@ def list_agents(session: Session = Depends(get_session)):
     return settings_service.all_agents(session)
 
 
+@router.get("/agents/{agent}")
+def get_agent(agent: str, session: Session = Depends(get_session)):
+    return settings_service.agent_detail(session, agent)
+
+
 @router.put("/agents/{agent}")
 def set_agent(
     agent: str, body: AgentOverride, session: Session = Depends(get_session)
 ):
     return settings_service.set_override(session, agent, body.provider, body.model)
+
+
+@router.put("/agents/{agent}/customization")
+def set_agent_customization(
+    agent: str, body: AgentCustomization, session: Session = Depends(get_session)
+):
+    return settings_service.set_customization(
+        session,
+        agent,
+        system_prompt=body.system_prompt,
+        temperature=body.temperature,
+        max_retries=body.max_retries,
+        context_excludes=body.context_excludes,
+    )
+
+
+@router.post("/agents/{agent}/reset")
+def reset_agent(agent: str, session: Session = Depends(get_session)):
+    return settings_service.reset_agent(session, agent)
 
 
 # --------------------------------------------------------------- providers

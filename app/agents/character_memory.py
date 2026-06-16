@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.agents.base import as_block, run_agent
+from app.agents.base import as_block, gated_block, run_agent
 from app.schemas import CharacterBible
 
 
@@ -23,8 +23,7 @@ async def build_character_bible(
         as_block("Reference asset descriptions", reference_asset_descriptions or []),
         as_block("Reference asset ids", reference_asset_ids or []),
     ]
-    if style:
-        parts.append(as_block("Project style guide", style))
+    parts += gated_block("character_memory", "style", "Project style guide", style)
     parts.append(
         "Produce a CharacterBible. Set character_id and reference_asset_ids "
         "from the given values. Make visual_rules concrete and reproducible."

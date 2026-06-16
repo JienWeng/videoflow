@@ -61,6 +61,27 @@ def _migrate(target_engine) -> None:
                 "ALTER TABLE agent_settings ADD COLUMN project_id VARCHAR"
             )
             conn.commit()
+        # Agent Studio: per-agent prompt/tuning/context customization.
+        if cols and "system_prompt" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE agent_settings ADD COLUMN system_prompt VARCHAR"
+            )
+            conn.commit()
+        if cols and "temperature" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE agent_settings ADD COLUMN temperature FLOAT"
+            )
+            conn.commit()
+        if cols and "max_retries" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE agent_settings ADD COLUMN max_retries INTEGER"
+            )
+            conn.commit()
+        if cols and "context_excludes" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE agent_settings ADD COLUMN context_excludes JSON"
+            )
+            conn.commit()
         # Render progress/stage — added here (the only file allowed to touch the
         # schema) so the render workstream can write them without editing this.
         cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(render_jobs)")]

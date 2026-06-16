@@ -22,12 +22,13 @@ from __future__ import annotations
 import base64
 import re
 import time
+from string import Formatter
 
 from sqlmodel import Session, select
 
 from app.config import Settings, get_settings, invalidate_settings_cache
 from app.errors import NotFoundError, ValidationFailedError
-from app.llm import skills
+from app.llm import prompts, skills
 from app.llm.providers import ProviderName, default_model
 from app.models.base import utcnow
 from app.models.setting import AgentSetting, AppSetting, ProviderSecret
@@ -454,18 +455,29 @@ def set_app_settings(
 
 
 # ---------------------------------------------------------------------------
-# Agent overrides (unchanged contract; model validation relaxed).
+# Agent overrides + Agent Studio (prompt / tuning / context customization).
 # ---------------------------------------------------------------------------
 def get_overrides(session: Session) -> dict[str, dict[str, str | None]]:
+    """Provider/model overrides keyed by agent (back-compat shape). An agent
+    appears here whenever it has ANY persisted customization row."""
     rows = session.exec(select(AgentSetting)).all()
     return {r.agent: {"provider": r.provider, "model": r.model} for r in rows}
 
 
 def load_overrides(session: Session) -> None:
-    """Populate the in-process mirror from the DB (called at startup)."""
+    """Rebuild the in-process mirror from the DB (called at startup and after
+    every write) — carries routing AND studio customization."""
     skills.clear_overrides()
-    for agent, ov in get_overrides(session).items():
-        skills.set_override(agent, ov["provider"], ov["model"])
+    for row in session.exec(select(AgentSetting)).all():
+        skills.set_record(
+            row.agent,
+            provider=row.provider,
+            model=row.model,
+            system_prompt=row.system_prompt,
+            temperature=row.temperature,
+            max_retries=row.max_retries,
+            context_excludes=row.context_excludes,
+        )
 
 
 def effective_skill(session: Session, agent: str):
@@ -497,6 +509,69 @@ def _validate(
         raise ValidationFailedError("model id cannot be empty")
 
 
+def _validate_prompt(agent: str, text: str) -> None:
+    """A prompt override may not introduce `{placeholders}` the agent can't fill
+    (the default carries none) and may not contain malformed braces — either
+    would silently break formatting at call time. Escaped `{{ }}` is fine."""
+    allowed = prompts.extract_placeholders(skills.get_skill(agent).system_prompt)
+    try:
+        used = {
+            name.split(".")[0].split("[")[0]
+            for _, name, _, _ in Formatter().parse(text)
+            if name
+        }
+    except (ValueError, IndexError) as exc:
+        raise ValidationFailedError(
+            "the prompt has unbalanced or invalid { } braces "
+            "(use {{ }} for literal braces)"
+        ) from exc
+    unknown = used - allowed
+    if unknown:
+        allowed_str = ", ".join(sorted(allowed)) or "no placeholders"
+        raise ValidationFailedError(
+            f"unknown placeholder(s) {sorted(unknown)} — this agent provides "
+            f"{allowed_str}. Write rules as plain text; context is supplied "
+            "automatically."
+        )
+
+
+def _validate_context_excludes(agent: str, excludes: list[str]) -> None:
+    optional = {s.key for s in skills.context_sources(agent) if not s.required}
+    invalid = [k for k in excludes if k not in optional]
+    if invalid:
+        raise ValidationFailedError(
+            f"cannot disable context {invalid} for {agent}: not an optional "
+            f"context source (optional: {sorted(optional) or 'none'})"
+        )
+
+
+def _upsert(session: Session, agent: str, **changes) -> None:
+    """Apply only the supplied columns to the agent's row; delete the row when
+    every override field is empty (so a cleared override reverts to defaults)."""
+    row = session.exec(select(AgentSetting).where(AgentSetting.agent == agent)).first()
+    existed = row is not None
+    if row is None:
+        row = AgentSetting(agent=agent)
+    for k, v in changes.items():
+        setattr(row, k, v)
+    empty = (
+        not row.provider
+        and not row.model
+        and not row.system_prompt
+        and row.temperature is None
+        and row.max_retries is None
+        and not row.context_excludes
+    )
+    if empty:
+        if existed:
+            session.delete(row)
+            session.commit()
+        return
+    row.updated_at = utcnow()
+    session.add(row)
+    session.commit()
+
+
 def set_override(
     session: Session,
     agent: str,
@@ -504,37 +579,73 @@ def set_override(
     model: str | None,
     settings: Settings | None = None,
 ) -> dict:
-    """Set or clear an agent override. Writes the DB and the in-process mirror.
-    Validates the provider is configured (DB or env) and the model is non-empty.
-    Nulls in both fields clear the override (revert to skill default)."""
+    """Set or clear an agent's provider/model routing. Validates the provider is
+    configured (DB or env) and the model is non-empty. Nulls in both fields clear
+    the routing override; any prompt/tuning customization on the agent is kept."""
     settings = settings or get_settings()
     if skills.get_skill(agent) is None:
         raise NotFoundError(f"unknown agent '{agent}'")
     _validate(provider, model, settings, session)
-
-    row = session.exec(select(AgentSetting).where(AgentSetting.agent == agent)).first()
-    if provider is None and model is None:
-        if row is not None:
-            session.delete(row)
-            session.commit()
-        skills.set_override(agent, None, None)
-        return agent_view(agent, settings)
-
-    if row is None:
-        row = AgentSetting(agent=agent, provider=provider, model=model)
-        session.add(row)
-    else:
-        row.provider = provider
-        row.model = model
-        row.updated_at = utcnow()
-        session.add(row)
-    session.commit()
-    skills.set_override(agent, provider, model)
+    _upsert(session, agent, provider=provider, model=model)
+    load_overrides(session)
     return agent_view(agent, settings)
 
 
+def set_customization(
+    session: Session,
+    agent: str,
+    *,
+    system_prompt: str | None = None,
+    temperature: float | None = None,
+    max_retries: int | None = None,
+    context_excludes: list[str] | None = None,
+    settings: Settings | None = None,
+) -> dict:
+    """Set the agent's studio customization (prompt / temperature / max_retries /
+    context excludes). REPLACE semantics: each unset field reverts to the code
+    default, so the UI sends the complete intended state. Routing (provider/
+    model) is untouched. Validates the prompt and context keys."""
+    settings = settings or get_settings()
+    if skills.get_skill(agent) is None:
+        raise NotFoundError(f"unknown agent '{agent}'")
+    sp = system_prompt or None  # "" => clear (use default)
+    if sp is not None:
+        _validate_prompt(agent, sp)
+    temp = None if temperature is None else max(0.0, min(2.0, float(temperature)))
+    retries = None if max_retries is None else max(0, min(5, int(max_retries)))
+    excl: list[str] | None = None
+    if context_excludes:
+        _validate_context_excludes(agent, context_excludes)
+        excl = list(dict.fromkeys(context_excludes))  # de-dupe, keep order
+    _upsert(
+        session,
+        agent,
+        system_prompt=sp,
+        temperature=temp,
+        max_retries=retries,
+        context_excludes=excl,
+    )
+    load_overrides(session)
+    return agent_detail(session, agent, settings)
+
+
+def reset_agent(
+    session: Session, agent: str, settings: Settings | None = None
+) -> dict:
+    """Clear ALL customization (routing + studio) for one agent."""
+    settings = settings or get_settings()
+    if skills.get_skill(agent) is None:
+        raise NotFoundError(f"unknown agent '{agent}'")
+    row = session.exec(select(AgentSetting).where(AgentSetting.agent == agent)).first()
+    if row is not None:
+        session.delete(row)
+        session.commit()
+    load_overrides(session)
+    return agent_detail(session, agent, settings)
+
+
 def agent_view(agent: str, settings: Settings | None = None) -> dict:
-    """The effective + default routing for one agent, for the API/UI."""
+    """The effective + default routing for one agent, for the API/UI list."""
     settings = settings or get_settings()
     base = skills.get_skill(agent)
     eff = skills.get_effective_skill(agent)
@@ -545,6 +656,43 @@ def agent_view(agent: str, settings: Settings | None = None) -> dict:
         "model": eff.model or default_model(eff.provider, settings),  # type: ignore[arg-type]
         "default_provider": base.provider,
         "default_model": base.model or default_model(base.provider, settings),  # type: ignore[arg-type]
+        "customized": skills.is_customized(agent),
+    }
+
+
+def agent_detail(
+    session: Session, agent: str, settings: Settings | None = None
+) -> dict:
+    """Full studio view for one agent: routing + prompt (override & default) +
+    tuning (override & default) + togglable context sources with current state."""
+    settings = settings or get_settings()
+    base = skills.get_skill(agent)
+    if base is None:
+        raise NotFoundError(f"unknown agent '{agent}'")
+    load_overrides(session)
+    row = session.exec(select(AgentSetting).where(AgentSetting.agent == agent)).first()
+    excludes = skills.context_excludes(agent)
+    sources = [
+        {
+            "key": s.key,
+            "label": s.label,
+            "required": s.required,
+            "enabled": s.required or s.key not in excludes,
+        }
+        for s in skills.context_sources(agent)
+    ]
+    return {
+        **agent_view(agent, settings),
+        "system_prompt": row.system_prompt if row else None,
+        "default_prompt": base.system_prompt,
+        "required_placeholders": sorted(
+            prompts.extract_placeholders(base.system_prompt)
+        ),
+        "temperature": row.temperature if row else None,
+        "default_temperature": base.temperature,
+        "max_retries": row.max_retries if row else None,
+        "default_max_retries": base.max_retries,
+        "context_sources": sources,
     }
 
 

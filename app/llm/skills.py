@@ -86,22 +86,183 @@ def agent_label(agent: str) -> str:
     return AGENT_LABELS.get(agent, agent)
 
 
-# In-process per-agent routing overrides, mirrored from the DB. Loaded at startup
-# (see settings_service.load_overrides) and updated whenever the user saves a
-# change. Empty by default => behaviour identical to the skill defaults.
-_OVERRIDES: dict[str, tuple[str | None, str | None]] = {}
+@dataclass(frozen=True)
+class ContextSource:
+    """One optional context block an agent can ingest. `required=True` sources are
+    always sent (shown locked-on in the UI for transparency); optional ones can be
+    switched off per agent, which drops the block from the assembled user prompt."""
+
+    key: str
+    label: str
+    required: bool = False
+
+
+# What each agent CAN see. Optional (required=False) keys are gated by
+# `gated_block`; the key strings here MUST match the keys passed there in each
+# agent module. Required keys are documentation/UI only (never gated).
+AGENT_CONTEXT_SOURCES: dict[str, list[ContextSource]] = {
+    "asset_recogniser": [
+        ContextSource("filename", "Filename", required=True),
+        ContextSource("description", "Uploader description", required=True),
+        ContextSource("known_character_ids", "Known character ids"),
+    ],
+    "character_memory": [
+        ContextSource("notes", "Creator notes", required=True),
+        ContextSource("reference_assets", "Reference asset descriptions", required=True),
+        ContextSource("style", "Project style guide"),
+    ],
+    "script_agent": [
+        ContextSource("idea", "Story idea", required=True),
+        ContextSource("style", "Project style guide"),
+        ContextSource("characters", "Existing characters"),
+    ],
+    "idea_agent": [
+        ContextSource("idea", "Raw idea", required=True),
+        ContextSource("style", "Project style guide"),
+        ContextSource("characters", "Existing characters"),
+    ],
+    "scene_agent": [
+        ContextSource("character_bibles", "Character bibles", required=True),
+        ContextSource("available_asset_ids", "Available asset ids", required=True),
+        ContextSource("assets", "Linked assets"),
+        ContextSource("available_characters", "Other available characters"),
+        ContextSource("library", "Asset library"),
+        ContextSource("style", "Project style guide"),
+        ContextSource("story", "Overall story & sibling scenes"),
+    ],
+    "shot_agent": [
+        ContextSource("scene", "Scene spec", required=True),
+        ContextSource("characters", "Cast"),
+        ContextSource("assets", "Linked assets"),
+        ContextSource("style", "Project style guide"),
+        ContextSource("story", "Overall story & sibling scenes"),
+    ],
+    "prompt_agent": [
+        ContextSource("shot", "Shot", required=True),
+        ContextSource("references", "Named reference images", required=True),
+        ContextSource("dialogue_language", "Dialogue language", required=True),
+        ContextSource("style", "Project style guide"),
+        ContextSource("story", "Overall story & sibling scenes"),
+        ContextSource("character_bibles", "Character bibles (voice & looks)"),
+    ],
+    "qa_agent": [
+        ContextSource("requirements", "Scene/shot requirements", required=True),
+        ContextSource("frames", "Sampled video frames", required=True),
+        ContextSource("reference_images", "Reference images (sheets/storyboard)"),
+    ],
+    "intent_agent": [
+        ContextSource("message", "User message", required=True),
+        ContextSource("scenes", "Scenes catalog", required=True),
+        ContextSource("characters", "Characters catalog", required=True),
+        ContextSource("history", "Conversation so far"),
+        ContextSource("outputs", "Render outputs catalog"),
+        ContextSource("state", "Project state"),
+    ],
+    "asset_planner": [
+        ContextSource("scene", "Scene summary & spec", required=True),
+        ContextSource("existing_assets", "Existing assets", required=True),
+        ContextSource("library", "Asset library"),
+        ContextSource("characters", "Cast"),
+        ContextSource("story", "Overall story & sibling scenes"),
+        ContextSource("style", "Style guide"),
+        ContextSource("shots", "Scene shots"),
+    ],
+    "style_agent": [
+        ContextSource("scripts", "Scripts (overall story)"),
+        ContextSource("scenes", "Scenes"),
+        ContextSource("characters", "Characters"),
+        ContextSource("assets", "Assets"),
+    ],
+    "refine_agent": [
+        ContextSource("entity", "Current scene/shot", required=True),
+        ContextSource("instruction", "User instruction", required=True),
+        ContextSource("style", "Project style guide"),
+        ContextSource("story", "Overall story & sibling scenes"),
+    ],
+}
+
+
+def context_sources(agent: str) -> list[ContextSource]:
+    return AGENT_CONTEXT_SOURCES.get(agent, [])
+
+
+# In-process per-agent overrides, mirrored from the DB. Loaded at startup (see
+# settings_service.load_overrides) and rebuilt whenever the user saves a change.
+# Each value is a record with any of: provider, model, system_prompt,
+# temperature, max_retries, context_excludes (list[str]). Empty by default =>
+# behaviour identical to the skill defaults.
+_OVERRIDES: dict[str, dict] = {}
+
+_RECORD_FIELDS = (
+    "provider",
+    "model",
+    "system_prompt",
+    "temperature",
+    "max_retries",
+    "context_excludes",
+)
+
+
+def _record_is_empty(rec: dict) -> bool:
+    for f in _RECORD_FIELDS:
+        v = rec.get(f)
+        # temperature/max_retries 0 are valid overrides, so test by identity.
+        if f in ("temperature", "max_retries"):
+            if v is not None:
+                return False
+        elif v:
+            return False
+    return True
+
+
+def is_customized(agent: str) -> bool:
+    """True when the agent has any in-process override (routing or studio)."""
+    return agent in _OVERRIDES
+
+
+def set_record(
+    agent: str,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    system_prompt: str | None = None,
+    temperature: float | None = None,
+    max_retries: int | None = None,
+    context_excludes: list[str] | None = None,
+) -> None:
+    """Store the FULL override record for one agent (replacing any prior record).
+    A record with no effective fields is dropped (revert to skill default)."""
+    rec = {
+        "provider": provider,
+        "model": model,
+        "system_prompt": system_prompt,
+        "temperature": temperature,
+        "max_retries": max_retries,
+        "context_excludes": list(context_excludes) if context_excludes else None,
+    }
+    if _record_is_empty(rec):
+        _OVERRIDES.pop(agent, None)
+    else:
+        _OVERRIDES[agent] = rec
 
 
 def set_override(agent: str, provider: str | None, model: str | None) -> None:
-    """Update (or clear) the in-process override for one agent."""
-    if provider is None and model is None:
-        _OVERRIDES.pop(agent, None)
-    else:
-        _OVERRIDES[agent] = (provider, model)
+    """Back-compat shim: set only provider/model (drops other override fields).
+    The service rebuilds the whole mirror from the DB via load_overrides after a
+    write, so callers that need full fidelity go through set_record."""
+    set_record(agent, provider=provider, model=model)
 
 
 def clear_overrides() -> None:
     _OVERRIDES.clear()
+
+
+def context_excludes(agent: str) -> set[str]:
+    """The optional context keys switched OFF for this agent (empty if none)."""
+    rec = _OVERRIDES.get(agent)
+    if not rec:
+        return set()
+    return set(rec.get("context_excludes") or [])
 
 
 def get_skill(agent: str) -> AgentSkill | None:
@@ -110,19 +271,33 @@ def get_skill(agent: str) -> AgentSkill | None:
 
 def get_effective_skill(agent: str) -> AgentSkill | None:
     """The skill an agent actually runs with: base skill merged with any
-    in-process override (provider and/or model). Returns None for unknown agents.
-    """
+    in-process override (provider, model, system_prompt, temperature,
+    max_retries). Returns None for unknown agents."""
     base = SKILLS.get(agent)
     if base is None:
         return None
-    override = _OVERRIDES.get(agent)
-    if override is None:
+    rec = _OVERRIDES.get(agent)
+    if not rec:
         return base
-    provider, model = override
     from dataclasses import replace
 
     return replace(
         base,
-        provider=provider or base.provider,
-        model=model if model is not None else base.model,
+        provider=rec.get("provider") or base.provider,
+        model=rec["model"] if rec.get("model") is not None else base.model,
+        system_prompt=(
+            rec["system_prompt"]
+            if rec.get("system_prompt")
+            else base.system_prompt
+        ),
+        temperature=(
+            rec["temperature"]
+            if rec.get("temperature") is not None
+            else base.temperature
+        ),
+        max_retries=(
+            rec["max_retries"]
+            if rec.get("max_retries") is not None
+            else base.max_retries
+        ),
     )

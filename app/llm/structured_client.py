@@ -154,7 +154,11 @@ def _format(template: str, context: dict | None) -> str:
         return template
     try:
         return template.format(**context)
-    except (KeyError, IndexError):
+    except Exception:
+        # Templates without placeholders, partial context, or a user-entered
+        # prompt with malformed braces (a lone `{`) must never crash a call —
+        # fall back to the raw template. (Default prompts carry no placeholders,
+        # so this is the common path; overrides are validated before save.)
         return template
 
 

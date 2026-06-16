@@ -8,6 +8,7 @@ what was actually generated, not a textual description of it.
 from __future__ import annotations
 
 from app.agents.base import as_block, run_agent
+from app.llm import skills
 from app.schemas import QAResult
 
 
@@ -21,6 +22,10 @@ async def review_output(
 ) -> QAResult:
     frames = frames or []
     reference_images = reference_images or []
+    # The user can switch the reference images off ("what this agent sees") — the
+    # QA then judges frames against the textual requirements only.
+    if "reference_images" in skills.context_excludes("qa_agent"):
+        reference_images = []
     prompt = "\n\n".join(
         [
             as_block("Scene/shot requirements", requirements),
