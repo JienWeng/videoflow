@@ -22,7 +22,13 @@
     Trash2,
     LoaderCircle,
     CircleCheck,
-    Wifi
+    Wifi,
+    ChevronDown,
+    ChevronRight,
+    SlidersHorizontal,
+    Eye,
+    Wand2,
+    TriangleAlert
   } from '@lucide/svelte';
 
   // -------------------------------------------------------------- types
@@ -33,6 +39,18 @@
     model: string;
     default_provider: string;
     default_model: string;
+    customized: boolean;
+  };
+  type ContextSource = { key: string; label: string; required: boolean; enabled: boolean };
+  type AgentDetail = Agent & {
+    system_prompt: string | null;
+    default_prompt: string;
+    required_placeholders: string[];
+    temperature: number | null;
+    default_temperature: number;
+    max_retries: number | null;
+    default_max_retries: number;
+    context_sources: ContextSource[];
   };
   type Provider = {
     name: string;
@@ -286,6 +304,103 @@
   }
 
   let bulkTextProvider = $state('');
+
+  // -------------------------------------------------- agent studio (prompt/tuning/context)
+  // Per-agent expanded panel + lazily-fetched detail + edit buffers.
+  let expanded = $state<Record<string, boolean>>({});
+  let detail = $state<Record<string, AgentDetail>>({});
+  let promptBuf = $state<Record<string, string>>({});
+  let tempBuf = $state<Record<string, number>>({});
+  let retriesBuf = $state<Record<string, number>>({});
+  let excludeBuf = $state<Record<string, string[]>>({});
+  let studioErr = $state<Record<string, string>>({});
+
+  function initBuffers(d: AgentDetail) {
+    // Prefill with the effective values so the user edits from real text.
+    promptBuf[d.agent] = d.system_prompt ?? d.default_prompt;
+    tempBuf[d.agent] = d.temperature ?? d.default_temperature;
+    retriesBuf[d.agent] = d.max_retries ?? d.default_max_retries;
+    excludeBuf[d.agent] = d.context_sources.filter((c) => !c.enabled).map((c) => c.key);
+    studioErr[d.agent] = '';
+  }
+
+  async function loadDetail(agent: string) {
+    try {
+      const d: AgentDetail = await get(`/settings/agents/${agent}`);
+      detail[agent] = d;
+      initBuffers(d);
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  }
+
+  async function toggleExpand(a: Agent) {
+    const open = !expanded[a.agent];
+    expanded[a.agent] = open;
+    if (open && !detail[a.agent]) await loadDetail(a.agent);
+  }
+
+  function isSourceEnabled(agent: string, key: string): boolean {
+    return !(excludeBuf[agent] ?? []).includes(key);
+  }
+  function toggleSource(agent: string, key: string) {
+    const cur = excludeBuf[agent] ?? [];
+    excludeBuf[agent] = cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key];
+  }
+
+  function studioDirty(agent: string): boolean {
+    const d = detail[agent];
+    if (!d) return false;
+    const promptChanged = (promptBuf[agent] ?? '').trim() !== d.default_prompt.trim();
+    const tempChanged = tempBuf[agent] !== d.default_temperature;
+    const retriesChanged = retriesBuf[agent] !== d.default_max_retries;
+    const exclChanged = (excludeBuf[agent] ?? []).length > 0;
+    return promptChanged || tempChanged || retriesChanged || exclChanged;
+  }
+
+  async function saveStudio(agent: string) {
+    const d = detail[agent];
+    if (!d) return;
+    studioErr[agent] = '';
+    busy = `studio-${agent}`;
+    // Normalise to default => null so the "Customized" badge stays honest.
+    const prompt = (promptBuf[agent] ?? '').trim();
+    const body = {
+      system_prompt: prompt && prompt !== d.default_prompt.trim() ? prompt : null,
+      temperature: tempBuf[agent] === d.default_temperature ? null : tempBuf[agent],
+      max_retries: retriesBuf[agent] === d.default_max_retries ? null : retriesBuf[agent],
+      context_excludes: (excludeBuf[agent] ?? []).length ? excludeBuf[agent] : null
+    };
+    try {
+      const updated: AgentDetail = await put(`/settings/agents/${agent}/customization`, body);
+      detail[agent] = updated;
+      initBuffers(updated);
+      agents = agents.map((x) => (x.agent === agent ? { ...x, customized: updated.customized } : x));
+      toast.success(`${d.label} updated`);
+    } catch (e: any) {
+      studioErr[agent] = e.message.replace(/^\d+:\s*/, '');
+    } finally {
+      busy = '';
+    }
+  }
+
+  async function resetStudio(agent: string) {
+    const d = detail[agent];
+    busy = `studio-${agent}`;
+    try {
+      const updated: AgentDetail = await post(`/settings/agents/${agent}/reset`);
+      detail[agent] = updated;
+      initBuffers(updated);
+      // Reset clears routing too — reflect provider/model + badge in the list.
+      agents = agents.map((x) => (x.agent === agent ? { ...updated } : x));
+      agentCustomOpen[agent] = false;
+      toast.success(`${d?.label ?? agent} reset to defaults`);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      busy = '';
+    }
+  }
 
   // ----------------------------------------------------------- providers
   async function saveProvider(name: string) {
@@ -841,10 +956,10 @@
       <TabsContent value="agents">
         <Card>
           <CardHeader>
-            <CardTitle class="text-base">Agent routing</CardTitle>
+            <CardTitle class="text-base">Agents</CardTitle>
             <CardDescription>
-              Choose which provider and model powers each step. Only configured providers are
-              selectable; model ids can be free-typed.
+              Choose which provider and model powers each step. Expand an agent to customize its
+              system prompt, tuning, and what context it sees.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -879,84 +994,230 @@
             </div>
 
             {#snippet agentRow(a: Agent)}
-              <div
-                class="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3"
-                data-agent={a.agent}
-              >
-                <div class="min-w-[160px] flex-1">
-                  <div class="flex items-center gap-2">
-                    <span class="text-sm font-medium" title={agentDesc[a.agent] ?? ''}>{a.label}</span>
-                    {#if isDefault(a)}
-                      <Badge variant="outline" class="text-[10px]">default</Badge>
+              <div class="rounded-lg border border-border bg-card" data-agent={a.agent}>
+                <div class="flex flex-wrap items-center gap-3 p-3">
+                  <button
+                    type="button"
+                    class="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    aria-label={expanded[a.agent] ? `Collapse ${a.label}` : `Customize ${a.label}`}
+                    aria-expanded={expanded[a.agent] ?? false}
+                    onclick={() => toggleExpand(a)}
+                  >
+                    {#if expanded[a.agent]}
+                      <ChevronDown class="size-4" />
+                    {:else}
+                      <ChevronRight class="size-4" />
                     {/if}
+                  </button>
+
+                  <div class="min-w-[160px] flex-1">
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-medium" title={agentDesc[a.agent] ?? ''}>{a.label}</span>
+                      {#if a.customized}
+                        <Badge class="gap-1 text-[10px]"><Wand2 class="size-3" />Customized</Badge>
+                      {:else if isDefault(a)}
+                        <Badge variant="outline" class="text-[10px]">default</Badge>
+                      {/if}
+                    </div>
+                    <div class="text-[11px] text-muted-foreground">
+                      {agentDesc[a.agent] ?? ''}
+                      {#if !isDefault(a)}
+                        <span class="block">
+                          default: {providerLabels[a.default_provider] ?? a.default_provider} / {a.default_model}
+                        </span>
+                      {/if}
+                    </div>
                   </div>
-                  <div class="text-[11px] text-muted-foreground">
-                    {agentDesc[a.agent] ?? ''}
-                    {#if !isDefault(a)}
-                      <span class="block">
-                        default: {providerLabels[a.default_provider] ?? a.default_provider} / {a.default_model}
-                      </span>
+
+                  <div class="flex items-center gap-2">
+                    <select
+                      aria-label="{a.label} provider"
+                      class="rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                      disabled={busy === `agent-${a.agent}` || !!busy}
+                      value={a.provider}
+                      onchange={(e) => onAgentProvider(a, (e.currentTarget as HTMLSelectElement).value)}
+                    >
+                      {#each configuredProviders as p (p.name)}
+                        <option value={p.name}>{providerLabels[p.name] ?? p.name}</option>
+                      {/each}
+                      {#if !byName[a.provider]?.configured}
+                        <option value={a.provider}>{providerLabels[a.provider] ?? a.provider} (unconfigured)</option>
+                      {/if}
+                    </select>
+
+                    {#if agentCustomOpen[a.agent]}
+                      <Input
+                        class="h-8 w-48 text-sm"
+                        placeholder="Custom model id"
+                        bind:value={agentCustomVal[a.agent]}
+                        onkeydown={(e) => e.key === 'Enter' && commitAgentCustom(a)}
+                      />
+                      <Button size="sm" disabled={busy === `agent-${a.agent}`} onclick={() => commitAgentCustom(a)}>
+                        Save
+                      </Button>
+                      <Button size="sm" variant="ghost" onclick={() => (agentCustomOpen[a.agent] = false)}>
+                        Cancel
+                      </Button>
+                    {:else}
+                      <select
+                        aria-label="{a.label} model"
+                        class="w-48 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                        disabled={busy === `agent-${a.agent}` || !!busy}
+                        value={a.model}
+                        onchange={(e) => onAgentModelSelect(a, (e.currentTarget as HTMLSelectElement).value)}
+                      >
+                        {#if !suggestedFor(a.provider).includes(a.model)}
+                          <option value={a.model}>{a.model}</option>
+                        {/if}
+                        {#each suggestedFor(a.provider) as m (m)}
+                          <option value={m}>{m}</option>
+                        {/each}
+                        <option value={CUSTOM}>Custom…</option>
+                      </select>
+
+                      <button
+                        type="button"
+                        title="Reset routing to default"
+                        aria-label="Reset {a.label} to default"
+                        class="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
+                        disabled={busy === `agent-${a.agent}` || isDefault(a)}
+                        onclick={() => resetAgent(a)}
+                      >
+                        <RotateCcw class="size-4" />
+                      </button>
                     {/if}
                   </div>
                 </div>
 
-                <div class="flex items-center gap-2">
-                  <select
-                    aria-label="{a.label} provider"
-                    class="rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-                    disabled={busy === `agent-${a.agent}` || !!busy}
-                    value={a.provider}
-                    onchange={(e) => onAgentProvider(a, (e.currentTarget as HTMLSelectElement).value)}
-                  >
-                    {#each configuredProviders as p (p.name)}
-                      <option value={p.name}>{providerLabels[p.name] ?? p.name}</option>
-                    {/each}
-                    {#if !byName[a.provider]?.configured}
-                      <option value={a.provider}>{providerLabels[a.provider] ?? a.provider} (unconfigured)</option>
+                {#if expanded[a.agent]}
+                  {@const d = detail[a.agent]}
+                  <div class="border-t border-border p-4">
+                    {#if !d}
+                      <div class="flex items-center gap-2 text-xs text-muted-foreground">
+                        <LoaderCircle class="size-3.5 animate-spin" />Loading…
+                      </div>
+                    {:else}
+                      {@render studioPanel(a, d)}
                     {/if}
-                  </select>
+                  </div>
+                {/if}
+              </div>
+            {/snippet}
 
-                  {#if agentCustomOpen[a.agent]}
-                    <Input
-                      class="h-8 w-48 text-sm"
-                      placeholder="Custom model id"
-                      bind:value={agentCustomVal[a.agent]}
-                      onkeydown={(e) => e.key === 'Enter' && commitAgentCustom(a)}
-                    />
-                    <Button size="sm" disabled={busy === `agent-${a.agent}`} onclick={() => commitAgentCustom(a)}>
-                      Save
-                    </Button>
-                    <Button size="sm" variant="ghost" onclick={() => (agentCustomOpen[a.agent] = false)}>
-                      Cancel
-                    </Button>
-                  {:else}
-                    <select
-                      aria-label="{a.label} model"
-                      class="w-48 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-                      disabled={busy === `agent-${a.agent}` || !!busy}
-                      value={a.model}
-                      onchange={(e) => onAgentModelSelect(a, (e.currentTarget as HTMLSelectElement).value)}
-                    >
-                      {#if !suggestedFor(a.provider).includes(a.model)}
-                        <option value={a.model}>{a.model}</option>
-                      {/if}
-                      {#each suggestedFor(a.provider) as m (m)}
-                        <option value={m}>{m}</option>
-                      {/each}
-                      <option value={CUSTOM}>Custom…</option>
-                    </select>
+            {#snippet studioPanel(a: Agent, d: AgentDetail)}
+              <div class="space-y-5">
+                <!-- Tuning -->
+                <div>
+                  <div class="mb-2 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                    <SlidersHorizontal class="size-3.5" />Tuning
+                  </div>
+                  <div class="flex flex-wrap items-center gap-6">
+                    <label class="flex items-center gap-3 text-sm">
+                      <span class="w-24 text-muted-foreground">Temperature</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="2"
+                        step="0.05"
+                        bind:value={tempBuf[a.agent]}
+                        class="w-40 accent-primary"
+                        aria-label="{a.label} temperature"
+                      />
+                      <span class="w-8 tabular-nums text-right">{(tempBuf[a.agent] ?? 0).toFixed(2)}</span>
+                      <span class="text-[11px] text-muted-foreground">default {d.default_temperature}</span>
+                    </label>
+                    <label class="flex items-center gap-3 text-sm">
+                      <span class="text-muted-foreground">Max retries</span>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="5"
+                        class="h-8 w-20 text-sm"
+                        bind:value={retriesBuf[a.agent]}
+                        aria-label="{a.label} max retries"
+                      />
+                      <span class="text-[11px] text-muted-foreground">default {d.default_max_retries}</span>
+                    </label>
+                  </div>
+                </div>
 
-                    <button
-                      type="button"
-                      title="Reset to default"
-                      aria-label="Reset {a.label} to default"
-                      class="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
-                      disabled={busy === `agent-${a.agent}` || isDefault(a)}
-                      onclick={() => resetAgent(a)}
-                    >
-                      <RotateCcw class="size-4" />
-                    </button>
+                <!-- What this agent sees -->
+                <div>
+                  <div class="mb-2 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                    <Eye class="size-3.5" />What this agent sees
+                  </div>
+                  <div class="grid gap-2 sm:grid-cols-2">
+                    {#each d.context_sources as c (c.key)}
+                      <label
+                        class="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-sm {c.required
+                          ? 'opacity-70'
+                          : 'cursor-pointer hover:bg-accent/40'}"
+                      >
+                        <input
+                          type="checkbox"
+                          class="accent-primary"
+                          checked={c.required || isSourceEnabled(a.agent, c.key)}
+                          disabled={c.required}
+                          onchange={() => toggleSource(a.agent, c.key)}
+                        />
+                        <span class="flex-1">{c.label}</span>
+                        {#if c.required}
+                          <span class="text-[10px] text-muted-foreground">required</span>
+                        {/if}
+                      </label>
+                    {/each}
+                  </div>
+                  <p class="mt-1.5 text-[11px] text-muted-foreground">
+                    Turn off a source to keep it out of this agent's prompt. Required inputs can't be removed.
+                  </p>
+                </div>
+
+                <!-- Prompt -->
+                <div>
+                  <div class="mb-2 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                    <Wand2 class="size-3.5" />System prompt
+                  </div>
+                  <textarea
+                    rows="9"
+                    spellcheck="false"
+                    class="w-full rounded-md border border-input bg-background p-3 font-mono text-[12px] leading-relaxed"
+                    bind:value={promptBuf[a.agent]}
+                    aria-label="{a.label} system prompt"
+                  ></textarea>
+                  {#if studioErr[a.agent]}
+                    <p class="mt-1.5 flex items-start gap-1.5 text-xs text-destructive">
+                      <TriangleAlert class="mt-0.5 size-3.5 shrink-0" />{studioErr[a.agent]}
+                    </p>
                   {/if}
+                  {#if d.required_placeholders.length}
+                    <p class="mt-1.5 text-[11px] text-muted-foreground">
+                      Keep these placeholders: {d.required_placeholders.map((p) => `{${p}}`).join(', ')}
+                    </p>
+                  {:else}
+                    <p class="mt-1.5 text-[11px] text-muted-foreground">
+                      Write rules as plain text — story/scene context is supplied automatically. Avoid
+                      <code>{'{'}curly{'}'}</code> placeholders.
+                    </p>
+                  {/if}
+                </div>
+
+                <!-- Actions -->
+                <div class="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    disabled={busy === `studio-${a.agent}` || !studioDirty(a.agent)}
+                    onclick={() => saveStudio(a.agent)}
+                  >
+                    {busy === `studio-${a.agent}` ? 'Saving…' : 'Save customization'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy === `studio-${a.agent}` || (!a.customized && !studioDirty(a.agent))}
+                    onclick={() => resetStudio(a.agent)}
+                  >
+                    <RotateCcw class="size-3.5 mr-1" />Reset to default
+                  </Button>
                 </div>
               </div>
             {/snippet}

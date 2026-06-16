@@ -110,13 +110,18 @@ Each agent module replaces its conditional `if x: parts.append(as_block(...))` w
 
 ### 6. API (`app/api/settings.py` + `settings_service.py`)
 
+Routing and studio customization are kept on **separate endpoints** so a prompt
+edit can never accidentally clear provider/model (the existing PUT conflates
+"absent" with "clear"):
+
 - `GET /settings/agents` — unchanged list (provider/model + a `customized: bool` flag added).
 - `GET /settings/agents/{agent}` — **new**: full detail
-  `{agent, label, provider, model, default_provider, default_model, system_prompt, default_prompt, required_placeholders, temperature, default_temperature, max_retries, default_max_retries, context_sources:[{key,label,required,enabled}], customized}`.
-- `PUT /settings/agents/{agent}` — extended body: `provider?, model?, system_prompt?, temperature?, max_retries?, context_excludes?`. Validates as above. Returns the detail view. (Provider/model-only callers keep working.)
-- `POST /settings/agents/{agent}/reset` — **new**: clear all customization.
+  `{agent, label, provider, model, default_provider, default_model, customized, system_prompt, default_prompt, required_placeholders, temperature, default_temperature, max_retries, default_max_retries, context_sources:[{key,label,required,enabled}]}`.
+- `PUT /settings/agents/{agent}` — **unchanged**: provider/model routing only.
+- `PUT /settings/agents/{agent}/customization` — **new**: `{system_prompt?, temperature?, max_retries?, context_excludes?}`, REPLACE semantics (unset field → code default). Validates as in §5. Returns the detail view.
+- `POST /settings/agents/{agent}/reset` — **new**: clear ALL customization (routing + studio).
 
-Service: a unified `_upsert(session, agent, **changes)` updates only supplied columns, deletes the row only when every field is empty (preserves `test_clear_override_reverts`), then `load_overrides(session)` to rebuild the mirror. `load_overrides` now reads the full row and calls `skills.set_record`. `set_override` keeps its signature + `agent_view` return shape (test contract).
+Service: a unified `_upsert(session, agent, **changes)` updates only supplied columns, deletes the row only when every field is empty (preserves `test_clear_override_reverts`), then `load_overrides(session)` to rebuild the mirror. `load_overrides` now reads the full row and calls `skills.set_record`. `set_override` keeps its signature + `agent_view` return shape (test contract); `set_customization` REPLACES the four studio columns and leaves routing intact.
 
 ### 7. Frontend (`settings/+page.svelte`)
 
