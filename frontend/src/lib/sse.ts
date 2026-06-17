@@ -4,6 +4,9 @@ import { API_BASE } from '$lib/api';
 export type StreamEvent = {
   job_id?: string;
   op_id?: string;
+  workflow_id?: string;
+  action?: string;
+  stage?: string;
   kind?: string;
   status?: string;
   scene_id?: string;

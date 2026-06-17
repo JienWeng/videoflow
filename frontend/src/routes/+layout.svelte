@@ -9,7 +9,8 @@
     ListVideo,
     Film,
     FolderOpen,
-    SlidersHorizontal
+    SlidersHorizontal,
+    Wand2
   } from '@lucide/svelte';
   import { Toaster } from '$lib/components/ui/sonner';
   import ActivityTray from '$lib/components/ActivityTray.svelte';
@@ -39,6 +40,7 @@
 
   const createNav = [
     { href: '/', label: 'Studio', icon: Clapperboard },
+    { href: '/auto', label: 'Autopilot', icon: Wand2 },
     { href: '/scenes', label: 'Scenes', icon: ListVideo }
   ];
 
