@@ -13,6 +13,8 @@ from app.models.script import Script
 from app.models.setting import AgentSetting, AppSetting, ProviderSecret
 from app.models.shot import Shot
 from app.models.style_guide import StyleGuide
+from app.models.workflow_run import WorkflowRun
+from app.models.workflow_step import WorkflowStep
 
 __all__ = [
     "AgentSetting",
@@ -31,4 +33,6 @@ __all__ = [
     "Script",
     "Shot",
     "StyleGuide",
+    "WorkflowRun",
+    "WorkflowStep",
 ]

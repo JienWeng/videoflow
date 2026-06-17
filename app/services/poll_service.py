@@ -122,6 +122,7 @@ async def process_job(job_id: str) -> None:
         _set_stage(session, job, "done")
         event_bus.publish({"job_id": job.id, "status": "succeeded", "output_id": output.id})
         logger.info("job %s succeeded -> %s", job.id, video_path)
+    _notify_autopilot(job_id)
 
 
 async def _make_poster(video_path: Path, dest: Path) -> Path | None:
@@ -153,6 +154,19 @@ def _fail(session: Session, job: RenderJob, error: str) -> None:
          "code": human["code"]}
     )
     logger.error("job %s failed: %s", job.id, error)
+    _notify_autopilot(job.id)
+
+
+def _notify_autopilot(job_id: str) -> None:
+    """Tell the autonomous director (if one owns this job) that the render
+    reached a terminal state, so it can judge it and decide the next step.
+    Best-effort — never let a callback issue affect the render's own status."""
+    try:
+        from app.services import autopilot_service
+
+        autopilot_service.notify_render_terminal(job_id)
+    except Exception:
+        logger.exception("autopilot notify failed for job %s", job_id)
 
 
 async def _run_qa_if_available(

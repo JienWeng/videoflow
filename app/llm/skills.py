@@ -62,6 +62,10 @@ SKILLS: dict[str, AgentSkill] = {
     "refine_agent": AgentSkill(
         "refine_agent", PROMPTS["refine_agent"], provider=_P, model=_M, temperature=0.4
     ),
+    # Autonomous director — low temperature for steady, deterministic decisions.
+    "director": AgentSkill(
+        "director", PROMPTS["director"], provider=_P, model=_M, temperature=0.2
+    ),
 }
 
 
@@ -79,6 +83,7 @@ AGENT_LABELS: dict[str, str] = {
     "asset_recogniser": "Asset recogniser",
     "character_memory": "Character bible",
     "style_agent": "Style designer",
+    "director": "Autopilot director",
 }
 
 
@@ -178,6 +183,9 @@ AGENT_CONTEXT_SOURCES: dict[str, list[ContextSource]] = {
         ContextSource("instruction", "User instruction", required=True),
         ContextSource("style", "Project style guide"),
         ContextSource("story", "Overall story & sibling scenes"),
+    ],
+    "director": [
+        ContextSource("state", "Run state (artifacts, QA verdict, budget)", required=True),
     ],
 }
 
