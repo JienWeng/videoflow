@@ -90,7 +90,13 @@ async def run_qa(
 ) -> RenderOutput:
     settings = get_settings()
     frames_dir = settings.outputs_dir / (job.scene_id or "misc") / f"{job.id}_frames"
-    frames = await media.extract_frames(video_path, frames_dir)
+    # Cap frames to keep vision tokens/latency bounded (resolver-tunable).
+    from app.services import settings_service
+
+    max_frames = settings_service.resolve(
+        session, "qa_max_frames", default=settings.qa_max_frames, settings=settings
+    )
+    frames = await media.extract_frames(video_path, frames_dir, max_frames=max_frames)
     references = _reference_image_paths(session, job)
 
     requirements = (job.request_json or {}).get("prompt", "")

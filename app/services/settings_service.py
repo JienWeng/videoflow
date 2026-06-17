@@ -65,6 +65,23 @@ APP_SETTING_DEFAULTS: dict[str, str] = {
     "vl_model": "atlas_vl_model",
     "max_video_refs": "atlas_video_max_refs",
     "render_negatives": "render_negatives",
+    # Autonomous director: supervision thresholds, feature flags, budget.
+    "qa_accept_score": "qa_accept_score",
+    "qa_min_dimension": "qa_min_dimension",
+    "qa_revise_floor": "qa_revise_floor",
+    "qa_max_attempts": "qa_max_attempts",
+    "qa_min_improvement": "qa_min_improvement",
+    "qa_max_frames": "qa_max_frames",
+    "supervision_enabled": "supervision_enabled",
+    "precheck_enabled": "precheck_enabled",
+    "storyboard_judge_enabled": "storyboard_judge_enabled",
+    "storyboard_best_of": "storyboard_best_of",
+    "targeted_revise_enabled": "targeted_revise_enabled",
+    "run_budget_units": "run_budget_units",
+    "cost_unit_text": "cost_unit_text",
+    "cost_unit_vision": "cost_unit_vision",
+    "cost_unit_image": "cost_unit_image",
+    "cost_unit_video_per_second": "cost_unit_video_per_second",
 }
 APP_SETTING_KEYS: list[str] = list(APP_SETTING_DEFAULTS)
 

@@ -105,6 +105,35 @@ class Settings(BaseSettings):
         default_factory=list, alias="RENDER_NEGATIVES"
     )
 
+    # ---- Autonomous director: supervision thresholds, feature flags, budget ----
+    # Thresholds the supervision policy uses to map a QAResult -> accept / revise /
+    # regenerate / escalate. All resolver-overridable per project/global.
+    qa_accept_score: int = Field(default=7, alias="QA_ACCEPT_SCORE")
+    qa_min_dimension: int = Field(default=3, alias="QA_MIN_DIMENSION")
+    qa_revise_floor: int = Field(default=4, alias="QA_REVISE_FLOOR")
+    qa_max_attempts: int = Field(default=2, alias="QA_MAX_ATTEMPTS")
+    qa_min_improvement: int = Field(default=1, alias="QA_MIN_IMPROVEMENT")
+    qa_max_frames: int = Field(default=4, alias="QA_MAX_FRAMES")
+    # Feature flags — every new autonomous behaviour is gated so it can be rolled
+    # out / back independently. Defaults preserve today's behaviour.
+    supervision_enabled: bool = Field(default=False, alias="SUPERVISION_ENABLED")
+    precheck_enabled: bool = Field(default=True, alias="PRECHECK_ENABLED")
+    storyboard_judge_enabled: bool = Field(
+        default=False, alias="STORYBOARD_JUDGE_ENABLED"
+    )
+    storyboard_best_of: int = Field(default=1, alias="STORYBOARD_BEST_OF")
+    targeted_revise_enabled: bool = Field(
+        default=True, alias="TARGETED_REVISE_ENABLED"
+    )
+    # Budget governor — relative "credits" (no real billing API on this stack).
+    run_budget_units: int = Field(default=400, alias="RUN_BUDGET_UNITS")
+    cost_unit_text: int = Field(default=1, alias="COST_UNIT_TEXT")
+    cost_unit_vision: int = Field(default=2, alias="COST_UNIT_VISION")
+    cost_unit_image: int = Field(default=10, alias="COST_UNIT_IMAGE")
+    cost_unit_video_per_second: int = Field(
+        default=30, alias="COST_UNIT_VIDEO_PER_SECOND"
+    )
+
     @property
     def assets_dir(self) -> Path:
         return self.storage_root / "assets"
