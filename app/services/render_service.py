@@ -581,7 +581,15 @@ async def revise_output(session: Session, output_id: str) -> RenderJob:
         logger.exception(
             "targeted revise failed for %s; falling back to blind retry", output_id
         )
-        return await retry_output(session, output_id)
+        try:
+            return await retry_output(session, output_id)
+        except Exception:
+            # Blind retry needs recorded QA issues; if there are none, don't fail
+            # the run — just resubmit the original spec for another take.
+            logger.exception(
+                "blind retry also failed for %s; resubmitting original spec", output_id
+            )
+            return await start_render(session, RenderSpec.model_validate(spec_dict))
 
 
 def _slugify(text: str, *, max_len: int = 60) -> str:

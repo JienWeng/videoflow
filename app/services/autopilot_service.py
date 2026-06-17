@@ -44,6 +44,11 @@ _live_tasks: set[asyncio.Task] = set()
 
 _RENDER_ACTIONS = {"render_scene", "revise_render", "regenerate_render"}
 
+# Hard backstop on total director steps per run — guarantees termination even if
+# a stage never advances state (e.g. shot generation keeps returning empty) so a
+# cheap text-only loop can't spin forever. A normal run is ~8-12 steps.
+MAX_AUTOPILOT_STEPS = 50
+
 
 class BudgetError(Exception):
     """Raised when the next expensive step can't be afforded."""
@@ -120,8 +125,13 @@ async def _advance_one(run_id: str) -> bool:
         run = session.get(WorkflowRun, run_id)
         if run is None or run.status in TERMINAL_STATUSES:
             return False
-        if run.status in ("awaiting_render", "awaiting_approval"):
-            return False  # parked
+        if run.status in ("awaiting_render", "awaiting_approval", "judging"):
+            return False  # parked / a render verdict is being computed
+
+        # Hard backstop: too many steps means a stage isn't advancing — stop.
+        if _step_count(session, run_id) >= MAX_AUTOPILOT_STEPS:
+            await _wind_down(session, run, "step limit reached")
+            return False
 
         # Hard guardrail: a 'escalate' verdict means stop spending — wind down.
         verdict = run.last_verdict_json or {}
@@ -392,55 +402,75 @@ async def on_render_terminal(job_id: str) -> None:
         ).first()
         if run is None:
             return
-        from app.services import render_service
-
-        job = session.get(RenderJob, job_id)
-        outputs = render_service.job_outputs(session, job_id)
-        output = next((o for o in reversed(outputs) if o.video_path), None)
-
-        if output is None or (job and job.status == RenderStatus.failed):
-            run.last_verdict_json = {
-                "decision": "regenerate", "reason": "render failed", "score": 0,
-            }
-            _record_step(session, run, "qa", "render failed", "no usable output")
-        else:
-            run.current_output_id = output.id
-            score = output.score or 0
-            prev_best = run.best_score
-            if run.best_score is None or score > run.best_score:
-                run.best_score = score
-                run.best_output_id = output.id
-            budget = cost_service.budget_for_run(session, workflow_run_id=run.id)
-            if budget is not None:
-                cost_service.charge(session, budget.id, "vision")  # QA cost
-            est = cost_service.estimate_video(
-                session, _scene_duration(session, run.scene_id)
-            )
-            can_afford = budget is not None and cost_service.can_afford(
-                session, budget.id, est
-            )
-            verdict = supervision_service.decide_for_output(
-                session,
-                output,
-                attempt=run.attempt,
-                prev_score=prev_best if run.attempt > 1 else None,
-                can_afford_video=can_afford,
-                project_id=run.project_id,
-            )
-            run.last_verdict_json = {
-                "decision": verdict.decision,
-                "reason": verdict.reason,
-                "target_dimension": verdict.target_dimension,
-                "score": score,
-            }
-            _record_step(
-                session, run, "qa", verdict.reason,
-                f"score {score} -> {verdict.decision}",
-            )
-        run.status = "running"
-        run.current_job_id = None
+        # CLAIM the run atomically: flip out of 'awaiting_render' before any
+        # await, so a concurrent/duplicate callback (or a startup reconcile
+        # double-spawn) finds nothing to process and can't double-compute the
+        # verdict. The select->set->commit has no await between, so within the
+        # asyncio loop it's atomic. On error below we re-arm so it's retried.
+        run.status = "judging"
         _persist(session, run)
+        try:
+            await _judge_render(session, run, job_id)
+            run.status = "running"
+            run.current_job_id = None
+            _persist(session, run)
+        except Exception:
+            logger.exception("on_render_terminal failed for job %s", job_id)
+            # Treat as a failed attempt (counts toward the cap) so the run keeps
+            # moving and the governor can stop it — never leave it stuck.
+            run.last_verdict_json = {
+                "decision": "regenerate", "reason": "judge error", "score": 0,
+            }
+            run.status = "running"
+            run.current_job_id = None
+            _persist(session, run)
     _spawn(run_id=run.id)
+
+
+async def _judge_render(session: Session, run: WorkflowRun, job_id: str) -> None:
+    """Compute the QA verdict for a finished render and record it on the run.
+    Does NOT change run.status / spawn — the on_render_terminal wrapper owns the
+    claim/release so the verdict computation can't run twice for one job."""
+    from app.services import render_service
+
+    job = session.get(RenderJob, job_id)
+    outputs = render_service.job_outputs(session, job_id)
+    output = next((o for o in reversed(outputs) if o.video_path), None)
+
+    if output is None or (job and job.status == RenderStatus.failed):
+        run.last_verdict_json = {
+            "decision": "regenerate", "reason": "render failed", "score": 0,
+        }
+        _record_step(session, run, "qa", "render failed", "no usable output")
+        return
+    run.current_output_id = output.id
+    score = output.score or 0
+    prev_best = run.best_score
+    if run.best_score is None or score > run.best_score:
+        run.best_score = score
+        run.best_output_id = output.id
+    budget = cost_service.budget_for_run(session, workflow_run_id=run.id)
+    if budget is not None:
+        cost_service.charge(session, budget.id, "vision")  # QA cost
+    est = cost_service.estimate_video(session, _scene_duration(session, run.scene_id))
+    can_afford = budget is not None and cost_service.can_afford(session, budget.id, est)
+    verdict = supervision_service.decide_for_output(
+        session,
+        output,
+        attempt=run.attempt,
+        prev_score=prev_best if run.attempt > 1 else None,
+        can_afford_video=can_afford,
+        project_id=run.project_id,
+    )
+    run.last_verdict_json = {
+        "decision": verdict.decision,
+        "reason": verdict.reason,
+        "target_dimension": verdict.target_dimension,
+        "score": score,
+    }
+    _record_step(
+        session, run, "qa", verdict.reason, f"score {score} -> {verdict.decision}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -486,12 +516,24 @@ def reconcile_runs() -> None:
     """Re-attach to runs left in flight by a prior process. Call AFTER
     worker.reconcile_pending() so in-flight renders are already re-enqueued."""
     with Session(database.engine) as session:
-        runs = session.exec(
-            select(WorkflowRun).where(
-                WorkflowRun.status.in_(["running", "awaiting_render"])  # type: ignore[attr-defined]
-            )
-        ).all()
-        for run in runs:
+        ids = [
+            r.id for r in session.exec(
+                select(WorkflowRun).where(
+                    WorkflowRun.status.in_(  # type: ignore[attr-defined]
+                        ["running", "awaiting_render", "judging"]
+                    )
+                )
+            ).all()
+        ]
+        for run_id in ids:
+            run = session.get(WorkflowRun, run_id)  # fresh read, no stale cache
+            if run is None:
+                continue
+            # A run interrupted mid-verdict ('judging') is re-armed so the
+            # terminal callback below re-processes it.
+            if run.status == "judging":
+                run.status = "awaiting_render"
+                _persist(session, run)
             if run.status == "awaiting_render" and run.current_job_id:
                 job = session.get(RenderJob, run.current_job_id)
                 if job and job.status in (RenderStatus.succeeded, RenderStatus.failed):
@@ -525,11 +567,14 @@ def _charge(session: Session, run: WorkflowRun, kind: str) -> None:
         cost_service.charge(session, budget.id, kind)
 
 
+def _step_count(session: Session, run_id: str) -> int:
+    return len(
+        session.exec(select(WorkflowStep).where(WorkflowStep.run_id == run_id)).all()
+    )
+
+
 def _next_seq(session: Session, run_id: str) -> int:
-    rows = session.exec(
-        select(WorkflowStep).where(WorkflowStep.run_id == run_id)
-    ).all()
-    return len(rows) + 1
+    return _step_count(session, run_id) + 1
 
 
 def _record_step(

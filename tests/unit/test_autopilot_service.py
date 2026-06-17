@@ -203,6 +203,57 @@ def test_default_action_progression():
     assert da({**post, "verdict": {"decision": "accept"}, "captioned": True}) == "finish"
 
 
+async def test_double_render_terminal_judges_once(session, monkeypatch):
+    """A duplicate/concurrent terminal callback for the same job must not
+    double-compute the verdict (the atomic claim prevents it)."""
+    _install_stubs(monkeypatch, qa_json=ACCEPT_QA)
+    run = autopilot_service.create_run(session, idea="x", settings=_settings())
+    # Drive to the first park (a submitted render).
+    while await autopilot_service._advance_one(run.id):
+        pass
+    from app.models.workflow_run import WorkflowRun
+    run = session.get(WorkflowRun, run.id)
+    session.refresh(run)
+    assert run.status == "awaiting_render"
+    job_id = run.current_job_id
+    out = RenderOutput(render_job_id=job_id, video_path="/v.mp4",
+                       score=ACCEPT_QA["score"], qa_json=ACCEPT_QA)
+    session.add(out)
+    job = session.get(RenderJob, job_id)
+    job.status = RenderStatus.succeeded
+    session.add(job)
+    session.commit()
+
+    await autopilot_service.on_render_terminal(job_id)
+    await autopilot_service.on_render_terminal(job_id)  # duplicate — must no-op
+
+    qa_steps = [s for s in autopilot_service.list_steps(session, run.id) if s.action == "qa"]
+    assert len(qa_steps) == 1  # judged exactly once
+
+
+async def test_step_cap_winds_down_a_stuck_run(session, monkeypatch):
+    """If a stage never advances state (shots stay empty), the global step cap
+    stops the run instead of looping forever."""
+    _install_stubs(monkeypatch, qa_json=ACCEPT_QA)
+    from app.services import scene_service
+
+    async def empty_shots(session, scene_id, auto_assets=True):
+        return []  # never advances has_shots -> would loop without the cap
+
+    monkeypatch.setattr(scene_service, "create_shots", empty_shots)
+    monkeypatch.setattr(autopilot_service, "MAX_AUTOPILOT_STEPS", 8)
+
+    run = autopilot_service.create_run(session, idea="x", settings=_settings())
+    for _ in range(60):
+        if not await autopilot_service._advance_one(run.id):
+            break
+    from app.models.workflow_run import WorkflowRun
+    run = session.get(WorkflowRun, run.id)
+    session.refresh(run)
+    assert run.status in ("done", "failed")  # wound down, not spinning
+    assert autopilot_service._step_count(session, run.id) <= 12
+
+
 def test_is_valid_gates():
     iv = autopilot_service._is_valid
     base = dict(has_script=False, scene_expanded=False, has_shots=False,
