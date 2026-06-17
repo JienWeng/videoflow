@@ -1,6 +1,7 @@
 """SQLModel table definitions. Importing this package registers all tables."""
 
 from app.models.asset import Asset
+from app.models.budget import RunBudget
 from app.models.character import Character
 from app.models.op import Op
 from app.models.project import Project
@@ -18,6 +19,7 @@ __all__ = [
     "AppSetting",
     "ProviderSecret",
     "Asset",
+    "RunBudget",
     "Character",
     "Op",
     "Project",
