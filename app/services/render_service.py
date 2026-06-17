@@ -17,6 +17,7 @@ from app.agents.prompt_agent import (
     NO_TEXT_NEGATIVE,
     cap_references,
     collect_named_references,
+    enforce_render_defaults,
     voice_line,
 )
 from app.config import get_settings
@@ -195,7 +196,66 @@ async def _anchor_reference(session: Session, scene: Scene) -> dict | None:
     return {"name": ANCHOR_NAME, "asset_id": asset.id}
 
 
+def _scene_bibles(session: Session, scene_id: str | None):
+    from app.services import scene_service
+
+    if not scene_id:
+        return []
+    scene = session.get(Scene, scene_id)
+    if scene is None:
+        return []
+    return [
+        scene_service.character_to_bible(c)
+        for cid in (scene.character_ids_json or [])
+        if (c := session.get(Character, cid))
+    ]
+
+
+async def _precheck_spec(session: Session, spec: RenderSpec) -> RenderSpec:
+    """Cheap text self-critique BEFORE the paid render (gated by precheck_enabled,
+    fail-open). Applies any prompt revision to a COPY, re-asserts the render
+    invariants, and re-validates; the original spec is rendered if anything goes
+    wrong, so the critic can never block or corrupt a render."""
+    from app.services import settings_service, style_service
+
+    if not settings_service.resolve(
+        session, "precheck_enabled", default=get_settings().precheck_enabled
+    ):
+        return spec
+    try:
+        from app.agents import spec_critic_agent
+
+        crit = await spec_critic_agent.critique_spec(
+            spec=spec,
+            style=style_service.style_context(style_service.get_style(session)),
+        )
+        if crit.ok or (not crit.revised_prompt and not crit.revised_multi_prompt):
+            return spec
+        candidate = RenderSpec.model_validate(spec.model_dump(mode="json"))
+        if crit.revised_prompt:
+            candidate.prompt = crit.revised_prompt
+        if crit.revised_multi_prompt and len(crit.revised_multi_prompt) == len(
+            candidate.multi_prompt
+        ):
+            candidate.multi_prompt = crit.revised_multi_prompt
+        enforce_render_defaults(
+            candidate,
+            named_references=[
+                {"name": r.name, "asset_id": r.asset_id}
+                for r in candidate.reference_images
+            ],
+            character_bibles=_scene_bibles(session, candidate.scene_id),
+        )
+        RenderSpec.model_validate(candidate.model_dump(mode="json"))
+        logger.info("spec precheck revised the prompt for scene %s", spec.scene_id)
+        return candidate
+    except Exception:
+        logger.exception("spec precheck failed; rendering the original spec")
+        return spec
+
+
 async def start_render(session: Session, spec: RenderSpec) -> RenderJob:
+    spec = await _precheck_spec(session, spec)
     provider = get_video_provider(spec)
     resolver = AtlasCloudUploadResolver(session, get_atlas_client())
 
@@ -380,6 +440,46 @@ CORRECTIONS_MARKER = "Corrections from review:"
 MAX_CORRECTION_ISSUES = 5
 
 
+def apply_render_patch(spec: RenderSpec, patch) -> RenderSpec:
+    """Apply a RenderSpecPatch field-by-field (pure; mutates and returns `spec`).
+
+    Only touches what the vision reviser named: the main prompt, individual
+    multi_prompt entries (1-based, out-of-range ignored), and EXISTING references
+    (swap asset / remove). A reference op whose name isn't already present is
+    ignored — never introduce a new character name (Kling would render a clone).
+    The <=7 reference cap and voice/sound/negatives are re-asserted by the caller
+    via enforce_render_defaults; this function does not change reference count
+    except by removal."""
+    if patch.main_prompt:
+        spec.prompt = patch.main_prompt
+    if patch.aspect_ratio:
+        spec.aspect_ratio = patch.aspect_ratio
+    for sp in patch.shot_prompts:
+        idx = sp.index - 1
+        if 0 <= idx < len(spec.multi_prompt):
+            spec.multi_prompt[idx].prompt = sp.prompt
+    if patch.references:
+        by_name = {r.name: r for r in spec.reference_images}
+        keep: list[ReferenceImage] = []
+        removed = {
+            rp.name for rp in patch.references
+            if rp.op == "remove" and rp.name in by_name
+        }
+        swaps = {
+            rp.name: rp.asset_id
+            for rp in patch.references
+            if rp.op == "swap" and rp.name in by_name and rp.asset_id
+        }
+        for ref in spec.reference_images:
+            if ref.name in removed:
+                continue
+            if ref.name in swaps:
+                ref.asset_id = swaps[ref.name]
+            keep.append(ref)
+        spec.reference_images = keep
+    return spec
+
+
 async def retry_output(session: Session, output_id: str) -> RenderJob:
     """Submit a corrective re-render for a QA'd output.
 
@@ -418,6 +518,70 @@ async def retry_output(session: Session, output_id: str) -> RenderJob:
 
     logger.info("corrective re-render for output %s (job %s)", output_id, job.id)
     return await start_render(session, spec)
+
+
+async def revise_output(session: Session, output_id: str) -> RenderJob:
+    """Targeted corrective re-render: a vision reviser SEES the flawed frames +
+    references and emits a RenderSpecPatch applied field-by-field (rewrite the
+    offending shot, swap/strengthen a drifted character's EXISTING reference),
+    then the invariants are re-asserted (voice/sound/negatives + <=7 ref cap) and
+    the spec is re-validated. Falls back to the blind suffix retry on any failure
+    or when targeted revise is disabled — strictly additive."""
+    from app.services import settings_service
+
+    if not settings_service.resolve(
+        session, "targeted_revise_enabled",
+        default=get_settings().targeted_revise_enabled,
+    ):
+        return await retry_output(session, output_id)
+
+    output = session.get(RenderOutput, output_id)
+    if output is None:
+        raise NotFoundError(f"output {output_id} not found")
+    job = session.get(RenderJob, output.render_job_id)
+    if job is None:
+        raise NotFoundError(f"render job {output.render_job_id} not found")
+    spec_dict = (job.request_json or {}).get("spec")
+    if not spec_dict:
+        return await retry_output(session, output_id)
+
+    try:
+        from app.agents import spec_reviser_agent
+        from app.services import media, qa_service
+
+        spec = RenderSpec.model_validate(spec_dict)
+        frames: list = []
+        if output.video_path and Path(output.video_path).exists():
+            fdir = get_settings().outputs_dir / (job.scene_id or "misc") / f"{job.id}_revise"
+            frames = await media.extract_frames(Path(output.video_path), fdir, max_frames=4)
+        refs = qa_service._reference_image_paths(session, job)
+        qa = output.qa_json or {}
+        patch = await spec_reviser_agent.revise_spec(
+            spec=spec,
+            qa_result=qa,
+            frames=[str(f) for f in frames],
+            reference_images=refs,
+            target=qa.get("worst_dimension"),
+        )
+        apply_render_patch(spec, patch)
+        enforce_render_defaults(
+            spec,
+            named_references=[
+                {"name": r.name, "asset_id": r.asset_id} for r in spec.reference_images
+            ],
+            character_bibles=_scene_bibles(session, job.scene_id),
+        )
+        RenderSpec.model_validate(spec.model_dump(mode="json"))
+        limit = get_settings().atlas_video_max_refs
+        if len(spec.reference_images) > limit:
+            raise ValueError(f"{len(spec.reference_images)} refs exceed cap {limit}")
+        logger.info("targeted revise for output %s (job %s)", output_id, job.id)
+        return await start_render(session, spec)
+    except Exception:
+        logger.exception(
+            "targeted revise failed for %s; falling back to blind retry", output_id
+        )
+        return await retry_output(session, output_id)
 
 
 def _slugify(text: str, *, max_len: int = 60) -> str:

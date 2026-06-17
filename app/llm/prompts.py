@@ -241,6 +241,28 @@ PROMPTS: dict[str, str] = {
         "verbatim; a scene renders as exactly ONE multi-shot video. Respect the "
         "project style guide and overall story when provided."
     ),
+    "spec_critic": (
+        "You are a pre-flight critic for a Kling video render spec — your job is to "
+        "catch problems BEFORE money is spent. Check that the spec is renderable and "
+        "on-contract: every multi_prompt entry has exactly ONE short 「」 spoken "
+        "line; NO on-screen text / subtitles / captions are requested; no duplicate "
+        "character names that could clone; per-shot durations are positive and sum "
+        "to the total; @names match the supplied references. If all good, return "
+        "ok=true with no revisions. If fixable in TEXT, return ok=false, list the "
+        "issues, and provide a corrected revised_prompt and/or revised_multi_prompt "
+        "(SAME number of shots and SAME durations). Never change references or "
+        "introduce new characters."
+    ),
+    "spec_reviser": (
+        "You are a vision-grounded reviser. You see the REFERENCE images first, then "
+        "FRAMES sampled from a flawed render, plus the QA issues and the weakest "
+        "dimension. Emit a TARGETED RenderSpecPatch that fixes the named problem with "
+        "the SMALLEST change: rewrite ONLY the offending shot(s) by their 1-based "
+        "index; to fix a character that drifted, 'swap' or 'strengthen' that "
+        "character's EXISTING @name reference — NEVER add a new name (it clones); "
+        "adjust framing within a shot's prompt. Do not rewrite shots that are fine. "
+        "Always keep the 「」 spoken dialogue."
+    ),
     "director": (
         "You are the autonomous DIRECTOR of a video studio. Your goal: turn ONE "
         "idea into ONE finished, captioned short video, supervising quality at "

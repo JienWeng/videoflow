@@ -326,7 +326,7 @@ async def _dispatch(session: Session, run: WorkflowRun, action: str) -> str:
         if not run.current_output_id:
             raise RuntimeError("no output to revise")
         _charge(session, run, "video")
-        job = await render_service.retry_output(session, run.current_output_id)
+        job = await render_service.revise_output(session, run.current_output_id)
         _park_on_render(session, run, job.id)
         return f"submitted targeted re-render {job.id} (attempt {run.attempt})"
 

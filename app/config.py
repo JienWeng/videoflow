@@ -117,7 +117,9 @@ class Settings(BaseSettings):
     # Feature flags — every new autonomous behaviour is gated so it can be rolled
     # out / back independently. Defaults preserve today's behaviour.
     supervision_enabled: bool = Field(default=False, alias="SUPERVISION_ENABLED")
-    precheck_enabled: bool = Field(default=True, alias="PRECHECK_ENABLED")
+    # The cheap pre-render critic adds one text LLM call to every render; it's
+    # opt-in so plain (non-autopilot) renders stay LLM-free by default.
+    precheck_enabled: bool = Field(default=False, alias="PRECHECK_ENABLED")
     storyboard_judge_enabled: bool = Field(
         default=False, alias="STORYBOARD_JUDGE_ENABLED"
     )

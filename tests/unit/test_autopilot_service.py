@@ -117,6 +117,7 @@ def _install_stubs(monkeypatch, *, qa_json):
     monkeypatch.setattr(storyboard_service, "latest_storyboard_for_scene", fake_latest_sb)
     monkeypatch.setattr(render_service, "render_scene", fake_render_scene)
     monkeypatch.setattr(render_service, "retry_output", fake_retry)
+    monkeypatch.setattr(render_service, "revise_output", fake_retry)
     monkeypatch.setattr(caption_service, "caption_output", fake_caption)
     return qa_json
 

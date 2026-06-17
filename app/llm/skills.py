@@ -66,6 +66,13 @@ SKILLS: dict[str, AgentSkill] = {
     "director": AgentSkill(
         "director", PROMPTS["director"], provider=_P, model=_M, temperature=0.2
     ),
+    # Cheap text pre-render critic (MiniMax) + vision-grounded reviser (AtlasCloud).
+    "spec_critic": AgentSkill(
+        "spec_critic", PROMPTS["spec_critic"], provider=_P, model=_M, temperature=0.3
+    ),
+    "spec_reviser": AgentSkill(
+        "spec_reviser", PROMPTS["spec_reviser"], provider="atlas", model=None, temperature=0.2
+    ),
 }
 
 
@@ -84,6 +91,8 @@ AGENT_LABELS: dict[str, str] = {
     "character_memory": "Character bible",
     "style_agent": "Style designer",
     "director": "Autopilot director",
+    "spec_critic": "Pre-render critic",
+    "spec_reviser": "Render reviser (vision)",
 }
 
 
@@ -186,6 +195,17 @@ AGENT_CONTEXT_SOURCES: dict[str, list[ContextSource]] = {
     ],
     "director": [
         ContextSource("state", "Run state (artifacts, QA verdict, budget)", required=True),
+    ],
+    "spec_critic": [
+        ContextSource("spec", "Render spec", required=True),
+        ContextSource("style", "Project style guide"),
+        ContextSource("story", "Overall story"),
+    ],
+    "spec_reviser": [
+        ContextSource("spec", "Render spec", required=True),
+        ContextSource("qa", "QA issues", required=True),
+        ContextSource("frames", "Flawed render frames", required=True),
+        ContextSource("references", "Reference images"),
     ],
 }
 
