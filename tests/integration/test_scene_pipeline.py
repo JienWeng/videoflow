@@ -85,7 +85,7 @@ class FakeLLM:
                     # One shot WITH a spoken line, one WITHOUT — the missing
                     # one exercises the bounded dialogue auto-fix.
                     ShotSpec(shot_id="gen_sh1", duration=3,
-                             prompt="@Grace lifts the Red Cup and says, 「Cheers!」",
+                             prompt="@Grace lifts the Red Cup and says, 「Let's all cheer for this bright sunny day!」",
                              camera="mid", movement="static"),
                     ShotSpec(shot_id="gen_sh2", duration=3,
                              prompt="@Grace smiles at camera", camera="close-up",
@@ -1013,7 +1013,7 @@ def test_shots_generate_enforces_dialogue(ctx):
     shots = resp.json()
     assert len(shots) == 2
     # gen_sh1 already had dialogue and is untouched.
-    assert shots[0]["prompt"] == "@Grace lifts the Red Cup and says, 「Cheers!」"
+    assert shots[0]["prompt"] == "@Grace lifts the Red Cup and says, 「Let's all cheer for this bright sunny day!」"
     # gen_sh2 lacked dialogue → replaced with the refine agent's spoken version
     # (bare "Grace" auto-tagged on save).
     assert shots[1]["prompt"] == "@" + FakeLLM.refinement_prompt
@@ -1029,7 +1029,7 @@ def test_shots_generate_dialogue_fix_failure_keeps_original(ctx, monkeypatch):
     resp = client.post("/scenes/scene_1/shots/generate", json={"auto_assets": False})
     assert resp.status_code == 200, resp.text
     shots = resp.json()
-    assert shots[0]["prompt"] == "@Grace lifts the Red Cup and says, 「Cheers!」"
+    assert shots[0]["prompt"] == "@Grace lifts the Red Cup and says, 「Let's all cheer for this bright sunny day!」"
     assert shots[1]["prompt"] == "@Grace smiles at camera"  # unchanged
 
 

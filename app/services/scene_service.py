@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from app.agents import refine_agent
 from app.agents.idea_agent import develop_idea
+from app.config import get_settings
 from app.agents.scene_agent import generate_scene
 from app.agents.script_agent import generate_script
 from app.agents.shot_agent import generate_shots
@@ -21,9 +22,10 @@ from app.services.dialogue import has_dialogue
 logger = logging.getLogger(__name__)
 
 DIALOGUE_FIX_INSTRUCTION = (
-    "Ensure this shot has exactly ONE short spoken line in 「」 quotes "
-    "(at most 10 English words or 15 Chinese characters) — add one, or "
-    "shorten/replace an existing overlong line; change nothing else."
+    "Ensure this shot has exactly ONE spoken line in 「」 quotes, PACED to fill "
+    "its duration at a brisk 170-200 WPM (≈3 English words or ~5 Chinese "
+    "characters per second) — add one, or resize an existing line so it fills "
+    "the shot without dead air or rushing; change nothing else."
 )
 
 
@@ -445,6 +447,7 @@ async def create_shots(
         rows.append(row)
     session.commit()
     await _ensure_shot_dialogue(session, scene, rows)
+    await _enforce_dialogue_pace(session, scene, rows)
     _auto_link(session, scene.id)
 
     if auto_assets:
@@ -502,6 +505,74 @@ async def _ensure_shot_dialogue(session: Session, scene: Scene, rows: list[Shot]
                 "dialogue auto-fix for shot %s returned no 「」 line; keeping original",
                 row.id,
             )
+    if changed:
+        session.commit()
+
+
+def _pace_distance(check: dict) -> int:
+    """How far a line's unit-count is outside its pace band (0 when inside)."""
+    return max(0, check["lo"] - check["count"], check["count"] - check["hi"])
+
+
+async def _enforce_dialogue_pace(session: Session, scene: Scene, rows: list[Shot]) -> None:
+    """Bounded auto-fix: ONE refine pass per shot whose 「」 line is mis-paced for
+    its duration (too short -> slow/dead air, too long -> rushed). The rewritten
+    line is applied only when it actually improves the pace (in-band or closer);
+    agent failures keep the original. Pace targets resolve from settings
+    (dialogue_wpm_*, dialogue_cps_zh_*)."""
+    from app.services import dialogue, settings_service
+
+    base = get_settings()
+    # Honour project/global overrides of the pace targets, falling back to config.
+    pid = project_service.active_project_id(session)
+    settings = base.model_copy(update={
+        k: settings_service.resolve(session, k, default=getattr(base, k), project_id=pid)
+        for k in ("dialogue_wpm_min", "dialogue_wpm_max",
+                  "dialogue_cps_zh_min", "dialogue_cps_zh_max")
+    })
+    changed = False
+    for row in rows:
+        check = dialogue.pace_check(row.prompt, row.duration, settings)
+        if check["verdict"] in ("ok", "none"):
+            continue
+        units = "Chinese characters" if check["kind"] == "zh" else "English words"
+        problem = (
+            "too short (leaves dead air)"
+            if check["verdict"] == "too_short"
+            else "too long to say in time"
+        )
+        instruction = (
+            f"The spoken 「」 line is {problem} for this {row.duration}s shot: it "
+            f"has {check['count']} {units} but should be about {check['lo']}-"
+            f"{check['hi']} {units} to fill the shot at a brisk 170-200 WPM pace. "
+            "Rewrite ONLY the 「」 line to that length — keep it natural and "
+            "on-topic; change nothing else."
+        )
+        try:
+            refinement = await refine_agent.refine_shot(
+                shot={
+                    "prompt": row.prompt,
+                    "duration": row.duration,
+                    "camera": row.camera,
+                    "movement": row.movement,
+                },
+                scene_summary=scene.summary,
+                instruction=instruction,
+            )
+        except Exception:
+            logger.exception(
+                "dialogue pace-fix failed for shot %s; keeping original prompt", row.id
+            )
+            continue
+        new_prompt = refinement.prompt
+        if not new_prompt or not has_dialogue(new_prompt):
+            continue
+        new_check = dialogue.pace_check(new_prompt, row.duration, settings)
+        if new_check["verdict"] == "ok" or _pace_distance(new_check) < _pace_distance(check):
+            row.prompt = new_prompt
+            row.updated_at = utcnow()
+            session.add(row)
+            changed = True
     if changed:
         session.commit()
 

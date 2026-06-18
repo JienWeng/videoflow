@@ -100,6 +100,13 @@ class Settings(BaseSettings):
     caption_style: str = Field(default="default", alias="CAPTION_STYLE")
     caption_language: str = Field(default="auto", alias="CAPTION_LANGUAGE")
     dialogue_language: str = Field(default="zh", alias="DIALOGUE_LANGUAGE")
+    # Spoken-line pacing: size each shot's 「」 dialogue to FILL its duration at a
+    # brisk pace so the video doesn't drag. English uses words-per-minute; Chinese
+    # uses characters-per-second (WPM doesn't map to Chinese). Resolver-overridable.
+    dialogue_wpm_min: int = Field(default=170, alias="DIALOGUE_WPM_MIN")
+    dialogue_wpm_max: int = Field(default=200, alias="DIALOGUE_WPM_MAX")
+    dialogue_cps_zh_min: float = Field(default=4.5, alias="DIALOGUE_CPS_ZH_MIN")
+    dialogue_cps_zh_max: float = Field(default=5.5, alias="DIALOGUE_CPS_ZH_MAX")
     # Negative-prompt fragments appended to render requests (empty by default).
     render_negatives: list[str] = Field(
         default_factory=list, alias="RENDER_NEGATIVES"

@@ -62,6 +62,10 @@ class AppSettingsBody(BaseModel):
     caption_language: str | None = None
     whisper_model: str | None = None
     dialogue_language: str | None = None
+    dialogue_wpm_min: int | None = None
+    dialogue_wpm_max: int | None = None
+    dialogue_cps_zh_min: float | None = None
+    dialogue_cps_zh_max: float | None = None
     image_model: str | None = None
     ref_image_model: str | None = None
     video_model: str | None = None

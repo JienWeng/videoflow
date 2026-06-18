@@ -24,11 +24,14 @@ class TestHasDialogue:
     def test_empty_quotes_is_false(self):
         assert has_dialogue("Grace says 「」 nothing") is False
 
-    def test_over_60_chars_inside_quotes_is_false(self):
-        assert has_dialogue("Grace says 「" + "a" * 61 + "」") is False
+    def test_long_duration_filling_line_is_true(self):
+        # Lines are now sized to fill the shot at ~170-200 WPM; a ~90-char line
+        # (a 6s shot) must count as dialogue (the old 60-char cap forced slow,
+        # too-short lines). The cap is a generous 220.
+        assert has_dialogue("Grace says 「" + "a" * 90 + "」") is True
 
-    def test_exactly_60_chars_inside_quotes_is_true(self):
-        assert has_dialogue("Grace says 「" + "a" * 60 + "」") is True
+    def test_absurdly_long_line_is_false(self):
+        assert has_dialogue("Grace says 「" + "a" * 221 + "」") is False
 
     def test_western_quotes_do_not_count(self):
         assert has_dialogue('Grace says "Hello!"') is False

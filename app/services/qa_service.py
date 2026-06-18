@@ -106,7 +106,11 @@ async def run_qa(
             f"{s.get('index', i + 1)}. {s.get('prompt', '')} ({s.get('duration')}s)"
             for i, s in enumerate(shots)
         )
-        requirements += "\nEvery shot must contain a short spoken line (「」)."
+        requirements += (
+            "\nEvery shot must contain a spoken line (「」) paced to fill its "
+            "duration at a brisk ~170-200 WPM — flag dialogue that is too sparse "
+            "(dead air / slow) or too rushed for the shot length."
+        )
     requirements += (
         "\nEach character must appear exactly once per shot — flag any "
         "duplicated/cloned characters."
