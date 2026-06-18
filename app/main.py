@@ -25,6 +25,9 @@ async def lifespan(app: FastAPI):
     from app.services import autopilot_service, op_service
 
     op_service.reconcile_stuck_ops()  # ops can't resume; mark them failed
+    # Capture the running loop so sync /workflows handlers (threadpool threads)
+    # can schedule the director loop onto it.
+    autopilot_service.capture_loop()
     # Resume autonomous director runs AFTER renders are re-enqueued, so a run
     # parked on an in-flight render re-attaches via the terminal callback.
     autopilot_service.reconcile_runs()

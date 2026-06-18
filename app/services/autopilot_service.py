@@ -42,6 +42,20 @@ logger = logging.getLogger("videoflow.autopilot")
 # Tracked background tasks (a strong ref so they aren't GC'd mid-flight).
 _live_tasks: set[asyncio.Task] = set()
 
+# The app's event loop, captured at startup. Needed because the /workflows API
+# handlers are sync `def` (run in a threadpool with NO running loop), so spawning
+# the director loop has to be scheduled onto this captured loop from that thread.
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def capture_loop() -> None:
+    """Record the running event loop (called once from the app lifespan)."""
+    global _loop
+    try:
+        _loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _loop = None
+
 _RENDER_ACTIONS = {"render_scene", "revise_render", "regenerate_render"}
 
 # Hard backstop on total director steps per run — guarantees termination even if
@@ -638,14 +652,21 @@ def _spawn(run_id: str) -> None:
 
 
 def _spawn_coro(coro) -> None:
+    # On the event loop (render callback, reconcile): schedule directly.
     try:
         task = asyncio.create_task(coro)
+        _live_tasks.add(task)
+        task.add_done_callback(_live_tasks.discard)
+        return
     except RuntimeError:
-        # No running loop (sync context) — caller handles via reconcile on restart.
+        pass  # not on the loop — e.g. a sync API handler in a threadpool thread
+    loop = _loop
+    if loop is None or not loop.is_running():
+        logger.error("autopilot: no event loop to spawn on; coroutine dropped")
         coro.close()
         return
-    _live_tasks.add(task)
-    task.add_done_callback(_live_tasks.discard)
+    # Schedule onto the captured app loop from this (non-loop) thread.
+    asyncio.run_coroutine_threadsafe(coro, loop)
 
 
 def get_run(session: Session, run_id: str) -> WorkflowRun:

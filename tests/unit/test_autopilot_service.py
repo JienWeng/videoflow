@@ -277,6 +277,28 @@ async def test_step_cap_winds_down_a_stuck_run(session, monkeypatch):
     assert autopilot_service._step_count(session, run.id) <= 12
 
 
+async def test_spawn_from_threadpool_thread_runs_on_loop(monkeypatch):
+    """The /workflows API handlers are sync (threadpool, no running loop), so the
+    director loop must still get scheduled onto the captured app loop. Before the
+    fix the coroutine was silently dropped and the run never advanced."""
+    import asyncio
+    import threading
+
+    autopilot_service.capture_loop()  # captures this test's running loop
+    ran = asyncio.Event()
+
+    async def work():
+        ran.set()
+
+    def from_thread():  # no running loop here, like a FastAPI sync handler
+        autopilot_service._spawn_coro(work())
+
+    t = threading.Thread(target=from_thread)
+    t.start()
+    t.join()
+    await asyncio.wait_for(ran.wait(), timeout=3)
+
+
 def test_is_valid_gates():
     iv = autopilot_service._is_valid
     base = dict(has_script=False, scene_expanded=False, has_shots=False,
