@@ -43,6 +43,8 @@ def _install_stubs(monkeypatch, *, qa_json):
         caption_service, render_service, scene_service, storyboard_service,
     )
 
+    captured: dict = {}
+
     async def fake_director(state):
         return None  # force the deterministic default action
 
@@ -61,14 +63,15 @@ def _install_stubs(monkeypatch, *, qa_json):
         session.commit()
         return script, None
 
-    async def fake_expand(session, scene_id, character_ids=None):
+    async def fake_expand(session, scene_id, character_ids=None, **kw):
         scene = session.get(Scene, scene_id)
         scene.scene_json = {"expanded": True}
         session.add(scene)
         session.commit()
         return scene
 
-    async def fake_shots(session, scene_id, auto_assets=True):
+    async def fake_shots(session, scene_id, auto_assets=True, **kw):
+        captured["shots_kw"] = kw
         shot = Shot(scene_id=scene_id, shot_order=1, prompt="A says 「hi」", duration=5)
         session.add(shot)
         session.commit()
@@ -87,7 +90,8 @@ def _install_stubs(monkeypatch, *, qa_json):
                 return a
         return None
 
-    async def fake_render_scene(session, scene_id):
+    async def fake_render_scene(session, scene_id, **kw):
+        captured["render_kw"] = kw
         job = RenderJob(scene_id=scene_id, status=RenderStatus.pending)
         session.add(job)
         session.commit()
@@ -119,7 +123,7 @@ def _install_stubs(monkeypatch, *, qa_json):
     monkeypatch.setattr(render_service, "retry_output", fake_retry)
     monkeypatch.setattr(render_service, "revise_output", fake_retry)
     monkeypatch.setattr(caption_service, "caption_output", fake_caption)
-    return qa_json
+    return captured
 
 
 async def _drive(session, run_id, qa_json, *, max_steps=40):
@@ -201,6 +205,25 @@ def test_default_action_progression():
     assert da({**post, "verdict": {"decision": "regenerate"}}) == "regenerate_render"
     assert da({**post, "verdict": {"decision": "accept"}}) == "caption"
     assert da({**post, "verdict": {"decision": "accept"}, "captioned": True}) == "finish"
+
+
+async def test_run_config_threads_orientation_language_style(session, monkeypatch):
+    """Per-run orientation/language/style reach the pipeline: the scene gets the
+    chosen aspect ratio, and shots + render receive the language and custom style."""
+    captured = _install_stubs(monkeypatch, qa_json=ACCEPT_QA)
+    run = autopilot_service.create_run(
+        session, idea="x",
+        config={"aspect_ratio": "16:9", "dialogue_language": "en", "style": "pastel"},
+        settings=_settings(),
+    )
+    run = await _drive(session, run.id, ACCEPT_QA)
+
+    scene = session.get(Scene, run.scene_id)
+    assert scene.aspect_ratio == "16:9"               # orientation applied
+    assert captured["shots_kw"]["dialogue_language"] == "en"
+    assert captured["shots_kw"]["style_extra"] == "pastel"
+    assert captured["render_kw"]["dialogue_language"] == "en"
+    assert captured["render_kw"]["style_extra"] == "pastel"
 
 
 async def test_double_render_terminal_judges_once(session, monkeypatch):

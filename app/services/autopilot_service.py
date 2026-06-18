@@ -293,8 +293,13 @@ async def _dispatch(session: Session, run: WorkflowRun, action: str) -> str:
         storyboard_service,
     )
 
+    cfg = run.config_json or {}
+    aspect = cfg.get("aspect_ratio")
+    language = cfg.get("dialogue_language")
+    style_extra = cfg.get("style") or None
+
     if action == "generate_script":
-        scene_count = (run.config_json or {}).get("scene_count", 1)
+        scene_count = cfg.get("scene_count", 1)
         script, _ = await scene_service.create_script(
             session, idea=run.idea, scene_count=scene_count
         )
@@ -304,18 +309,29 @@ async def _dispatch(session: Session, run: WorkflowRun, action: str) -> str:
         ).first()
         if first is None:
             raise RuntimeError("script produced no scenes")
+        if aspect:  # per-run orientation
+            first.aspect_ratio = aspect
+            session.add(first)
         run.scene_id = first.id
         _charge(session, run, "text")
         _persist(session, run)
         return f"script {script.id}; scene {first.id}"
 
     if action == "expand_scene":
-        await scene_service.expand_scene(session, run.scene_id)
+        await scene_service.expand_scene(session, run.scene_id, style_extra=style_extra)
+        if aspect:  # re-assert orientation (the scene director may have changed it)
+            scene = session.get(Scene, run.scene_id)
+            scene.aspect_ratio = aspect
+            session.add(scene)
+            session.commit()
         _charge(session, run, "text")
         return f"expanded scene {run.scene_id}"
 
     if action == "generate_shots":
-        shots = await scene_service.create_shots(session, run.scene_id, auto_assets=True)
+        shots = await scene_service.create_shots(
+            session, run.scene_id, auto_assets=True,
+            dialogue_language=language, style_extra=style_extra,
+        )
         _charge(session, run, "text")
         return f"{len(shots)} shots"
 
@@ -327,7 +343,10 @@ async def _dispatch(session: Session, run: WorkflowRun, action: str) -> str:
     if action in ("render_scene", "regenerate_render"):
         _require_video_budget(session, run)
         _charge(session, run, "video")
-        job = await render_service.render_scene(session, run.scene_id)
+        job = await render_service.render_scene(
+            session, run.scene_id,
+            dialogue_language=language, style_extra=style_extra,
+        )
         _park_on_render(session, run, job.id)
         return f"submitted render {job.id} (attempt {run.attempt})"
 

@@ -14,6 +14,7 @@ async def generate_shots(
     story: dict | None = None,
     characters: list[CharacterBible] | None = None,
     assets: list[dict] | None = None,
+    dialogue_language: str | None = None,
     client=None,
 ) -> ShotList:
     parts = [as_block("Scene", scene)]
@@ -31,6 +32,13 @@ async def generate_shots(
         "Overall story and sibling scenes (keep continuity)",
         story,
     )
+    if dialogue_language:
+        parts.append(
+            as_block(
+                "DIALOGUE LANGUAGE (write EVERY 「」 spoken line in this language)",
+                dialogue_language,
+            )
+        )
     style_on = bool(style) and "style" not in skills.context_excludes("shot_agent")
     parts.append(
         "Produce a ShotList for this scene. Set scene_id to the scene's id. "

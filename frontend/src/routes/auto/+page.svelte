@@ -23,7 +23,20 @@
 
   let idea = $state('');
   let budget = $state(400);
+  let aspect = $state('9:16');
+  let language = $state('zh');
+  let style = $state('');
   let starting = $state(false);
+
+  const ASPECTS = [
+    { v: '9:16', label: 'Portrait 9:16' },
+    { v: '16:9', label: 'Landscape 16:9' },
+    { v: '1:1', label: 'Square 1:1' }
+  ];
+  const LANGUAGES = [
+    { v: 'zh', label: 'Chinese' },
+    { v: 'en', label: 'English' }
+  ];
   let runs = $state<Run[]>([]);
   let selected = $state<string | null>(null);
   let detail = $state<Detail | null>(null);
@@ -69,7 +82,15 @@
     if (!idea.trim()) return;
     starting = true;
     try {
-      const run: Run = await post('/workflows', { idea: idea.trim(), config: { budget } });
+      const run: Run = await post('/workflows', {
+        idea: idea.trim(),
+        config: {
+          budget,
+          aspect_ratio: aspect,
+          dialogue_language: language,
+          style: style.trim() || undefined
+        }
+      });
       idea = '';
       await refreshRuns();
       select(run.id);
@@ -139,6 +160,42 @@
           bind:value={idea}
           disabled={starting}
         ></textarea>
+
+        <div class="grid gap-3 sm:grid-cols-3">
+          <label class="text-xs text-muted-foreground">
+            Orientation
+            <select
+              class="mt-1 h-8 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground"
+              bind:value={aspect}
+              disabled={starting}
+            >
+              {#each ASPECTS as a (a.v)}<option value={a.v}>{a.label}</option>{/each}
+            </select>
+          </label>
+          <label class="text-xs text-muted-foreground">
+            Dialogue language
+            <select
+              class="mt-1 h-8 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground"
+              bind:value={language}
+              disabled={starting}
+            >
+              {#each LANGUAGES as l (l.v)}<option value={l.v}>{l.label}</option>{/each}
+            </select>
+          </label>
+          <label class="text-xs text-muted-foreground">
+            Style (optional)
+            <input
+              class="mt-1 h-8 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground"
+              placeholder="soft 3D pastel cartoon"
+              bind:value={style}
+              disabled={starting}
+            />
+          </label>
+        </div>
+        <p class="text-[11px] text-muted-foreground">
+          Base look comes from your project Style guide; the optional box adds a style for just this run.
+        </p>
+
         <div class="flex flex-wrap items-center gap-3">
           <label class="flex items-center gap-2 text-sm text-muted-foreground">
             Budget

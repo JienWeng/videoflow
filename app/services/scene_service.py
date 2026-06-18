@@ -252,7 +252,23 @@ def list_scenes(session: Session) -> list[Scene]:
     return list(session.exec(select(Scene).where(Scene.project_id == pid)).all())
 
 
-async def expand_scene(session: Session, scene_id: str, character_ids: list[str] | None = None) -> Scene:
+def _style_ctx(session: Session, style_extra: str | None = None) -> dict | None:
+    """The style context block for the generation agents: the project Style guide,
+    plus an optional per-run custom style note (applied to just this run, without
+    touching the project StyleGuide). None when there's nothing to say."""
+    ctx = style_service.style_context(style_service.get_style(session)) or {}
+    if style_extra:
+        ctx = {**ctx, "run_style": style_extra}
+    return ctx or None
+
+
+async def expand_scene(
+    session: Session,
+    scene_id: str,
+    character_ids: list[str] | None = None,
+    *,
+    style_extra: str | None = None,
+) -> Scene:
     """Run the scene agent and persist the full SceneSpec onto the scene row."""
     scene = get_scene(session, scene_id)
     bibles = []
@@ -285,7 +301,7 @@ async def expand_scene(session: Session, scene_id: str, character_ids: list[str]
         assets=_asset_dicts(session, scene.asset_ids_json or []),
         available_characters=available_characters or None,
         library=library or None,
-        style=style_service.style_context(style_service.get_style(session)),
+        style=_style_ctx(session, style_extra),
         story=story_context(session, scene),
     )
     # Deterministic enforcement: the agent's id lists may contain hallucinated
@@ -395,7 +411,12 @@ def _asset_dicts(session: Session, asset_ids: list[str]) -> list[dict]:
 
 
 async def create_shots(
-    session: Session, scene_id: str, auto_assets: bool = True
+    session: Session,
+    scene_id: str,
+    auto_assets: bool = True,
+    *,
+    dialogue_language: str | None = None,
+    style_extra: str | None = None,
 ) -> list[Shot]:
     """Run the shot agent and persist Shot rows for the scene.
 
@@ -418,8 +439,9 @@ async def create_shots(
         scene=spec,
         characters=bibles or None,
         assets=_asset_dicts(session, asset_ids) or None,
-        style=style_service.style_context(style_service.get_style(session)),
+        style=_style_ctx(session, style_extra),
         story=story_context(session, scene),
+        dialogue_language=dialogue_language,
     )
 
     # Replace: delete all existing shots for this scene BEFORE persisting the

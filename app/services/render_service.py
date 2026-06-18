@@ -288,10 +288,19 @@ async def start_render(session: Session, spec: RenderSpec) -> RenderJob:
     return job
 
 
-async def render_scene(session: Session, scene_id: str) -> RenderJob:
+async def render_scene(
+    session: Session,
+    scene_id: str,
+    *,
+    dialogue_language: str | None = None,
+    style_extra: str | None = None,
+) -> RenderJob:
     """Deterministic whole-scene render: stored shots become the multi-shot
     storyboard (customize, indexed), and every linked reference — characters'
-    images, scene/shot assets and the scene's 分镜图 — feeds Kling images[]."""
+    images, scene/shot assets and the scene's 分镜图 — feeds Kling images[].
+
+    `dialogue_language` / `style_extra` override the project defaults for THIS
+    render (used by the autopilot's per-run orientation/language/style config)."""
     from app.services import scene_service, storyboard_service, style_service
 
     scene = scene_service.get_scene(session, scene_id)
@@ -399,8 +408,13 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
     # Deterministic voice direction from the cast's voice_rules, placed before
     # the negatives so every render of this cast uses the same voices.
     voices = voice_line(bibles)
-    # Resolver-backed dialogue language + negatives (configurable per project).
-    dialogue_language = resolve_dialogue_language(session)
+    # Resolver-backed dialogue language + negatives (configurable per project),
+    # with an optional per-run language override (humanized: 'zh' -> 'Chinese').
+    dialogue_language = (
+        _humanize_language(dialogue_language)
+        if dialogue_language
+        else resolve_dialogue_language(session)
+    )
     no_text, no_clone, extra_negatives = resolve_render_negatives(session)
     extra_neg = (", " + ", ".join(extra_negatives)) if extra_negatives else ""
     prompt = (
@@ -415,8 +429,11 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
         f"{no_text}, no watermark, no outfit changes, no extra "
         f"characters, no distorted faces, {no_clone}{extra_neg}."
     )
-    # Deterministic style enforcement on the whole-scene video prompt.
+    # Deterministic style enforcement on the whole-scene video prompt, plus an
+    # optional per-run custom style note (applied to just this render).
     prompt = style_service.apply_style(prompt, style_service.get_style(session))
+    if style_extra:
+        prompt = f"{prompt} Additional style for this video: {style_extra}."
     spec = RenderSpec(
         scene_id=scene.id,
         duration=total,
