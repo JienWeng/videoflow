@@ -9,6 +9,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
+  import MentionTextarea from '$lib/components/MentionTextarea.svelte';
   import { Separator } from '$lib/components/ui/separator';
   import { toast } from 'svelte-sonner';
   import { ArrowUpToLine, RefreshCw, ShieldCheck, Sparkles, Trash2 } from '@lucide/svelte';
@@ -228,7 +229,8 @@
     {#if shot.shot_id}
       <div class="grid gap-1.5">
         <Label for="insp-prompt">Prompt</Label>
-        <Textarea id="insp-prompt" rows={6} bind:value={shotForm.prompt} />
+        <MentionTextarea id="insp-prompt" rows={6} bind:value={shotForm.prompt}
+          class="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
       </div>
       <div class="grid gap-1.5">
         <Label for="insp-camera">Camera</Label>

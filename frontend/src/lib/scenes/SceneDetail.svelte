@@ -1,5 +1,6 @@
 <script lang="ts">
   import { mediaUrl } from '$lib/api';
+  import MentionTextarea from '$lib/components/MentionTextarea.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
@@ -185,8 +186,8 @@
       </div>
 
       <label class="block text-xs text-muted-foreground mb-1" for="sum-{s.id}">Summary</label>
-      <textarea id="sum-{s.id}" bind:value={s.summary}
-        class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm min-h-[70px] resize-y mb-3"></textarea>
+      <MentionTextarea id="sum-{s.id}" bind:value={s.summary}
+        class="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm min-h-[70px] resize-y mb-3" />
 
       <div class="flex gap-2 mb-3">
         <input
@@ -285,8 +286,8 @@
                   </TableCell>
                   <TableCell>
                     <div class="relative">
-                      <textarea class="w-full rounded border border-input bg-background px-2 py-1 text-xs min-h-[46px] resize-y"
-                        bind:value={shot.prompt}></textarea>
+                      <MentionTextarea class="w-full rounded border border-input bg-background px-2 py-1 text-xs min-h-[46px] resize-y"
+                        bind:value={shot.prompt} />
                       {#if !/「[^」]+」/.test(shot.prompt ?? '')}
                         <VolumeX
                           class="absolute top-1 right-1 size-3.5 text-muted-foreground/60 pointer-events-none"

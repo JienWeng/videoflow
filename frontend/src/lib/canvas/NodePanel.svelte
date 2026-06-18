@@ -18,7 +18,12 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
+  import MentionTextarea from '$lib/components/MentionTextarea.svelte';
   import { Badge } from '$lib/components/ui/badge';
+
+  // Matches the shadcn Textarea base styling so the @-mention field looks native.
+  const TA_CLASS =
+    'flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';
   import { Separator } from '$lib/components/ui/separator';
   import { toast } from 'svelte-sonner';
   import { Captions, Clapperboard, History, RefreshCw, Sparkles, Trash2, X } from '@lucide/svelte';
@@ -358,7 +363,7 @@
         </div>
         <div class="grid gap-1.5">
           <Label for="np-summary">Summary</Label>
-          <Textarea id="np-summary" rows={4} bind:value={form.summary} oninput={markFormDirty} />
+          <MentionTextarea id="np-summary" rows={4} bind:value={form.summary} oninput={markFormDirty} class={TA_CLASS} />
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div class="grid gap-1.5">
@@ -385,7 +390,7 @@
       {:else if kind === 'shot'}
         <div class="grid gap-1.5">
           <Label for="np-prompt">Prompt</Label>
-          <Textarea id="np-prompt" rows={5} bind:value={form.prompt} oninput={markFormDirty} />
+          <MentionTextarea id="np-prompt" rows={5} bind:value={form.prompt} oninput={markFormDirty} class={TA_CLASS} />
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div class="grid gap-1.5">
