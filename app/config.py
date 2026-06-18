@@ -107,6 +107,13 @@ class Settings(BaseSettings):
     dialogue_wpm_max: int = Field(default=200, alias="DIALOGUE_WPM_MAX")
     dialogue_cps_zh_min: float = Field(default=4.5, alias="DIALOGUE_CPS_ZH_MIN")
     dialogue_cps_zh_max: float = Field(default=5.5, alias="DIALOGUE_CPS_ZH_MAX")
+    # Shot pacing standard: short, snappy beats that fit the provider's 3-15s clip
+    # limit. Each shot is clamped to [min,max]s; a scene keeps at most `max_shots`
+    # shots and never exceeds `scene_max_duration` seconds total.
+    shot_min_duration: int = Field(default=2, alias="SHOT_MIN_DURATION")
+    shot_max_duration: int = Field(default=4, alias="SHOT_MAX_DURATION")
+    max_shots_per_scene: int = Field(default=5, alias="MAX_SHOTS_PER_SCENE")
+    scene_max_duration: int = Field(default=15, alias="SCENE_MAX_DURATION")
     # Negative-prompt fragments appended to render requests (empty by default).
     render_negatives: list[str] = Field(
         default_factory=list, alias="RENDER_NEGATIVES"

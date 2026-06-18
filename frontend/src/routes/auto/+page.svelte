@@ -22,7 +22,7 @@
   type Detail = { run: Run; steps: Step[]; output: any | null };
 
   let idea = $state('');
-  let budget = $state(400);
+  let attempts = $state(2);
   let aspect = $state('9:16');
   let language = $state('zh');
   let style = $state('');
@@ -85,7 +85,7 @@
       const run: Run = await post('/workflows', {
         idea: idea.trim(),
         config: {
-          budget,
+          max_attempts: attempts,
           aspect_ratio: aspect,
           dialogue_language: language,
           style: style.trim() || undefined
@@ -198,16 +198,17 @@
 
         <div class="flex flex-wrap items-center gap-3">
           <label class="flex items-center gap-2 text-sm text-muted-foreground">
-            Budget
-            <input
-              type="number"
-              min="50"
-              step="50"
-              class="h-8 w-24 rounded-md border border-input bg-background px-2 text-sm"
-              bind:value={budget}
+            Render attempts
+            <select
+              class="h-8 w-16 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+              bind:value={attempts}
               disabled={starting}
-            />
-            <span class="text-[11px]">credits (~{Math.floor(budget / 150)} renders)</span>
+            >
+              <option value={1}>1</option>
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+            </select>
+            <span class="text-[11px]">video renders the director may try to get it right</span>
           </label>
           <div class="flex-1"></div>
           <Button type="submit" disabled={starting || !idea.trim()}>

@@ -252,6 +252,25 @@ def list_scenes(session: Session) -> list[Scene]:
     return list(session.exec(select(Scene).where(Scene.project_id == pid)).all())
 
 
+def standardize_shots(shots: list, settings=None) -> list:
+    """Enforce the snappy-shot standard so a scene fits Kling's 3-15s clip limit:
+    clamp each shot to [shot_min, shot_max] seconds, keep at most `max_shots`, and
+    trim trailing shots until the total is <= scene_max — then bump the last shot
+    if the total fell below the 3s render minimum. Pure; mutates+returns the list."""
+    s = settings or get_settings()
+    lo, hi = s.shot_min_duration, s.shot_max_duration
+    for shot in shots:
+        shot.duration = max(lo, min(hi, int(shot.duration or lo)))
+    shots = shots[: s.max_shots_per_scene]
+    while len(shots) > 1 and sum(sh.duration for sh in shots) > s.scene_max_duration:
+        shots.pop()
+    if shots and sum(sh.duration for sh in shots) < 3:
+        shots[-1].duration = min(hi, shots[-1].duration + (3 - sum(sh.duration for sh in shots)))
+        if sum(sh.duration for sh in shots) < 3:  # single 2s shot -> 3s
+            shots[-1].duration = 3
+    return shots
+
+
 def _style_ctx(session: Session, style_extra: str | None = None) -> dict | None:
     """The style context block for the generation agents: the project Style guide,
     plus an optional per-run custom style note (applied to just this run, without
@@ -443,6 +462,10 @@ async def create_shots(
         story=story_context(session, scene),
         dialogue_language=dialogue_language,
     )
+
+    # Standard: short snappy beats (2-4s each, <=5 shots, scene <15s) so the
+    # whole scene fits Kling's 3-15s clip limit and never drags.
+    shot_list.shots = standardize_shots(shot_list.shots)
 
     # Replace: delete all existing shots for this scene BEFORE persisting the
     # new ones.  Asset context was already gathered above (before this point),

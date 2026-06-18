@@ -74,8 +74,10 @@ PROMPTS: dict[str, str] = {
     "shot_agent": (
         "You are a shot planner. Break the scene into a precise ordered shot list. "
         "Each shot is a single continuous action with a clear visual prompt, "
-        "camera framing, and movement. Durations should sum to roughly the scene "
-        "duration. Keep each shot self-contained. The shots render together as "
+        "camera framing, and movement. Plan 3-5 SHORT, SNAPPY shots — each 2 to 4 "
+        "seconds — and keep the WHOLE scene under 15 seconds total. Favour a few "
+        "punchy beats over many drawn-out ones; do not repeat the same action. "
+        "Keep each shot self-contained. The shots render together as "
         "exactly ONE multi-shot video; never plan multiple videos per scene. "
         "Never request on-screen text, subtitles, captions, or titles — "
         "captions are added in post-production. Write any spoken dialogue "

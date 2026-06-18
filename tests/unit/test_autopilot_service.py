@@ -308,3 +308,20 @@ def test_is_valid_gates():
     assert iv(base, "caption") is False             # no output
     assert iv({**base, "has_shots": True}, "render_scene") is True
     assert iv({**base, "attempt": 1}, "revise_render") is True
+
+
+def test_storyboard_only_generated_once():
+    iv = autopilot_service._is_valid
+    s = dict(has_script=True, scene_expanded=True, has_shots=True,
+             attempt=0, current_output_id=None)
+    assert iv({**s, "has_storyboard": False}, "generate_storyboard") is True
+    assert iv({**s, "has_storyboard": True}, "generate_storyboard") is False  # no redo
+
+
+def test_budget_auto_sized_from_render_attempts(session):
+    run = autopilot_service.create_run(
+        session, idea="x", config={"max_attempts": 2}, settings=_settings()
+    )
+    b = cost_service.budget_for_run(session, workflow_run_id=run.id)
+    # 2 attempts * (30/s * 15s max) + 150 overhead
+    assert b.limit_units == 2 * (30 * 15) + 150

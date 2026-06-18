@@ -132,13 +132,20 @@ def decide_for_output(
     can_afford_video: bool = True,
     project_id: str | None = None,
     settings: Settings | None = None,
+    max_attempts: int | None = None,
 ) -> SupervisionVerdict:
     """Wrapper: read the QA result off the output and apply the policy. When no QA
-    is available (it runs best-effort), accept rather than burn money guessing."""
+    is available (it runs best-effort), accept rather than burn money guessing.
+    `max_attempts` overrides the threshold for this run (the autopilot's per-run
+    'render attempts' knob)."""
     if not output.qa_json:
         return SupervisionVerdict("accept", "no QA available", None)
     qa = QAResult.model_validate(output.qa_json)
     th = thresholds(session, project_id=project_id, settings=settings)
+    if max_attempts:
+        from dataclasses import replace
+
+        th = replace(th, max_attempts=int(max_attempts))
     return decide(
         qa,
         attempt=attempt,

@@ -86,11 +86,20 @@ def create_run(
     session.add(run)
     session.commit()
     session.refresh(run)
+    # Budget is the safety backstop; the intuitive knob is `max_attempts` (how many
+    # video renders the director may try). Auto-size the budget so it never blocks
+    # before the attempt cap does — `attempts` full renders + overhead for the
+    # cheap text/image steps.
+    budget = config.get("budget")
+    if budget is None:
+        attempts = int(config.get("max_attempts") or settings.qa_max_attempts)
+        per_render = settings.cost_unit_video_per_second * settings.scene_max_duration
+        budget = attempts * per_render + 150
     cost_service.open_run(
         session,
         project_id=project_id,
         workflow_run_id=run.id,
-        limit_units=config.get("budget"),
+        limit_units=budget,
         settings=settings,
     )
     _emit(run)
@@ -242,6 +251,7 @@ def build_state(session: Session, run: WorkflowRun) -> dict:
                 "has_script": bool(run.script_id),
                 "scene_expanded": bool(scene and scene.scene_json),
                 "has_shots": len(shots) > 0,
+                "has_storyboard": storyboard is not None,
                 "attempt": run.attempt,
                 "current_output_id": run.current_output_id,
             }
@@ -262,7 +272,8 @@ def _is_valid(state: dict, action: str) -> bool:
         "generate_script": not state["has_script"],
         "expand_scene": state["has_script"] and not state["scene_expanded"],
         "generate_shots": state["scene_expanded"] and not state["has_shots"],
-        "generate_storyboard": state["has_shots"],
+        # Build the storyboard at most once — never let the director redo it.
+        "generate_storyboard": state["has_shots"] and not state.get("has_storyboard", False),
         "render_scene": state["has_shots"],
         "revise_render": state["attempt"] > 0,
         "regenerate_render": state["attempt"] > 0,
@@ -494,6 +505,7 @@ async def _judge_render(session: Session, run: WorkflowRun, job_id: str) -> None
         prev_score=prev_best if run.attempt > 1 else None,
         can_afford_video=can_afford,
         project_id=run.project_id,
+        max_attempts=(run.config_json or {}).get("max_attempts"),
     )
     run.last_verdict_json = {
         "decision": verdict.decision,
