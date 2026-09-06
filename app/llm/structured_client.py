@@ -69,6 +69,8 @@ class StructuredLLMClient:
 
         # Resolve config: explicit kwarg > skill > settings/default.
         provider = provider or (skill.provider if skill else "minimax")
+        from app.llm.connections import definition
+        connection = definition(provider)
         if model is None:
             model = (skill.model if skill and skill.model else None) or default_model(
                 provider, self._settings
@@ -86,15 +88,24 @@ class StructuredLLMClient:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         if images:
-            if provider == "anthropic":
-                raise LLMProviderError(
-                    "images are only supported on OpenAI-compatible providers"
-                )
+            if not connection["vision"]:
+                raise LLMProviderError("Selected connection does not support image inputs")
             content: list[dict] = [{"type": "text", "text": user_prompt}]
             content += [
                 {"type": "image_url", "image_url": {"url": _image_url(i)}}
                 for i in images
             ]
+            if connection["protocol"] == "anthropic":
+                converted = [content[0]]
+                for part in content[1:]:
+                    url = part["image_url"]["url"]
+                    if url.startswith("data:"):
+                        header, data = url.split(",", 1)
+                        source = {"type": "base64", "media_type": header[5:].split(";")[0], "data": data}
+                    else:
+                        source = {"type": "url", "url": url}
+                    converted.append({"type": "image", "source": source})
+                content = converted
             messages.append({"role": "user", "content": content})
         else:
             messages.append({"role": "user", "content": user_prompt})

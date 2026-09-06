@@ -17,14 +17,51 @@ App defaults (overridable, take effect without a restart):
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from typing import Literal
+from urllib.parse import urlparse
 from sqlmodel import Session
 
 from app.database import get_session
 from app.services import settings_service
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+
+class ConnectionBody(BaseModel):
+    label: str = Field(min_length=1, max_length=100)
+    preset: str
+    protocol: Literal["chat", "responses", "anthropic", "codex"]
+    base_url: str | None = None
+    model: str = Field(default="", max_length=200)
+    mode: Literal["auto", "tools", "json", "prompt"] = "auto"
+    vision: bool = True
+
+
+@router.get("/connection-presets")
+def connection_presets():
+    from app.llm.connections import catalog
+    return catalog()
+
+
+@router.post("/connections", status_code=201)
+def create_connection(body: ConnectionBody, session: Session = Depends(get_session)):
+    from app.llm.connections import PRESETS
+    from app.models.setting import Connection
+    from uuid import uuid4
+    if body.preset not in PRESETS:
+        raise HTTPException(422, "Unknown preset")
+    url = body.base_url or PRESETS[body.preset].url
+    if body.protocol != "codex":
+        parsed = urlparse(url or "")
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise HTTPException(422, "Supply an HTTP(S) base URL without credentials, query, or fragment")
+    name = "conn_" + uuid4().hex
+    row = Connection(name=name, **{**body.model_dump(), "base_url": url})
+    session.add(row)
+    session.commit()
+    return {"name": name}
 
 
 class AgentOverride(BaseModel):
@@ -40,6 +77,27 @@ class ProviderConfig(BaseModel):
 
     api_key: str | None = None
     base_url: str | None = None
+
+
+class VerifyModelBody(BaseModel):
+    model: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/providers/{name}/verify-model")
+async def verify_model(name: str, body: VerifyModelBody, session: Session = Depends(get_session)):
+    from app.llm.connections import catalog
+    from app.llm.structured_client import StructuredLLMClient
+    from app.config import get_settings
+    if name not in catalog(session):
+        raise HTTPException(404, "Unknown connection")
+    class Probe(BaseModel):
+        answer: Literal["ok"]
+    try:
+        await StructuredLLMClient(get_settings()).generate(provider=name, model=body.model,
+            response_model=Probe, user_prompt='Return {"answer":"ok"}', timeout_s=60, max_retries=1)
+        return {"ok": True, "error": None}
+    except Exception:
+        return {"ok": False, "error": "Model/JSON test failed. Check credentials, model access, protocol, output mode, and usage limits."}
 
 
 class AppSettingsBody(BaseModel):
@@ -95,6 +153,33 @@ def set_provider(
 @router.post("/providers/{name}/test")
 def test_provider(name: str, session: Session = Depends(get_session)):
     return settings_service.test_connection(session, name)
+
+
+@router.get("/providers/{name}/models")
+def discover_models(name: str, session: Session = Depends(get_session)):
+    from app.llm.connections import definition, catalog
+    from app.config import get_settings
+    if name not in catalog(session):
+        raise HTTPException(404, "Unknown connection")
+    if definition(name, session)["protocol"] == "codex":
+        return {"models": [], "error": "Codex model discovery is not available here; enter a model available to your ChatGPT account."}
+    settings = get_settings()
+    key = settings_service.effective_key(session, name, settings)
+    url = settings_service.effective_base_url(session, name, settings)
+    if not key:
+        raise HTTPException(422, "Configure credentials first")
+    try:
+        if definition(name, session)["protocol"] == "anthropic":
+            from anthropic import Anthropic
+            with Anthropic(api_key=key, base_url=url, timeout=10) as client:
+                models = client.models.list().data
+        else:
+            from openai import OpenAI
+            with OpenAI(api_key=key, base_url=url, timeout=10) as client:
+                models = client.models.list().data
+        return {"models": sorted({m.id for m in models}), "error": None}
+    except Exception:
+        return {"models": [], "error": "Model discovery unavailable. Enter your provider's model ID manually."}
 
 
 # --------------------------------------------------------------- app defaults

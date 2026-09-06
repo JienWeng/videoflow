@@ -50,6 +50,18 @@ class AppSetting(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+class Connection(SQLModel, table=True):
+    __tablename__ = "llm_connections"
+    name: str = Field(primary_key=True)
+    label: str
+    preset: str
+    protocol: str
+    base_url: str | None = None
+    model: str = ""
+    mode: str = "auto"
+    vision: bool = True
+
+
 class ProviderSecret(SQLModel, table=True):
     __tablename__ = "provider_secrets"
 

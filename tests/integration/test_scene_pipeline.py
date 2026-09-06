@@ -12,6 +12,8 @@ import app.models  # noqa: F401
 from app.database import get_session
 from app.schemas import (
     AssetPlan,
+    ConversationPlan,
+    ConversationTurn,
     IdeaOption,
     IdeaOptions,
     PlannedAsset,
@@ -72,6 +74,27 @@ class FakeLLM:
             return ShotRefinement(
                 prompt=self.refinement_prompt,
                 note="warmed the shot lighting",
+            )
+        if response_model is ConversationPlan:
+            return ConversationPlan(
+                scene_summary="Grace invites the viewer to enjoy the sunny meadow lesson.",
+                turns=[
+                    ConversationTurn(
+                        shot_index=0,
+                        speaker="Grace",
+                        line="Look at this meadow!",
+                        visual_action="Grace waves toward the meadow",
+                        emotion="bright",
+                    ),
+                    ConversationTurn(
+                        shot_index=1,
+                        speaker="Grace",
+                        line="Isn't it beautiful?",
+                        visual_action="Grace points at the meadow",
+                        emotion="warm",
+                    ),
+                ],
+                note="Kept Grace as the only cast speaker.",
             )
         if response_model is AssetPlan:
             return AssetPlan(
@@ -718,6 +741,97 @@ def test_refine_scene(ctx):
     # Persistence: a follow-up GET sees the change.
     scene = client.get("/scenes/scene_1").json()
     assert scene["summary"] == "warmer dusk lighting"
+
+
+def test_conversationalize_scene(ctx):
+    client, fake = ctx
+    resp = client.post(
+        "/scenes/conversationalize",
+        json={"scene_ids": ["scene_1"], "include_shots": True}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["converted"] == 3
+    assert body["results"][0]["scene_id"] == "scene_1"
+    assert body["results"][0]["shot_count"] == 2
+    assert body["results"][0]["shot_failures"] == []
+
+    shots = client.get("/scenes/scene_1/shots").json()
+    assert shots[0]["prompt"] == "@Grace waves toward the meadow. Grace says, 「Look at this meadow!」"
+    assert shots[1]["prompt"] == "@Grace points at the meadow. Grace says, 「Isn't it beautiful?」"
+
+
+def test_conversationalize_preview_does_not_mutate(ctx):
+    client, fake = ctx
+    before_scene = client.get("/scenes/scene_1").json()["summary"]
+    before_shots = client.get("/scenes/scene_1/shots").json()
+    resp = client.post(
+        "/scenes/conversationalize",
+        json={"scene_ids": ["scene_1"], "preview": True},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["preview"] is True
+    assert body["results"][0]["status"] == "planned"
+    assert client.get("/scenes/scene_1").json()["summary"] == before_scene
+    assert client.get("/scenes/scene_1/shots").json() == before_shots
+
+
+def test_conversationalize_rejects_unassigned_speaker(ctx, monkeypatch):
+    client, fake = ctx
+
+    async def bad_plan(**kwargs):
+        return ConversationPlan(
+            scene_summary="A scene.",
+            turns=[
+                ConversationTurn(
+                    shot_index=0,
+                    speaker="Unknown",
+                    line="Go now.",
+                    visual_action="Someone points forward",
+                ),
+                ConversationTurn(
+                    shot_index=1,
+                    speaker="Grace",
+                    line="Why?",
+                    visual_action="Grace looks worried",
+                ),
+            ],
+        )
+
+    monkeypatch.setattr("app.services.conversation_service.conversation_agent.plan_conversation", bad_plan)
+    resp = client.post("/scenes/conversationalize", json={"scene_ids": ["scene_1"]})
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["results"][0]
+    assert result["status"] == "rejected"
+    assert "unknown speaker" in result["error"]
+
+
+def test_conversationalize_defaults_to_all_scenes(ctx):
+    client, fake = ctx
+    resp = client.post("/scenes/conversationalize", json={"instruction": "soft conversational style"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["converted"] >= 1
+    scene = client.get("/scenes/scene_1").json()
+    assert scene["summary"] == "Grace invites the viewer to enjoy the sunny meadow lesson."
+
+
+def test_conversationalize_without_shots(ctx):
+    client, fake = ctx
+    before = client.get("/scenes/scene_1/shots").json()
+    assert before
+    resp = client.post(
+        "/scenes/conversationalize",
+        json={"scene_ids": ["scene_1"], "include_shots": False}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["converted"] == 0
+    assert body["results"][0]["status"] == "skipped"
+    assert body["results"][0]["shot_count"] == 0
+    after = client.get("/scenes/scene_1/shots").json()
+    assert after
 
 
 def test_refine_shot(ctx):

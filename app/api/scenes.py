@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from app.database import get_session
+from app.schemas import ConversationBrief
 from app.services import (
     asset_gen_service,
     op_service,
@@ -104,6 +105,45 @@ def create_scene(body: SceneCreate, session: Session = Depends(get_session)):
 @router.get("/scenes")
 def list_scenes(session: Session = Depends(get_session)):
     return scene_service.list_scenes(session)
+
+
+class ConversationalConvertRequest(BaseModel):
+    scene_ids: list[str] | None = None
+    include_shots: bool = True
+    instruction: str = ""
+    brief: ConversationBrief = Field(default_factory=ConversationBrief)
+    preview: bool = False
+
+
+@router.post("/scenes/conversationalize")
+async def convert_scenes_conversational(
+    body: ConversationalConvertRequest,
+    background: bool = False,
+    session: Session = Depends(get_session),
+):
+    """AI-convert one or more scenes (and optional shot prompts) to conversational style."""
+    if background:
+        op = op_service.start_op(
+            "conversation",
+            lambda s: refine_service.convert_scenes_to_conversational(
+                s,
+                scene_ids=body.scene_ids,
+                include_shots=body.include_shots,
+                instruction=body.instruction,
+                brief=body.brief,
+                preview=body.preview,
+            ),
+            summarize=lambda result: result,
+        )
+        return _op_response(op)
+    return await refine_service.convert_scenes_to_conversational(
+        session,
+        scene_ids=body.scene_ids,
+        include_shots=body.include_shots,
+        instruction=body.instruction,
+        brief=body.brief,
+        preview=body.preview,
+    )
 
 
 @router.get("/scenes/{scene_id}")

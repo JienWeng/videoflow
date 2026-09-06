@@ -52,6 +52,84 @@ def client(monkeypatch, tmp_path):
 
 
 # ----------------------------------------------------------------- providers
+def test_named_connections_are_independent_and_survive_reload(client):
+    from app.llm.providers import _resolved_creds, default_model
+    from app.config import get_settings
+    from app.database import engine
+    from app.services import settings_service
+    from app.llm.connections import definition
+    names = []
+    for i in range(2):
+        response = client.post('/settings/connections', json={
+            'label': f'Gateway {i}', 'preset': 'openai', 'protocol': 'responses',
+            'base_url': f'https://gateway{i}.example/v1', 'model': f'model-{i}'})
+        assert response.status_code == 201, response.text
+        name = response.json()['name']
+        names.append(name)
+        assert client.put(f'/settings/providers/{name}', json={'api_key': f'secret-{i}'}).status_code == 200
+        assert _resolved_creds(name, get_settings()) == (f'secret-{i}', f'https://gateway{i}.example/v1')
+        assert default_model(name, get_settings()) == f'model-{i}'
+        assert definition(name)['protocol'] == 'responses'
+    response = client.put('/settings/agents/script_agent', json={'provider': names[1], 'model': 'another-model'})
+    assert response.status_code == 200, response.text
+    skills.clear_overrides()
+    with Session(engine) as session:
+        settings_service.load_overrides(session)
+    assert skills.get_effective_skill('script_agent').provider == names[1]
+    serialized = client.get('/settings/providers').text
+    assert 'secret-' not in serialized
+    assert names[0] in serialized and names[1] in serialized
+
+
+def test_connection_validates_url_and_protocol(client):
+    for url in ('file:///etc/passwd', 'https://user:password@host/v1', 'not-a-url'):
+        r = client.post('/settings/connections', json={'label': 'Bad', 'preset': 'custom', 'protocol': 'chat', 'base_url': url})
+        assert r.status_code == 422
+    assert client.post('/settings/connections', json={'label': 'Bad', 'preset': 'custom', 'protocol': 'bogus'}).status_code == 422
+
+
+def test_named_connection_url_overrides_preset_environment(client, monkeypatch):
+    monkeypatch.setenv('OPENROUTER_BASE_URL', 'https://environment.example/v1')
+    response = client.post('/settings/connections', json={'label': 'Custom route', 'preset': 'openrouter', 'protocol': 'chat', 'base_url': 'https://chosen.example/v1'})
+    name = response.json()['name']
+    assert client.get(f'/settings/providers/{name}').json()['base_url'] == 'https://chosen.example/v1'
+
+
+def test_model_probe_uses_selected_connection_and_model(client, monkeypatch):
+    calls = []
+    async def generate(self, **kwargs):
+        calls.append(kwargs)
+        return kwargs['response_model'](answer='ok')
+    monkeypatch.setattr('app.llm.structured_client.StructuredLLMClient.generate', generate)
+    response = client.post('/settings/providers/openai/verify-model', json={'model': 'chosen-model'})
+    assert response.json()['ok'] is True
+    assert calls[0]['model'] == 'chosen-model'
+    assert calls[0]['provider'] == 'openai'
+
+
+def test_codex_requires_chatgpt_login_not_api_key(client, monkeypatch):
+    monkeypatch.setattr('app.llm.connection_client.codex_status', lambda: False)
+    assert client.get('/settings/providers/codex').json()['configured'] is False
+    assert client.post('/settings/providers/codex/test').json()['ok'] is False
+    monkeypatch.setattr('app.llm.connection_client.codex_status', lambda: True)
+    assert client.get('/settings/providers/codex').json()['configured'] is True
+    assert client.put('/settings/agents/script_agent', json={'provider': 'codex', 'model': 'gpt-5.6-luna'}).status_code == 200
+
+
+def test_new_preset_env_and_ui_precedence(client, monkeypatch):
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'from-env')
+    from app.services import settings_service
+    from app.config import get_settings
+    from app.database import engine
+    assert client.get('/settings/providers/deepseek').json()['configured'] is True
+    client.put('/settings/providers/deepseek', json={'api_key': 'from-ui'})
+    with Session(engine) as s:
+        assert settings_service.effective_key(s, 'deepseek', get_settings()) == 'from-ui'
+    client.put('/settings/providers/deepseek', json={'api_key': ''})
+    with Session(engine) as s:
+        assert settings_service.effective_key(s, 'deepseek', get_settings()) == 'from-env'
+
+
 def test_providers_catalog_reports_allow_custom(client):
     resp = client.get("/settings/providers")
     assert resp.status_code == 200, resp.text

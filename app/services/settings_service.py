@@ -29,6 +29,7 @@ from app.config import Settings, get_settings, invalidate_settings_cache
 from app.errors import NotFoundError, ValidationFailedError
 from app.llm import skills
 from app.llm.providers import ProviderName, default_model
+from app.llm.connections import catalog, definition, env_value
 from app.models.base import utcnow
 from app.models.setting import AgentSetting, AppSetting, ProviderSecret
 
@@ -37,14 +38,14 @@ from app.models.setting import AgentSetting, AppSetting, ProviderSecret
 # provider's configured default model is always merged in.
 _KNOWN_MODELS: dict[str, list[str]] = {
     "minimax": ["MiniMax-Text-01", "MiniMax-M2"],
-    "openai": ["gpt-4o-mini", "gpt-4o"],
+    "openai": ["gpt-5.6-luna", "gpt-4o-mini", "gpt-4o"],
     "anthropic": ["claude-sonnet-4-6", "claude-opus-4-8"],
     "gemini": ["gemini-2.5-flash", "gemini-2.5-pro"],
     "atlas": ["qwen/qwen3-vl-30b-a3b-instruct", "glm-5v"],
 }
 
 # All providers the UI knows about (order is display order).
-PROVIDERS: list[ProviderName] = ["minimax", "openai", "anthropic", "gemini", "atlas"]
+PROVIDERS: list[ProviderName] = list(catalog())
 
 
 # ---------------------------------------------------------------------------
@@ -153,18 +154,18 @@ def _env_key(provider: str, settings: Settings) -> str:
         "anthropic": settings.anthropic_api_key,
         "gemini": settings.gemini_api_key,
         "atlas": settings.atlascloud_api_key,
-    }[provider]
+    }.get(provider, env_value(provider, "API_KEY"))
 
 
 def _env_base_url(provider: str, settings: Settings) -> str | None:
     return {
         "minimax": settings.minimax_base_url,
         "openai": settings.openai_base_url,
-        "anthropic": None,  # anthropic SDK uses its own default base url
+        "anthropic": env_value(provider, "BASE_URL", "https://api.anthropic.com"),
         "gemini": settings.gemini_base_url,
         # The LLM (chat) endpoint, NOT the image/video gateway.
         "atlas": settings.atlas_llm_base_url,
-    }[provider]
+    }.get(provider, env_value(provider, "BASE_URL", definition(provider)["url"]))
 
 
 def effective_key(session: Session | None, provider: str, settings: Settings) -> str:
@@ -184,6 +185,9 @@ def effective_base_url(
         db = db_provider_base_url(session, provider)
         if db:
             return db
+        entry = definition(provider, session)
+        if provider not in PROVIDERS and entry["url"]:
+            return entry["url"]
     return _env_base_url(provider, settings)
 
 
@@ -194,18 +198,21 @@ def is_configured(
 ) -> bool:
     """True if *provider* has a usable API key — from the DB OR the environment."""
     settings = settings or get_settings()
+    if definition(provider, session)["protocol"] == "codex":
+        from app.llm.connection_client import codex_status
+        return codex_status()
     return bool(effective_key(session, provider, settings))
 
 
 def get_provider_config(session: Session, provider: str) -> dict:
     """The UI view of a provider's secret: never returns the raw key."""
-    if provider not in PROVIDERS:
+    if provider not in catalog(session):
         raise NotFoundError(f"unknown provider '{provider}'")
     settings = get_settings()
     key = effective_key(session, provider, settings)
     return {
         "name": provider,
-        "configured": bool(key),
+        "configured": is_configured(provider, settings, session),
         "masked_key": _mask(key),
         "base_url": effective_base_url(session, provider, settings),
         "from_db": db_provider_key(session, provider) is not None,
@@ -225,7 +232,7 @@ def set_provider_config(
     - base_url="" clears the stored base_url; None leaves it untouched.
     Invalidates the settings cache so live clients pick up the change at once.
     """
-    if provider not in PROVIDERS:
+    if provider not in catalog(session):
         raise NotFoundError(f"unknown provider '{provider}'")
 
     row = _secret_row(session, provider)
@@ -252,9 +259,13 @@ def test_connection(session: Session, provider: str) -> dict:
     (a 1-token chat / models list) so it's fast and cheap. Network/SDK errors are
     captured into `error` rather than raised, so the UI can render them inline.
     """
-    if provider not in PROVIDERS:
+    if provider not in catalog(session):
         raise NotFoundError(f"unknown provider '{provider}'")
     settings = get_settings()
+    if definition(provider, session)["protocol"] == "codex":
+        from app.llm.connection_client import codex_status
+        ok = codex_status()
+        return {"ok": ok, "latency_ms": None, "error": None if ok else "Run codex login on this computer using ChatGPT, then retry."}
     key = effective_key(session, provider, settings)
     if not key:
         return {"ok": False, "latency_ms": None, "error": "no API key configured"}
@@ -262,15 +273,22 @@ def test_connection(session: Session, provider: str) -> dict:
     base_url = effective_base_url(session, provider, settings)
     started = time.monotonic()
     try:
-        if provider == "anthropic":
+        if definition(provider, session)["protocol"] == "anthropic":
             from anthropic import Anthropic
 
-            client = Anthropic(api_key=key, timeout=10.0)
+            client = Anthropic(api_key=key, base_url=base_url, timeout=10.0)
             client.messages.create(
                 model=default_model(provider, settings),  # type: ignore[arg-type]
                 max_tokens=1,
                 messages=[{"role": "user", "content": "ping"}],
             )
+        elif definition(provider, session)["protocol"] == "responses":
+            from openai import OpenAI
+            model = default_model(provider, settings)
+            if not model:
+                return {"ok": False, "latency_ms": None, "error": "Set a default model on a named connection before testing Responses"}
+            with OpenAI(api_key=key, base_url=base_url, timeout=10.0) as client:
+                client.responses.create(model=model, input="Reply OK", max_output_tokens=64)
         else:
             from openai import OpenAI
 
@@ -321,11 +339,13 @@ def available_providers(
     default_model, allow_custom, from_db}. `configured` reflects DB-or-env."""
     settings = settings or get_settings()
     out = []
-    for p in PROVIDERS:
+    for p, entry in catalog(session).items():
         models = suggested_models(p, settings)
         out.append(
             {
                 "name": p,
+                "label": entry["label"],
+                "protocol": entry["protocol"],
                 "configured": is_configured(p, settings, session=session),
                 "models": models,  # legacy field name (suggestions)
                 "suggested_models": models,
@@ -485,7 +505,7 @@ def _validate(
         return  # clearing — always allowed
     if provider is None:
         raise ValidationFailedError("provider is required when setting a model")
-    if provider not in PROVIDERS:
+    if provider not in catalog(session):
         raise ValidationFailedError(f"unknown provider '{provider}'")
     if not is_configured(provider, settings, session=session):
         raise ValidationFailedError(

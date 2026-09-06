@@ -90,6 +90,49 @@ swap an agent's brain by editing one line. Default routing is MiniMax everywhere
 
 ## Pipeline
 
+### Choosing additional AI connections
+
+In **Settings → Providers**, configure a built-in provider or use **Add a named
+connection**. Presets cover OpenAI, Claude, Gemini (OpenAI-compatible endpoint),
+MiniMax, DeepSeek, OpenRouter, OpenCode Zen/Go, AtlasCloud, and custom endpoints.
+Multiple connections can share a preset while keeping independent keys, URLs,
+models, and protocols. Existing agent defaults and saved settings are preserved.
+
+Select the API protocol supported by the model: Chat Completions, Responses,
+or Anthropic Messages. Gateways may use different protocols for different
+models; create separate named connections for those routes. Chat connections
+offer tool calling, JSON mode, or schema-in-prompt output. Responses uses
+schema-in-prompt with local validation/retry; Anthropic uses native tools.
+All outputs are validated against the agent's Pydantic schema.
+
+Save credentials, optionally **Load models**, then choose the connection and
+model per agent under the agent settings. Model lists are suggestions and may
+be unavailable; manual IDs are supported. **Test model + JSON** makes a small
+real request and consumes provider usage. Connection tests alone do not prove
+vision support; enable image inputs only for a model that supports them.
+
+UI keys and URLs override environment defaults; clearing a saved override
+returns to the environment. New named connections inherit their preset's
+environment key, but do not inherit another connection's saved key. Environment
+changes require a backend restart. Named connections persist in an additive
+`llm_connections` table. No automatic provider fallback is performed.
+
+**ChatGPT subscriptions:** choose **ChatGPT via Codex**. Install the Codex CLI
+on the backend computer and run `codex login` there, selecting ChatGPT login.
+Refresh Settings afterward. Authentication and refresh are managed by the CLI;
+`codex logout` disconnects the shared CLI login. VideoFlow never copies login
+tokens into its settings database. The installed CLI must support
+`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, and `--output-schema`.
+Requests run in a temporary directory with a read-only sandbox and shell tools
+disabled. Subscription usage limits and account model access apply; a model
+available through the API is not necessarily available through Codex. Enter a
+model supported by your account (Codex discovery is not exposed here).
+Local/uploaded reference images are supported; remote image URLs are rejected
+for this connection. Failed requests surface errors without API-key fallback.
+
+API credentials retain the existing local database storage mechanism (base64
+obfuscation, not encryption). Protect access to this computer and database.
+
 ```
 idea ─script─▶ scenes ─scene─▶ SceneSpec ─shot─▶ shots
                                                    │

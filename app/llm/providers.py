@@ -16,8 +16,9 @@ import instructor
 
 from app.config import Settings
 from app.errors import ProviderError
+from app.llm.connections import definition, env_value, request_headers
 
-ProviderName = Literal["minimax", "openai", "anthropic", "gemini", "atlas"]
+ProviderName = str
 
 # Per-model structured-output Mode overrides (else the provider default is used).
 # NOTE: MiniMax's OpenAI-compatible endpoint rejects `response_format`
@@ -46,7 +47,9 @@ class Backend:
 
 
 def resolve_mode(provider: ProviderName, model: str) -> instructor.Mode:
-    return _MODEL_MODE.get(model, _PROVIDER_DEFAULT_MODE[provider])
+    entry = definition(provider)
+    modes = {"tools": instructor.Mode.TOOLS, "json": instructor.Mode.JSON, "prompt": instructor.Mode.MD_JSON}
+    return _MODEL_MODE.get(model, modes.get(entry["mode"], _PROVIDER_DEFAULT_MODE.get(entry["preset"], instructor.Mode.MD_JSON)))
 
 
 def default_model(provider: ProviderName, settings: Settings) -> str:
@@ -56,7 +59,7 @@ def default_model(provider: ProviderName, settings: Settings) -> str:
         "anthropic": settings.anthropic_model,
         "gemini": settings.gemini_model,
         "atlas": settings.atlas_vl_model,
-    }[provider]
+    }.get(provider, env_value(provider, "MODEL", definition(provider)["model"]))
 
 
 def _resolved_creds(provider: ProviderName, settings: Settings) -> tuple[str, str | None]:
@@ -75,7 +78,7 @@ def _resolved_creds(provider: ProviderName, settings: Settings) -> tuple[str, st
         "atlas": (settings.atlascloud_api_key, settings.atlas_llm_base_url),
         "anthropic": (settings.anthropic_api_key, None),
     }
-    key, base_url = env[provider]
+    key, base_url = env.get(provider, (env_value(provider, "API_KEY"), env_value(provider, "BASE_URL", definition(provider)["url"])))
     try:
         from sqlmodel import Session
 
@@ -95,24 +98,29 @@ def build_backend(
 ) -> Backend:
     mode = resolve_mode(provider, model)
 
-    if provider in ("minimax", "openai", "gemini", "atlas"):
+    protocol = definition(provider)["protocol"]
+    if protocol in ("responses", "codex"):
+        from app.llm.connection_client import ConnectionClient
+        return Backend(ConnectionClient(provider, settings, timeout_s), "openai", model, mode)
+
+    if protocol == "chat":
         from openai import AsyncOpenAI
 
         key, base_url = _resolved_creds(provider, settings)
         if not key:
             raise ProviderError(f"{provider} API key is not configured")
-        raw = AsyncOpenAI(api_key=key, base_url=base_url, timeout=timeout_s)
+        raw = AsyncOpenAI(api_key=key, base_url=base_url, timeout=timeout_s, default_headers=request_headers(provider))
         return Backend(instructor.from_openai(raw, mode=mode), "openai", model, mode)
 
-    if provider == "anthropic":
+    if protocol == "anthropic":
         from anthropic import AsyncAnthropic
 
-        key, _ = _resolved_creds(provider, settings)
+        key, base_url = _resolved_creds(provider, settings)
         if not key:
             raise ProviderError("anthropic API key is not configured")
-        raw = AsyncAnthropic(api_key=key, timeout=timeout_s)
+        raw = AsyncAnthropic(api_key=key, base_url=base_url, timeout=timeout_s, default_headers=request_headers(provider))
         return Backend(
-            instructor.from_anthropic(raw, mode=mode), "anthropic", model, mode
+            instructor.from_anthropic(raw, mode=instructor.Mode.ANTHROPIC_TOOLS), "anthropic", model, mode
         )
 
     raise ProviderError(f"unknown LLM provider '{provider}'")

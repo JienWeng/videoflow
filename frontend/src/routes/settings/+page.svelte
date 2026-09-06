@@ -36,6 +36,8 @@
   };
   type Provider = {
     name: string;
+    label?: string;
+    protocol?: string;
     configured: boolean;
     models: string[];
     suggested_models: string[];
@@ -73,12 +75,60 @@
   let loaded = $state(false);
   let error = $state('');
   let busy = $state('');
+  let presets = $state<Record<string, any>>({});
+  let newLabel = $state('');
+  let newPreset = $state('openai');
+  let newProtocol = $state('chat');
+  let newUrl = $state('https://api.openai.com/v1');
+  let newModel = $state('gpt-5.6-luna');
+  let newMode = $state('auto');
+  let newVision = $state(true);
+  function choosePreset() {
+    const p = presets[newPreset];
+    if (!p) return;
+    newProtocol = p.protocol; newUrl = p.url ?? ''; newModel = p.model;
+  }
+  async function addConnection() {
+    busy = 'add-connection';
+    try {
+      await post('/settings/connections', { label: newLabel.trim(), preset: newPreset,
+        protocol: newProtocol, base_url: newUrl || null, model: newModel.trim(), mode: newMode, vision: newVision });
+      newLabel = '';
+      await refresh();
+      toast.success('Connection added. Configure its credentials below, then assign agents.');
+    } catch (e: any) { toast.error(e.message); }
+    finally { busy = ''; }
+  }
+  async function discoverModels(name: string) {
+    busy = `models-${name}`;
+    try {
+      const result = await get(`/settings/providers/${name}/models`);
+      if (result.error) { toast.error(result.error); return; }
+      providers = providers.map(p => p.name === name ? {...p, suggested_models: result.models, models: result.models} : p);
+      if (result.models.length) {
+        testModelInput[name] = result.models[0];
+        providerModelInput[name] = false;
+      }
+      toast.success(`Loaded ${result.models.length} models for agent selection`);
+    } catch (e: any) { toast.error(e.message); }
+    finally { busy = ''; }
+  }
 
   // Per-provider editable form fields (key/base_url) + configured pill state.
   let provCfg = $state<Record<string, ProviderConfig>>({});
   let provKeyInput = $state<Record<string, string>>({});
   let provUrlInput = $state<Record<string, string>>({});
   let provTest = $state<Record<string, TestResult | undefined>>({});
+  let testModelInput = $state<Record<string, string>>({});
+  async function verifyModel(name: string) {
+    busy = `verify-${name}`;
+    try {
+      const result = await post(`/settings/providers/${name}/verify-model`, {model: testModelInput[name]?.trim()});
+      if (result.ok) toast.success('Model returned valid structured JSON');
+      else toast.error(result.error);
+    } catch (e: any) { toast.error(e.message); }
+    finally { busy = ''; }
+  }
 
   // Theme radio — persisted to the shared localStorage key the shell reads.
   const THEME_KEY = 'videoflow.theme';
@@ -128,20 +178,22 @@
     { value: 'en', label: 'English' }
   ];
   const CUSTOM = '__custom__';
+  const LOAD_MODELS = '__load_models__';
 
   // ------------------------------------------------------------- derived
   const byName = $derived(Object.fromEntries(providers.map((p) => [p.name, p])));
   const configuredProviders = $derived(
-    PROVIDER_ORDER.map((n) => byName[n]).filter((p): p is Provider => !!p && p.configured)
+    providers.filter((p) => p.configured)
   );
   const orderedProviders = $derived(
-    PROVIDER_ORDER.map((n) => byName[n]).filter((p): p is Provider => !!p)
+    providers
   );
   const textAgents = $derived(agents.filter((a) => !VISION_AGENTS.has(a.agent)));
   const visionAgents = $derived(agents.filter((a) => VISION_AGENTS.has(a.agent)));
 
   // -------------------------------------------------------------- load
   async function refresh() {
+    presets = await get('/settings/connection-presets');
     const [ag, pv, ap] = await Promise.all([
       get('/settings/agents'),
       get('/settings/providers'),
@@ -149,6 +201,10 @@
     ]);
     agents = ag;
     providers = pv;
+    testModelInput = Object.fromEntries(
+      pv.map((p: Provider) => [p.name, p.models?.[0] ?? p.suggested_models?.[0] ?? p.default_model ?? ''])
+    );
+    for (const p of providers) providerLabels[p.name] = p.label ?? p.name;
     app = ap;
     // Load each provider's secret config (masked key + base_url) in parallel.
     const cfgs: ProviderConfig[] = await Promise.all(
@@ -286,6 +342,39 @@
   }
 
   let bulkTextProvider = $state('');
+
+  let providerModelInput = $state<Record<string, boolean>>({});
+  let providerModelCustom = $state<Record<string, string>>({});
+
+  function providerModelOptions(name: string): string[] {
+    const p = byName[name];
+    const dedup = new Map<string, true>();
+    for (const m of [...(p?.models ?? []), ...(p?.suggested_models ?? [])]) {
+      if (m) dedup.set(m, true);
+    }
+    if (p?.default_model) dedup.set(p.default_model, true);
+    return [...dedup.keys()];
+  }
+
+  function onProviderModelSelect(name: string, value: string) {
+    if (value === LOAD_MODELS) {
+      discoverModels(name);
+      return;
+    }
+    if (value === CUSTOM) {
+      providerModelInput[name] = true;
+      providerModelCustom[name] = testModelInput[name] ?? '';
+      return;
+    }
+    providerModelInput[name] = false;
+    testModelInput[name] = value;
+  }
+
+  function commitProviderCustomModel(name: string) {
+    const m = (providerModelCustom[name] ?? '').trim();
+    providerModelInput[name] = false;
+    if (m) testModelInput[name] = m;
+  }
 
   // ----------------------------------------------------------- providers
   async function saveProvider(name: string) {
@@ -474,6 +563,29 @@
             </CardDescription>
           </CardHeader>
           <CardContent class="space-y-5">
+            <div class="rounded-lg border p-4 space-y-3">
+              <h3 class="text-sm font-medium">Add a named connection</h3>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <label class="text-xs">Name<Input bind:value={newLabel} placeholder="My OpenRouter" /></label>
+                <label class="text-xs">Provider<select class="block w-full rounded border p-2 bg-background" bind:value={newPreset} onchange={choosePreset}>
+                  {#each Object.entries(presets) as [id, p]}<option value={id}>{p.label}</option>{/each}
+                </select></label>
+                <label class="text-xs">Protocol<select class="block w-full rounded border p-2 bg-background" bind:value={newProtocol}>
+                  <option value="chat">OpenAI-compatible Chat Completions (includes Gemini)</option>
+                  <option value="responses">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option>
+                  <option value="codex">ChatGPT via local Codex</option>
+                </select></label>
+                <label class="text-xs">Default model<Input bind:value={newModel} placeholder="Model ID from your provider" /></label>
+                {#if newProtocol !== 'codex'}
+                  <label class="text-xs">Base URL<Input bind:value={newUrl} /></label>
+                  <label class="text-xs">Chat Completions output mode<select class="block w-full rounded border p-2 bg-background" bind:value={newMode} disabled={newProtocol !== 'chat'}>
+                    <option value="auto">Provider default</option><option value="tools">Tool calling</option><option value="json">JSON mode</option><option value="prompt">JSON in prompt</option>
+                  </select></label>
+                {/if}
+              </div>
+              <label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={newVision} />Models on this connection accept images</label>
+              <Button size="sm" disabled={!newLabel.trim() || busy === 'add-connection'} onclick={addConnection}>Add connection</Button>
+            </div>
             {#each orderedProviders as p (p.name)}
               {@const cfg = provCfg[p.name]}
               {@const test = provTest[p.name]}
@@ -494,6 +606,9 @@
                   {/if}
                 </div>
 
+                {#if p.protocol === 'codex'}
+                  <p class="text-sm text-muted-foreground">Uses the Codex CLI login on this computer. Run <code>codex login</code> in a terminal and sign in with ChatGPT. Refresh this page after login; run <code>codex logout</code> to disconnect. Test checks login only; model access is checked when an agent runs.</p>
+                {:else}
                 <div class="grid gap-2 sm:grid-cols-2">
                   <div>
                     <label class="mb-1 block text-xs text-muted-foreground" for="key-{p.name}">
@@ -526,7 +641,54 @@
                   </div>
                 </div>
 
+                {/if}
                 <div class="mt-2 flex flex-wrap items-center gap-2">
+                  {#if providerModelInput[p.name]}
+                    <Input
+                      class="max-w-64"
+                      aria-label={`Custom test model for ${p.label ?? p.name}`}
+                      placeholder="Model ID to test"
+                      bind:value={providerModelCustom[p.name]}
+                      onkeydown={(e) => e.key === 'Enter' && commitProviderCustomModel(p.name)}
+                    />
+                    <Button
+                      size="sm"
+                      disabled={!providerModelCustom[p.name]?.trim() || busy === `verify-${p.name}`}
+                      onclick={() => {
+                        commitProviderCustomModel(p.name);
+                        verifyModel(p.name);
+                      }}
+                    >
+                      Verify
+                    </Button>
+                  {:else}
+                    <select
+                      aria-label={`Test model for ${p.label ?? p.name}`}
+                      class="w-64 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                      disabled={!cfg?.configured || busy === `verify-${p.name}`}
+                      value={testModelInput[p.name] ?? ''}
+                      onchange={(e) => onProviderModelSelect(p.name, (e.currentTarget as HTMLSelectElement).value)}
+                    >
+                      {#if providerModelOptions(p.name).length}
+                        {#each providerModelOptions(p.name) as m (m)}
+                          <option value={m}>{m}</option>
+                        {/each}
+                      {:else}
+                        <option value="" disabled>Load or enter model</option>
+                      {/if}
+                      <option value={LOAD_MODELS}>Load models…</option>
+                      <option value={CUSTOM}>Custom…</option>
+                    </select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!cfg?.configured || !testModelInput[p.name]?.trim() || busy === `verify-${p.name}`}
+                      onclick={() => verifyModel(p.name)}
+                    >
+                      Verify
+                    </Button>
+                  {/if}
+                  <span class="text-xs text-muted-foreground">Model tests consume provider usage.</span>
                   <Button
                     size="sm"
                     disabled={busy === `prov-${p.name}`}

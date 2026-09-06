@@ -7,6 +7,7 @@ agent output shape must not be coupled to DB shape (the `*_json` columns).
 from app.schemas.asset_plan import AssetPlan, PlannedAsset
 from app.schemas.asset_schema import AssetMetadata
 from app.schemas.character_schema import CharacterBible
+from app.schemas.conversation import ConversationBrief, ConversationPlan, ConversationTurn
 from app.schemas.idea import IdeaOption, IdeaOptions
 from app.schemas.intent import Intent, IntentAction
 from app.schemas.qa_schema import QAResult
@@ -21,6 +22,9 @@ __all__ = [
     "AssetPlan",
     "PlannedAsset",
     "CharacterBible",
+    "ConversationBrief",
+    "ConversationPlan",
+    "ConversationTurn",
     "IdeaOption",
     "IdeaOptions",
     "Intent",

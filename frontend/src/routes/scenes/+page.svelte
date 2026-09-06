@@ -8,7 +8,22 @@
   import { Skeleton } from '$lib/components/ui/skeleton';
   import { PaneGroup, Pane, Handle } from '$lib/components/ui/resizable';
   import { toast } from 'svelte-sonner';
-  import { Wand2, LayoutGrid, Video, Images, Trash2, Lightbulb, Clock, Plus, Clapperboard, ListVideo, Search, X, AlertTriangle } from '@lucide/svelte';
+  import {
+    Wand2,
+    LayoutGrid,
+    Video,
+    Images,
+    Trash2,
+    Lightbulb,
+    Clock,
+    Plus,
+    Clapperboard,
+    ListVideo,
+    Search,
+    X,
+    AlertTriangle,
+    Sparkles
+  } from '@lucide/svelte';
   import SceneListItem from '$lib/scenes/SceneListItem.svelte';
   import SceneDetail from '$lib/scenes/SceneDetail.svelte';
 
@@ -39,6 +54,14 @@
   let assetPlans: Record<string, { assets: any[]; reasoning: string } | null> = $state({});
   let planSelected: Record<string, boolean[]> = $state({});
   let style: any = $state(null);
+  let conversationInstruction = $state('');
+  let conversationTone = $state('natural');
+  let conversationLanguage = $state('');
+  let conversationRelationship = $state('');
+  let conversationSpeakerOrder = $state('');
+  let conversationMaxWords = $state(10);
+  let conversationAllowNarration = $state(false);
+  let conversationPreview: any = $state(null);
   // Storyboard lightbox: the asset currently shown enlarged in a Dialog.
   let lightbox: any = $state(null);
   // Destructive-confirm: { title, message, run } shown in a dialog when content
@@ -569,6 +592,117 @@
     }
   }
 
+  async function convertSceneConversational(scene: any) {
+    const instruction = (sceneRefine[scene.id] ?? '').trim();
+    const key = `conv-${scene.id}`;
+    busy[key] = true;
+    error = '';
+    try {
+      const r = await post('/scenes/conversationalize', {
+        scene_ids: [scene.id],
+        include_shots: true,
+        instruction,
+        brief: conversationBrief(instruction)
+      });
+      await refresh();
+      toast.success(r.note || `Converted ${r.converted} items in this scene.`);
+      if ((r.note ?? '') === '') {
+        const failures = (r.results ?? []).flatMap((result: any) =>
+          (result?.shot_failures ?? []).map((x: any) => x.error)
+        ).filter(Boolean);
+        if (failures.length) {
+          toast.info(`${failures.length} shot updates failed and were skipped.`);
+        }
+      }
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      busy[key] = false;
+    }
+  }
+
+  async function convertAllScenesConversational() {
+    const ids = scenes.map((s) => s.id);
+    if (!ids.length) {
+      toast.info('No scenes to convert.');
+      return;
+    }
+    const key = 'conv-all';
+    busy[key] = true;
+    error = '';
+    try {
+      await runBackgroundOp('/scenes/conversationalize', {
+        scene_ids: ids,
+        include_shots: true,
+        instruction: conversationInstruction.trim(),
+        brief: conversationBrief(conversationInstruction.trim()),
+        preview: false
+      }, {
+        label: 'Conversational conversion',
+        onDone: async () => {
+          busy[key] = false;
+          conversationPreview = null;
+          await refresh();
+        },
+        onFail: () => { busy[key] = false; }
+      });
+    } catch (e: any) {
+      busy[key] = false;
+      toast.error(e.message);
+    }
+  }
+
+  function conversationBrief(goal: string) {
+    return {
+      goal: goal.slice(0, 500),
+      tone: conversationTone,
+      language: conversationLanguage.trim(),
+      relationship: conversationRelationship.trim(),
+      speaker_order: conversationSpeakerOrder
+        .split(',')
+        .map((name) => name.trim())
+        .filter(Boolean),
+      max_words_per_line: Math.max(3, Math.min(20, Number(conversationMaxWords) || 10)),
+      allow_narration: conversationAllowNarration
+    };
+  }
+
+  async function previewAllScenesConversational() {
+    const ids = scenes.map((s) => s.id);
+    if (!ids.length) {
+      toast.info('No scenes found.');
+      return;
+    }
+    busy['conv-preview'] = true;
+    try {
+      conversationPreview = await post('/scenes/conversationalize', {
+        scene_ids: ids,
+        include_shots: true,
+        instruction: conversationInstruction.trim(),
+        brief: conversationBrief(conversationInstruction.trim()),
+        preview: true
+      });
+      toast.success('Preview generated. Nothing was changed.');
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      busy['conv-preview'] = false;
+    }
+  }
+
+  function convertAllScenesConversationalGuarded() {
+    if (!scenes.length) {
+      toast.info('No scenes found.');
+      return;
+    }
+    confirmAction = {
+      title: 'Conversationalize all scenes?',
+      message:
+        'This will run AI conversion on every scene and shot in the active project. This can take time and cannot be undone.',
+      run: convertAllScenesConversational
+    };
+  }
+
   async function startAssetGeneration(s: any, instruction: string, maxAssets: number) {
     const key = `assets-${s.id}`;
     opBusy[key] = true;
@@ -674,6 +808,54 @@
   <div class="px-6 pt-6 pb-3 shrink-0">
     <h1 class="text-lg font-semibold">Scenes</h1>
     <p class="text-sm text-muted-foreground">Turn a story idea into scenes, then walk each one through Expand, Shots, Storyboard and Render.</p>
+    <div class="mt-2 flex flex-wrap items-center gap-2">
+      <input
+        bind:value={conversationInstruction}
+        placeholder="Conversational convert instruction (optional; leave empty for default)"
+        class="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+      />
+      <Button variant="outline" size="sm" disabled={busy['conv-all']} onclick={convertAllScenesConversationalGuarded}>
+        <Sparkles class="size-3.5 mr-1" />{busy['conv-all'] ? 'Converting…' : 'Conversationalize all scenes'}
+      </Button>
+    </div>
+    <details class="mt-2 rounded-md border border-border px-3 py-2 text-xs">
+      <summary class="cursor-pointer font-medium">Conversation controls</summary>
+      <div class="mt-2 grid gap-2 sm:grid-cols-2">
+        <input bind:value={conversationTone} placeholder="Tone: natural, tense, warm…" class="rounded-md border border-input bg-background px-2 py-1.5" />
+        <input bind:value={conversationLanguage} placeholder="Language / dialect (optional)" class="rounded-md border border-input bg-background px-2 py-1.5" />
+        <input bind:value={conversationRelationship} placeholder="Relationship and conflict" class="rounded-md border border-input bg-background px-2 py-1.5" />
+        <input bind:value={conversationSpeakerOrder} placeholder="Speaker order: Grace, Mei" class="rounded-md border border-input bg-background px-2 py-1.5" />
+        <label class="flex items-center gap-2">
+          Max words per line
+          <input type="number" min="3" max="20" bind:value={conversationMaxWords} class="w-16 rounded-md border border-input bg-background px-2 py-1.5" />
+        </label>
+        <label class="flex items-center gap-2">
+          <input type="checkbox" bind:checked={conversationAllowNarration} /> allow narrator turns
+        </label>
+      </div>
+      <div class="mt-2 flex flex-wrap items-center gap-2">
+        <Button variant="ghost" size="sm" disabled={busy['conv-preview']} onclick={previewAllScenesConversational}>
+          {busy['conv-preview'] ? 'Previewing…' : 'Preview changes'}
+        </Button>
+        <span class="text-muted-foreground">Only assigned cast can speak; duration and camera stay fixed.</span>
+      </div>
+    </details>
+    {#if conversationPreview}
+      <details open class="mt-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
+        <summary class="cursor-pointer font-medium">Conversation preview ({conversationPreview.converted} planned updates)</summary>
+        <div class="mt-2 max-h-56 space-y-2 overflow-auto">
+          {#each conversationPreview.results ?? [] as result}
+            <div class="rounded border border-border bg-background p-2">
+              <div class="font-medium">{result.scene_id} · {result.status}</div>
+              {#if result.error}<div class="text-destructive">{result.error}</div>{/if}
+              {#each result.shots ?? [] as shot}
+                <div class="mt-1"><span class="text-muted-foreground">{shot.speaker}:</span> {shot.line}</div>
+              {/each}
+            </div>
+          {/each}
+        </div>
+      </details>
+    {/if}
   </div>
 
   <PaneGroup direction="horizontal" class="flex-1 min-h-0 border-t border-border">
@@ -830,6 +1012,7 @@
               onSaveShot={saveShot}
               onRefineShot={refineShot}
               onDeleteShot={deleteShot}
+              onConvertConversational={convertSceneConversational}
               onSuggestAssets={suggestAssets}
               onGenerateAssets={generateAssets}
               onGenerateSelectedAssets={generateSelectedAssets}

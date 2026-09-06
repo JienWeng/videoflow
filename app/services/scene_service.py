@@ -203,6 +203,9 @@ def story_context(session: Session, scene: Scene) -> dict | None:
             "title": script.title,
             "summary": script.summary,
         }
+        conversation = (script.draft_json or {}).get("conversation_profile")
+        if conversation:
+            parts["conversation_profile"] = conversation
         siblings = [
             s for s in list_scenes(session)
             if s.script_id == scene.script_id and s.id != scene.id

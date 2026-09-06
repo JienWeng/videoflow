@@ -35,6 +35,7 @@
     onExpand,
     onSave,
     onRefineScene,
+    onConvertConversational,
     onToggleCast,
     onGenerateShots,
     onAddShot,
@@ -197,6 +198,10 @@
         <Button variant="outline" size="sm"
           disabled={busy[`refine-${s.id}`] || !(sceneRefine[s.id] ?? '').trim()} onclick={() => onRefineScene(s)}>
           <Sparkles class="size-3 mr-1" />{busy[`refine-${s.id}`] ? 'Refining…' : 'AI refine'}
+        </Button>
+        <Button variant="outline" size="sm"
+          disabled={busy[`conv-${s.id}`]} onclick={() => onConvertConversational(s)}>
+          <Sparkles class="size-3 mr-1" />{busy[`conv-${s.id}`] ? 'Converting…' : 'Conversationalize'}
         </Button>
       </div>
 

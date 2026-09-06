@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.agents import refine_agent
 from app.errors import NotFoundError
 from app.models import Scene, Shot
-from app.services import linking_service, scene_service, style_service
+from app.schemas import ConversationBrief
+from app.services import (
+    conversation_service,
+    linking_service,
+    project_service,
+    scene_service,
+    style_service,
+)
 from app.services.dialogue import DIALOGUE_RE, has_dialogue
+
+
+DEFAULT_CONVERSATIONAL_INSTRUCTION = (
+    "Rewrite this content in natural conversational form. Keep the same plot, "
+    "characters, and continuity, but make it explicit that characters are "
+    "speaking through dialogue. Preserve intent and setting."
+)
 
 
 def _preserve_dialogue(original: str, refined: str) -> str:
@@ -81,3 +95,23 @@ async def refine_shot(session: Session, shot_id: str, instruction: str) -> dict:
         linking_service.auto_link_scene(session, shot.scene_id)
         session.refresh(shot)
     return {"shot": shot, "note": refinement.note}
+
+
+async def convert_scenes_to_conversational(
+    session: Session,
+    *,
+    scene_ids: list[str] | None = None,
+    instruction: str = "",
+    include_shots: bool = True,
+    brief: ConversationBrief | None = None,
+    preview: bool = False,
+) -> dict:
+    """Plan and optionally apply a controlled conversational rewrite."""
+    return await conversation_service.convert_scenes_to_conversational(
+        session,
+        scene_ids=scene_ids,
+        instruction=instruction or DEFAULT_CONVERSATIONAL_INSTRUCTION,
+        include_shots=include_shots,
+        brief=brief,
+        preview=preview,
+    )
