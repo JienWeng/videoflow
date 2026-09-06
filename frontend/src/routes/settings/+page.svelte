@@ -67,6 +67,15 @@
     render_negatives: string[];
   };
   type TestResult = { ok: boolean; latency_ms: number | null; error: string | null };
+  type ProviderPreset = {
+    label: string;
+    protocol: 'chat' | 'responses' | 'anthropic' | 'codex';
+    url: string;
+    model: string;
+    preset: string;
+    mode: 'auto' | 'tools' | 'json' | 'prompt';
+    vision: boolean;
+  };
 
   // -------------------------------------------------------------- state
   let agents = $state<Agent[]>([]);
@@ -102,7 +111,7 @@
   async function discoverModels(name: string) {
     busy = `models-${name}`;
     try {
-      const result = await get(`/settings/providers/${name}/models`);
+      const result = await get(providerEndpoint(name, 'models'));
       if (result.error) { toast.error(result.error); return; }
       providers = providers.map(p => p.name === name ? {...p, suggested_models: result.models, models: result.models} : p);
       if (result.models.length) {
@@ -123,7 +132,7 @@
   async function verifyModel(name: string) {
     busy = `verify-${name}`;
     try {
-      const result = await post(`/settings/providers/${name}/verify-model`, {model: testModelInput[name]?.trim()});
+      const result = await post(providerEndpoint(name, 'verify-model'), {model: testModelInput[name]?.trim()});
       if (result.ok) toast.success('Model returned valid structured JSON');
       else toast.error(result.error);
     } catch (e: any) { toast.error(e.message); }
@@ -146,6 +155,19 @@
     atlas: 'AtlasCloud'
   };
   const PROVIDER_ORDER = ['minimax', 'atlas', 'openai', 'anthropic', 'gemini'];
+  const FALLBACK_PRESETS: Record<string, ProviderPreset> = {
+    minimax: { label: 'MiniMax', protocol: 'chat', url: 'https://api.minimax.io/v1', model: 'MiniMax-Text-01', preset: 'minimax', mode: 'auto', vision: true },
+    openai: { label: 'OpenAI API', protocol: 'chat', url: 'https://api.openai.com/v1', model: 'gpt-5.6-luna', preset: 'openai', mode: 'auto', vision: true },
+    anthropic: { label: 'Anthropic / Claude', protocol: 'anthropic', url: 'https://api.anthropic.com', model: 'claude-sonnet-4-6', preset: 'anthropic', mode: 'auto', vision: true },
+    gemini: { label: 'Google Gemini', protocol: 'chat', url: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash', preset: 'gemini', mode: 'auto', vision: true },
+    atlas: { label: 'AtlasCloud', protocol: 'chat', url: 'https://api.atlascloud.ai/v1', model: 'qwen/qwen3-vl-30b-a3b-instruct', preset: 'atlas', mode: 'auto', vision: true },
+    openrouter: { label: 'OpenRouter', protocol: 'chat', url: 'https://openrouter.ai/api/v1', model: '', preset: 'openrouter', mode: 'auto', vision: true },
+    deepseek: { label: 'DeepSeek', protocol: 'chat', url: 'https://api.deepseek.com', model: 'deepseek-chat', preset: 'deepseek', mode: 'auto', vision: true },
+    opencode: { label: 'OpenCode Zen', protocol: 'responses', url: 'https://opencode.ai/zen/v1', model: '', preset: 'opencode', mode: 'auto', vision: true },
+    'opencode-go': { label: 'OpenCode Go', protocol: 'chat', url: 'https://opencode.ai/zen/go/v1', model: '', preset: 'opencode-go', mode: 'auto', vision: true },
+    codex: { label: 'ChatGPT via Codex', protocol: 'codex', url: '', model: 'gpt-5.6-luna', preset: 'codex', mode: 'auto', vision: true },
+    custom: { label: 'Custom endpoint', protocol: 'chat', url: '', model: '', preset: 'custom', mode: 'auto', vision: true },
+  };
 
   // One-line descriptions for each agent, plus a text/vision split.
   const VISION_AGENTS = new Set(['qa_agent', 'asset_recogniser']);
@@ -180,6 +202,16 @@
   const CUSTOM = '__custom__';
   const LOAD_MODELS = '__load_models__';
 
+  const selectablePresets = $derived(() => {
+    const entries = Object.entries(presets).filter(([id, preset]) => (preset as any).preset === id);
+    return entries.length ? entries : Object.entries(FALLBACK_PRESETS);
+  });
+
+  function providerEndpoint(name: string, suffix?: string): string {
+    const base = `/settings/providers/${encodeURIComponent(name)}`;
+    return suffix ? `${base}/${suffix}` : base;
+  }
+
   // ------------------------------------------------------------- derived
   const byName = $derived(Object.fromEntries(providers.map((p) => [p.name, p])));
   const configuredProviders = $derived(
@@ -193,7 +225,11 @@
 
   // -------------------------------------------------------------- load
   async function refresh() {
-    presets = await get('/settings/connection-presets');
+    try {
+      presets = await get('/settings/connection-presets');
+    } catch {
+      presets = FALLBACK_PRESETS;
+    }
     const [ag, pv, ap] = await Promise.all([
       get('/settings/agents'),
       get('/settings/providers'),
@@ -208,7 +244,7 @@
     app = ap;
     // Load each provider's secret config (masked key + base_url) in parallel.
     const cfgs: ProviderConfig[] = await Promise.all(
-      (pv as Provider[]).map((p) => get(`/settings/providers/${p.name}`))
+      (pv as Provider[]).map((p) => get(providerEndpoint(p.name)))
     );
     const cfgMap: Record<string, ProviderConfig> = {};
     const keyMap: Record<string, string> = {};
@@ -386,7 +422,7 @@
       const k = provKeyInput[name] ?? '';
       if (k.trim()) body.api_key = k.trim();
       body.base_url = (provUrlInput[name] ?? '').trim();
-      const updated: ProviderConfig = await put(`/settings/providers/${name}`, body);
+      const updated: ProviderConfig = await put(providerEndpoint(name), body);
       provCfg[name] = updated;
       provKeyInput[name] = '';
       provUrlInput[name] = updated.base_url ?? '';
@@ -406,7 +442,7 @@
   async function clearProvider(name: string) {
     busy = `prov-${name}`;
     try {
-      const updated: ProviderConfig = await put(`/settings/providers/${name}`, { api_key: '' });
+      const updated: ProviderConfig = await put(providerEndpoint(name), { api_key: '' });
       provCfg[name] = updated;
       provKeyInput[name] = '';
       providers = providers.map((p) =>
@@ -425,7 +461,7 @@
     busy = `test-${name}`;
     provTest[name] = undefined;
     try {
-      const res: TestResult = await post(`/settings/providers/${name}/test`);
+      const res: TestResult = await post(providerEndpoint(name, 'test'));
       provTest[name] = res;
       if (res.ok) toast.success(`${providerLabels[name] ?? name}: connected (${res.latency_ms}ms)`);
       else toast.error(`${providerLabels[name] ?? name}: ${res.error ?? 'failed'}`);
@@ -568,7 +604,7 @@
               <div class="grid gap-3 sm:grid-cols-2">
                 <label class="text-xs">Name<Input bind:value={newLabel} placeholder="My OpenRouter" /></label>
                 <label class="text-xs">Provider<select class="block w-full rounded border p-2 bg-background" bind:value={newPreset} onchange={choosePreset}>
-                  {#each Object.entries(presets) as [id, p]}<option value={id}>{p.label}</option>{/each}
+                  {#each selectablePresets as [id, p]}<option value={id}>{p.label}</option>{/each}
                 </select></label>
                 <label class="text-xs">Protocol<select class="block w-full rounded border p-2 bg-background" bind:value={newProtocol}>
                   <option value="chat">OpenAI-compatible Chat Completions (includes Gemini)</option>
