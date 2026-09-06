@@ -1,5 +1,5 @@
 """Background operation table — tracks fire-and-forget long generations
-(storyboard, asset generation, captions, style ingest). Distinct from
+(storyboard, asset generation, captions, style ingest, video generation). Distinct from
 render_jobs: ops are simple asyncio tasks, not queued/reconciled work."""
 
 from __future__ import annotations

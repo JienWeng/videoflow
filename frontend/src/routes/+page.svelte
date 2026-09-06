@@ -95,9 +95,9 @@
         <div class="pointer-events-none absolute inset-0 z-10 grid place-items-center">
           <Card.Root class="pointer-events-auto max-w-sm shadow-lg">
             <Card.Header>
-              <Card.Title>Start your project</Card.Title>
-              <Card.Description>
-                Set up the basics, then create your first story.
+            <Card.Title>Make your first video</Card.Title>
+            <Card.Description>
+              Describe the story and VideoFlow handles the pipeline.
               </Card.Description>
             </Card.Header>
             <Card.Content>
@@ -105,19 +105,19 @@
                 <li class="flex items-start gap-2.5">
                   <Users class="size-4 mt-0.5 shrink-0 text-muted-foreground" />
                   <span>
-                    <a href="/characters" class="font-medium underline underline-offset-2 inline-flex items-center gap-0.5">
-                      Add characters<ArrowUpRight class="size-3" />
+                    <a href="/create" class="font-medium underline underline-offset-2 inline-flex items-center gap-0.5">
+                      Create a video<ArrowUpRight class="size-3" />
                     </a>
-                    <span class="block text-muted-foreground">Add reference images for consistent characters.</span>
+                    <span class="block text-muted-foreground">Start with a story idea and choose a style.</span>
                   </span>
                 </li>
                 <li class="flex items-start gap-2.5">
                   <Palette class="size-4 mt-0.5 shrink-0 text-muted-foreground" />
                   <span>
-                    <a href="/assets" class="font-medium underline underline-offset-2 inline-flex items-center gap-0.5">
-                      Set the style<ArrowUpRight class="size-3" />
+                    <a href="/scenes" class="font-medium underline underline-offset-2 inline-flex items-center gap-0.5">
+                      Open advanced workspace<ArrowUpRight class="size-3" />
                     </a>
-                    <span class="block text-muted-foreground">Set the look for generated media.</span>
+                    <span class="block text-muted-foreground">Edit scenes, characters, assets, and renders manually.</span>
                   </span>
                 </li>
                 <li class="flex items-start gap-2.5">

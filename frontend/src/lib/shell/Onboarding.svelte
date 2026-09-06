@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * First-run welcome overlay. Explains the three surfaces of the Studio and
-   * the 3-step path to a first video, then gets out of the way. Dismissal is
+   * First-run welcome overlay. Points users to the simple Create video flow,
+   * then gets out of the way. Dismissal is
    * persisted in localStorage['videoflow.onboarded'] so it shows exactly once.
    *
    * Rendered only on the Studio route (see +page.svelte). Closing — via the
@@ -11,7 +11,6 @@
   import { Button } from '$lib/components/ui/button';
   import {
     LayoutGrid,
-    MessageSquare,
     PanelLeft,
     Sparkles,
     Command,
@@ -59,21 +58,16 @@
       body: 'Your project as a living map — characters, scenes, shots and renders. Click a node to work on it.'
     },
     {
-      icon: MessageSquare,
-      title: 'The command center',
-      body: 'The chat on the right runs everything: write a script, generate shots, render, add captions. Just ask.'
-    },
-    {
       icon: PanelLeft,
-      title: 'The pipeline sidebar',
-      body: 'Jump between Scenes, Characters, Assets and Render. The active project lives at the top.'
+      title: 'Advanced tools are always available',
+      body: 'Start with Create video. Use Scenes, Characters, Assets and Render when you need manual control.'
     }
   ];
 
   const steps = [
-    'Add characters and a style so everything stays consistent.',
-    'Tell the chat your story idea — it writes a script and splits it into scenes.',
-    'Walk each scene through shots → storyboard → render, then add captions.'
+    'Describe your story and choose a visual style.',
+    'VideoFlow builds the scenes, dialogue, visuals, and render.',
+    'Open the advanced workspace only when you want manual control.'
   ];
 </script>
 
@@ -107,7 +101,7 @@
         <h2 id="onboarding-title" class="text-lg font-semibold">Welcome to VideoFlow</h2>
       </div>
       <p class="mb-5 text-sm text-muted-foreground">
-        Three surfaces, one flow — here is the lay of the land.
+        Start with one story prompt. The rest is automatic.
       </p>
 
       <div class="mb-5 grid gap-3 sm:grid-cols-3">
@@ -121,7 +115,7 @@
       </div>
 
       <div class="mb-5 rounded-lg border border-border bg-card/50 p-4">
-        <p class="mb-2 text-sm font-medium">Your first video in 3 steps</p>
+        <p class="mb-2 text-sm font-medium">Your first video</p>
         <ol class="space-y-1.5 text-sm text-muted-foreground">
           {#each steps as step, i (i)}
             <li class="flex gap-2">

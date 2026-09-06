@@ -18,6 +18,7 @@ def register_routers(app: FastAPI) -> None:
         scenes,
         settings,
         style,
+        videos,
     )
 
     app.include_router(assets.router)
@@ -31,3 +32,4 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(projects.router)
     app.include_router(chat.router)
     app.include_router(events.router)
+    app.include_router(videos.router)

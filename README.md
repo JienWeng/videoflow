@@ -47,6 +47,15 @@ The backend serves `/storage` statically and allows CORS from :5173/:4173.
 `ffmpeg` is required for thumbnails / QA frame extraction (degrades gracefully if
 absent).
 
+### Simple video creation
+
+Open `http://localhost:5173/create` or choose **Create video** in the sidebar.
+Describe the story, choose a visual style, format, language, and dialogue mode,
+then click **Create video**. VideoFlow runs the script, scene, shot, dialogue,
+storyboard, and render stages automatically. Finished jobs appear under **My
+videos**; Scenes, Characters, Assets, and Studio remain available under
+**Advanced** when manual control is needed.
+
 ## Architecture
 
 ```

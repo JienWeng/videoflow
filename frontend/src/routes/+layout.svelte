@@ -37,14 +37,13 @@
     return stopTheme;
   });
 
-  const createNav = [
+  const createNav = [{ href: '/create', label: 'Create video', icon: Clapperboard }];
+
+  const outputNav = [{ href: '/render', label: 'My videos', icon: Film }];
+
+  const advancedNav = [
     { href: '/', label: 'Studio', icon: Clapperboard },
-    { href: '/scenes', label: 'Scenes', icon: ListVideo }
-  ];
-
-  const outputNav = [{ href: '/render', label: 'Render', icon: Film }];
-
-  const libraryNav = [
+    { href: '/scenes', label: 'Scenes', icon: ListVideo },
     { href: '/characters', label: 'Characters', icon: Users },
     { href: '/assets', label: 'Assets', icon: Image }
   ];
@@ -82,7 +81,7 @@
       <span class="truncate">{activeProject?.name ?? 'Projects'}</span>
     </a>
 
-    <!-- Create group -->
+    <!-- Primary creation path -->
     <div class="px-2 pt-4 pb-1 text-[10px] tracking-wider text-muted-foreground/70 uppercase">
       Create
     </div>
@@ -112,11 +111,11 @@
       </a>
     {/each}
 
-    <!-- Library group -->
+    <!-- Advanced group -->
     <div class="px-2 pt-4 pb-1 text-[10px] tracking-wider text-muted-foreground/70 uppercase">
-      Library
+      Advanced
     </div>
-    {#each libraryNav as item}
+    {#each advancedNav as item}
       <a
         href={item.href}
         class="flex items-center gap-2 rounded-md pl-2 pr-2 py-1.5 text-sm hover:bg-accent
