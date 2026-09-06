@@ -263,7 +263,7 @@
     {#if ontranscribe && segments.length === 0}
       <div class="grid gap-1.5 rounded-md border border-dashed border-border bg-muted/30 p-2.5">
         <p class="text-xs text-muted-foreground">
-          No captions yet. Auto-transcribe to get editable lines on the timeline.
+          Auto-transcribe to add editable captions to the timeline.
         </p>
         <Button variant="secondary" size="sm" disabled={transcribing} onclick={ontranscribe}>
           <Sparkles class="mr-1 size-3.5 {transcribing ? 'animate-pulse' : ''}" />
@@ -309,7 +309,7 @@
       </div>
     {/if}
     <p class="text-xs text-muted-foreground">
-      Select a caption or shot block on the timeline to edit it here.
+      Select a caption or shot on the timeline to edit it.
     </p>
   {/if}
 </div>

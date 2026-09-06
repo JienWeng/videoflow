@@ -508,8 +508,7 @@
             class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-3"
           >
             <p class="text-xs text-muted-foreground">
-              No captions yet. Auto-transcribe the voice track into editable lines, then fine-tune and
-              re-burn — all here.
+              Auto-transcribe the voice track to add editable captions.
             </p>
             <Button variant="secondary" size="sm" disabled={transcribing} onclick={transcribe}>
               <Sparkles class="mr-1 size-3.5 {transcribing ? 'animate-pulse' : ''}" />

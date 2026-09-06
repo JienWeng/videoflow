@@ -77,5 +77,5 @@
     ></video>
   {/if}
 {:else}
-  <span class="text-xs text-muted-foreground">no output yet</span>
+  <span class="text-xs text-muted-foreground">Render to preview</span>
 {/if}

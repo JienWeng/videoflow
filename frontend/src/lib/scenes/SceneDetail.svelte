@@ -339,7 +339,7 @@
           (3–15s per render).
         </div>
       {:else}
-        <p class="text-xs text-muted-foreground">No shots yet — generate them with AI, or add one manually.</p>
+        <p class="text-xs text-muted-foreground">Generate shots with AI or add one manually.</p>
       {/if}
     </div>
 
@@ -452,7 +452,7 @@
           </span>
         </button>
       {:else}
-        <p class="text-xs text-muted-foreground">No storyboard yet.</p>
+        <p class="text-xs text-muted-foreground">Generate a storyboard after adding shots.</p>
       {/if}
     </div>
   </div>

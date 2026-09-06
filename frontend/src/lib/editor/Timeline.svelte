@@ -251,7 +251,7 @@
         {/each}
         {#if !segments.length}
           <p class="px-2 py-4 text-[10px] text-muted-foreground">
-            No captions yet — use + to add one at the playhead.
+            Click + to add a caption at the playhead.
           </p>
         {/if}
       </div>

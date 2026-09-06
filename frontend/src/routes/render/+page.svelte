@@ -383,7 +383,7 @@
             <div class="rounded-lg border border-dashed border-border p-3">
               <div class="flex items-center gap-2 mb-1">
                 <Clapperboard class="size-4" />
-                <span class="font-medium text-sm">Nothing rendered yet</span>
+                <span class="font-medium text-sm">Render a scene to see it here</span>
               </div>
               <p class="text-sm text-muted-foreground">
                 Render a scene from the <span class="font-medium">Scenes</span> page (step 4), or
@@ -533,7 +533,7 @@
                 </div>
               {:else if !g.active.length}
                 <div class="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                  No finished outputs for this scene yet.
+                  Render this scene to create an output.
                 </div>
               {/if}
 

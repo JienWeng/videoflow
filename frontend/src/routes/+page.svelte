@@ -97,7 +97,7 @@
             <Card.Header>
               <Card.Title>Start your project</Card.Title>
               <Card.Description>
-                Three steps and your first video is on its way.
+                Set up the basics, then create your first story.
               </Card.Description>
             </Card.Header>
             <Card.Content>
@@ -108,9 +108,7 @@
                     <a href="/characters" class="font-medium underline underline-offset-2 inline-flex items-center gap-0.5">
                       Add characters<ArrowUpRight class="size-3" />
                     </a>
-                    <span class="block text-muted-foreground">
-                      Upload photos so they look the same in every video.
-                    </span>
+                    <span class="block text-muted-foreground">Add reference images for consistent characters.</span>
                   </span>
                 </li>
                 <li class="flex items-start gap-2.5">
@@ -119,9 +117,7 @@
                     <a href="/assets" class="font-medium underline underline-offset-2 inline-flex items-center gap-0.5">
                       Set the style<ArrowUpRight class="size-3" />
                     </a>
-                    <span class="block text-muted-foreground">
-                      A project style guide is applied to everything generated.
-                    </span>
+                    <span class="block text-muted-foreground">Set the look for generated media.</span>
                   </span>
                 </li>
                 <li class="flex items-start gap-2.5">

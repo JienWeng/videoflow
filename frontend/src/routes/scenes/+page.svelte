@@ -924,15 +924,13 @@
             <div class="rounded-lg border border-dashed border-border p-3">
               <div class="flex items-center gap-2 mb-1">
                 <Lightbulb class="size-4" />
-                <span class="font-medium text-sm">No scenes yet</span>
+                <span class="font-medium text-sm">Create your first scene</span>
               </div>
               <p class="text-sm text-muted-foreground">
-                Click <span class="font-medium">New story</span> above and generate a script — one scene
-                becomes one video, and each scene then walks through Expand, Shots, Storyboard and Render.
+                Click <span class="font-medium">New story</span> to generate scenes from a script.
               </p>
               <p class="text-sm text-muted-foreground mt-1">
-                Tip: add characters and a style first so generated scenes stay consistent —
-                先添加角色和风格，生成的场景更一致。
+                Add characters and a style first for consistent results.
               </p>
               <Button size="sm" class="mt-2" onclick={() => (showGenerator = true)}>
                 <Plus class="size-4 mr-1" />New story
@@ -1025,10 +1023,8 @@
         {:else}
           <div class="flex h-full flex-col items-center justify-center text-center text-muted-foreground p-8">
             <ListVideo class="size-10 mb-3 opacity-40" />
-            <p class="text-sm">Select or create a scene</p>
-            <p class="text-xs mt-1 max-w-xs">
-              Pick a scene from the list to work on it, or click <span class="font-medium">New story</span> to generate one.
-            </p>
+            <p class="text-sm">Choose a scene or start a story</p>
+            <p class="text-xs mt-1 max-w-xs">Select a scene, or click <span class="font-medium">New story</span>.</p>
           </div>
         {/if}
       </div>
@@ -1046,7 +1042,7 @@
         </span>
         Start a new story
       </Dialog.Title>
-      <Dialog.Description>AI writes a script and splits it into scenes. 1 scene = 1 video.</Dialog.Description>
+      <Dialog.Description>Turn a story into editable scenes.</Dialog.Description>
     </Dialog.Header>
     <form onsubmit={generateScript} class="space-y-3">
       <div>
@@ -1072,8 +1068,7 @@
         </div>
       </div>
       <p class="text-[11px] text-muted-foreground">
-        Tip: add characters and a style first so generated scenes stay consistent —
-        先添加角色和风格，生成的场景更一致。
+        Add characters and a style first for consistent results.
       </p>
       <Dialog.Footer>
         <Button type="button" variant="outline" size="sm" onclick={() => (showGenerator = false)}>Cancel</Button>

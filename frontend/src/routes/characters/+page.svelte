@@ -192,7 +192,7 @@
 <div class="p-6">
   <div class="mb-4">
     <h1 class="text-lg font-semibold">Characters</h1>
-    <p class="text-sm text-muted-foreground">Recurring cast with reference sheets that keep each character consistent across videos.</p>
+    <p class="text-sm text-muted-foreground">Add reference images for consistent characters.</p>
   </div>
 
   {#if loaded && !characters.length}
@@ -200,11 +200,10 @@
       <CardContent class="p-4">
         <div class="flex items-center gap-2 mb-1">
           <Images class="size-4" />
-          <span class="font-medium text-sm">No characters yet</span>
+          <span class="font-medium text-sm">Add your first character</span>
         </div>
         <p class="text-sm text-muted-foreground">
-          Create a character below, then upload 2-4 photos of them — the photos become
-          reference sheets that keep the character identical in every video.
+          Enter a name below, then add 2–4 reference images.
         </p>
       </CardContent>
     </Card>

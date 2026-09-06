@@ -285,7 +285,7 @@
 <div class="p-6">
   <div class="mb-4">
     <h1 class="text-lg font-semibold">Assets</h1>
-    <p class="text-sm text-muted-foreground">Project style, uploads, and every generated image and video in one library.</p>
+    <p class="text-sm text-muted-foreground">Set the project look and manage generated media.</p>
   </div>
 
   <Card class="mb-4">
@@ -295,13 +295,13 @@
         <span class="font-medium text-sm">Project style</span>
       </div>
       <p class="text-xs text-muted-foreground mb-3">
-        Applied automatically to all asset, storyboard and video generation.
+        Used for asset, storyboard, and video generation.
       </p>
 
       {#if !styleLoaded}
         <p class="text-sm text-muted-foreground">Loading…</p>
       {:else if !style && !styleEditing}
-        <p class="text-sm text-muted-foreground mb-2">No style guide yet</p>
+        <p class="text-sm text-muted-foreground mb-2">Choose how to set the project style.</p>
         <div class="flex gap-2">
           <Button
             size="sm"
@@ -462,7 +462,7 @@
       Generated props, reference sheets and rendered videos will appear here.
     </p>
   {:else if !filtered.length}
-    <p class="text-sm text-muted-foreground">No assets match the current filter.</p>
+    <p class="text-sm text-muted-foreground">Clear the filter or add an asset.</p>
   {/if}
 
   <div class="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-4">
