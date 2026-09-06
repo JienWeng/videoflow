@@ -202,7 +202,7 @@
   const CUSTOM = '__custom__';
   const LOAD_MODELS = '__load_models__';
 
-  const selectablePresets = $derived(() => {
+  const selectablePresets = $derived.by(() => {
     const entries = Object.entries(presets).filter(([id, preset]) => (preset as any).preset === id);
     return entries.length ? entries : Object.entries(FALLBACK_PRESETS);
   });
