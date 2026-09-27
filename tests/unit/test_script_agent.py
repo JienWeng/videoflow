@@ -65,6 +65,20 @@ async def test_scene_count_5_appears_in_prompt():
 
 
 @pytest.mark.asyncio
+async def test_generation_brief_appears_in_script_prompt():
+    fake = FakeLLM(_make_draft(1))
+    await generate_script(
+        idea="a story",
+        generation_brief={"language": "Malay", "instruction": "Keep it gentle"},
+        client=fake,
+    )
+    prompt = fake.calls[0]["user_prompt"]
+    assert "Generation brief" in prompt
+    assert "Malay" in prompt
+    assert "Keep it gentle" in prompt
+
+
+@pytest.mark.asyncio
 async def test_existing_characters_block_in_prompt():
     """The character catalog renders as a block so the agent casts by EXACT name."""
     fake = FakeLLM(_make_draft(1))

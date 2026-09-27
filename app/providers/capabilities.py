@@ -20,15 +20,25 @@ class ProviderCapabilities:
 
 def capabilities_for(provider: str, model: str = "") -> ProviderCapabilities:
     if provider == "atlascloud":
-        return ProviderCapabilities(provider=provider, max_reference_images=0, metadata={"model": model})
+        verified = model in {"minimax/h3-developer/text-to-video"}
+        return ProviderCapabilities(
+            provider=provider,
+            max_reference_images=0,
+            metadata={"model": model, "verified": verified},
+        )
     if provider == "openrouter":
+        verified = model in {
+            "google/veo-3.1-lite",
+            "google/veo-3.1-fast",
+            "kwaivgi/kling-v3.0-pro",
+        }
         max_duration = 8 if any(x in model.lower() for x in ("veo", "kling")) else 15
         return ProviderCapabilities(
             provider=provider,
             max_duration=max_duration,
             max_reference_images=2,
             supports_frame_images=True,
-            metadata={"model": model},
+            metadata={"model": model, "verified": verified},
         )
     raise ValueError(f"unsupported media provider: {provider}")
 

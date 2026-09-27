@@ -13,6 +13,16 @@ from app.providers.polling import humanize_provider_error
 from app.services import render_service
 
 
+def test_generation_brief_overrides_render_language_and_adds_direction():
+    prompt = render_service.apply_generation_brief(
+        "Scene prompt. Spoken dialogue in English, clear and natural.",
+        {"language": "Malay", "instruction": "Keep it gentle"},
+    )
+    assert "Spoken dialogue in Malay" in prompt
+    assert "Spoken dialogue in English" not in prompt
+    assert "Creative direction: Keep it gentle" in prompt
+
+
 @pytest.fixture
 def session(tmp_path):
     engine = create_engine(

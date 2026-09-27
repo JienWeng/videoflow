@@ -219,6 +219,9 @@
   const configuredProviders = $derived(
     providers.filter((p) => p.configured)
   );
+  const primaryTextProvider = $derived(
+    agents.find((agent) => agent.agent === 'script_agent')?.provider ?? 'atlas'
+  );
   const orderedProviders = $derived(
     providers
   );
@@ -262,6 +265,8 @@
   }
 
   onMount(() => {
+    if (window.location.hash === '#engines') tab = 'engines';
+    else if (window.location.hash === '#providers') tab = 'providers';
     // Hydrate the theme radio from the shared key (fallback to system).
     try {
       const stored = localStorage.getItem(THEME_KEY);
@@ -510,17 +515,23 @@
     } as Partial<AppSettings>);
   }
 
-  function engineOptions(current: string): string[] {
-    const atlas = byName['atlas']?.suggested_models ?? [];
-    const set = new Set<string>([
-      ...atlas,
-      ...MEDIA_MODELS.atlascloud.image,
-      ...MEDIA_MODELS.atlascloud.video,
-      ...MEDIA_MODELS.openrouter.image,
-      ...MEDIA_MODELS.openrouter.video
-    ]);
-    if (current) set.add(current);
-    return [...set];
+  function engineProvider(key: keyof AppSettings): string {
+    if (key === 'video_model') return app?.default_video_provider ?? 'atlascloud';
+    if (key === 'image_model') return app?.default_image_provider ?? 'atlascloud';
+    if (key === 'ref_image_model') return 'atlascloud'; // Character and prop image generation stays on AtlasCloud.
+    return 'atlas';
+  }
+
+  function engineOptions(key: keyof AppSettings): string[] {
+    const provider = engineProvider(key);
+    if (key === 'vl_model') return byName['atlas']?.suggested_models ?? [];
+    const modality = key === 'video_model' ? 'video' : 'image';
+    return [...MEDIA_MODELS[provider as keyof typeof MEDIA_MODELS][modality]];
+  }
+
+  function videoImageInputLimit(): number {
+    if (app?.default_video_provider === 'atlascloud') return 0;
+    return app?.default_video_provider === 'openrouter' ? 2 : 0;
   }
 
   let engineCustomOpen = $state<Record<string, boolean>>({});
@@ -612,7 +623,7 @@
       </TabsList>
 
       <!-- ============================================ PROVIDERS -->
-      <TabsContent value="providers">
+      <TabsContent value="providers" id="providers">
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2 text-base">
@@ -624,8 +635,9 @@
             </CardDescription>
           </CardHeader>
           <CardContent class="space-y-5">
-            <div class="rounded-lg border p-4 space-y-3">
-              <h3 class="text-sm font-medium">Add a named connection</h3>
+            <details class="rounded-lg border p-4">
+              <summary class="cursor-pointer text-sm font-medium">Advanced · Add a named connection or custom protocol</summary>
+              <div class="mt-3 space-y-3">
               <div class="grid gap-3 sm:grid-cols-2">
                 <label class="text-xs">Name<Input bind:value={newLabel} placeholder="My OpenRouter" /></label>
                 <label class="text-xs">Provider<select class="block w-full rounded border p-2 bg-background" bind:value={newPreset} onchange={choosePreset}>
@@ -646,13 +658,18 @@
               </div>
               <label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={newVision} />Models on this connection accept images</label>
               <Button size="sm" disabled={!newLabel.trim() || busy === 'add-connection'} onclick={addConnection}>Add connection</Button>
-            </div>
+              </div>
+            </details>
             {#each orderedProviders as p (p.name)}
               {@const cfg = provCfg[p.name]}
               {@const test = provTest[p.name]}
+              <details open={p.name === primaryTextProvider}>
+                <summary class="cursor-pointer rounded-md py-2 text-sm font-medium">
+                  {providerLabels[p.name] ?? p.name}
+                  <span class="ml-2 text-xs font-normal text-muted-foreground">{cfg?.configured ? 'Configured' : 'Not configured'}</span>
+                </summary>
               <div data-provider={p.name}>
                 <div class="mb-2 flex items-center gap-2">
-                  <span class="text-sm font-medium">{providerLabels[p.name] ?? p.name}</span>
                   {#if cfg?.configured}
                     <Badge class="gap-1 text-[10px]">
                       <CircleCheck class="size-3" />Configured
@@ -689,18 +706,12 @@
                       />
                     </div>
                   </div>
-                  <div>
-                    <label class="mb-1 block text-xs text-muted-foreground" for="url-{p.name}">
-                      Base URL (optional)
-                    </label>
-                    <Input
-                      id="url-{p.name}"
-                      autocomplete="off"
-                      placeholder="default"
-                      bind:value={provUrlInput[p.name]}
-                    />
-                  </div>
                 </div>
+                <details class="mt-2">
+                  <summary class="cursor-pointer text-xs text-muted-foreground">Advanced · Base URL override</summary>
+                  <label class="mt-2 block max-w-xl text-xs text-muted-foreground" for="url-{p.name}">Base URL</label>
+                  <Input id="url-{p.name}" autocomplete="off" placeholder="default" bind:value={provUrlInput[p.name]} />
+                </details>
 
                 {/if}
                 <div class="mt-2 flex flex-wrap items-center gap-2">
@@ -796,29 +807,29 @@
               {#if p.name !== orderedProviders[orderedProviders.length - 1].name}
                 <Separator />
               {/if}
+              </details>
             {/each}
           </CardContent>
         </Card>
       </TabsContent>
 
       <!-- ============================================ ENGINES -->
-      <TabsContent value="engines">
+      <TabsContent value="engines" id="engines">
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2 text-base">
               <Sparkles class="size-4" />Generation engines
             </CardTitle>
             <CardDescription>
-              The models that actually generate your media. Pick a suggested model or type a custom
-              id — the backend accepts any model the provider exposes.
+              Models are grouped by their selected provider and task. Custom model IDs are unverified until the provider accepts them.
             </CardDescription>
           </CardHeader>
           <CardContent class="space-y-4">
             {#if app}
               {@const engines = [
                 { key: 'image_model', label: 'Image model', hint: 'Text-to-image generation.' },
-                { key: 'ref_image_model', label: 'Reference image model', hint: 'Edits / character-sheet driven images.' },
-                { key: 'video_model', label: 'Video model', hint: 'Image / reference to video.' },
+                { key: 'ref_image_model', label: 'Character and prop image model', hint: 'Generated by AtlasCloud; this route does not use the storyboard provider.' },
+                { key: 'video_model', label: 'Video model', hint: app.default_video_provider === 'atlascloud' ? 'AtlasCloud H3 is text-to-video and does not accept image inputs.' : 'OpenRouter model capabilities determine supported image references.' },
                 { key: 'vl_model', label: 'Vision model', hint: 'Reads frames for QA.' }
               ] as const}
               {#each engines as eng (eng.key)}
@@ -850,7 +861,10 @@
                         value={cur}
                         onchange={(e) => onEngineSelect(eng.key, (e.currentTarget as HTMLSelectElement).value, cur)}
                       >
-                        {#each engineOptions(cur) as m (m)}
+                        {#if cur && !engineOptions(eng.key).includes(cur)}
+                          <option value={cur}>{cur} — unverified custom ID</option>
+                        {/if}
+                        {#each engineOptions(eng.key) as m (m)}
                           <option value={m}>{m}</option>
                         {/each}
                         <option value={CUSTOM}>Custom…</option>
@@ -899,24 +913,13 @@
               <Separator />
 
               <div class="flex flex-wrap items-center gap-3">
-                <div class="min-w-[180px] flex-1">
-                  <div class="text-sm font-medium">Max video reference images</div>
+              <div class="min-w-[180px] flex-1">
+                  <div class="text-sm font-medium">Image inputs accepted by the selected video route</div>
                   <div class="text-[11px] text-muted-foreground">
-                    How many character / asset frames feed the video model.
+                    Capability-derived maximum for {app.default_video_provider} / {app.video_model || 'custom model'}.
                   </div>
                 </div>
-                <Input
-                  type="number"
-                  min="1"
-                  max="10"
-                  class="h-8 w-24 text-sm"
-                  disabled={busy === 'app'}
-                  value={app.max_video_refs}
-                  onchange={(e) => {
-                    const n = parseInt((e.currentTarget as HTMLInputElement).value, 10);
-                    if (!Number.isNaN(n) && n !== app!.max_video_refs) saveApp({ max_video_refs: n });
-                  }}
-                />
+                <span class="rounded-md border border-border px-3 py-1.5 text-sm tabular-nums">{videoImageInputLimit()} image inputs</span>
               </div>
             {/if}
           </CardContent>

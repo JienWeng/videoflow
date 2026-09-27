@@ -31,10 +31,14 @@
     // (the Settings appearance toggle writes localStorage['videoflow.theme']).
     // app.html applied the initial value pre-paint; this reacts to changes.
     const stopTheme = watchTheme();
-    get('/projects/active')
-      .then((p) => (activeProject = p))
-      .catch(() => {});
     return stopTheme;
+  });
+
+  $effect(() => {
+    // SvelteKit soft navigation reuses the root layout after project activation.
+    const path = page.url.pathname;
+    void path;
+    get('/projects/active').then((p) => (activeProject = p)).catch(() => {});
   });
 
   const createNav = [{ href: '/create', label: 'Create video', icon: Clapperboard }];
@@ -67,8 +71,18 @@
   }
 </script>
 
-<div class="flex h-screen bg-background text-foreground">
-  <aside class="flex w-48 shrink-0 flex-col border-r border-border p-3">
+<div class="flex h-screen min-w-0 flex-col bg-background text-foreground md:flex-row">
+  <nav aria-label="Primary" class="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2 py-1.5 md:hidden">
+    <a class="shrink-0 rounded-md px-2 py-1.5 text-xs font-medium hover:bg-accent" href="/projects" title={activeProject?.name ?? 'Projects'}>{activeProject?.name ?? 'Projects'}</a>
+    <a class="shrink-0 rounded-md px-2 py-1.5 text-xs hover:bg-accent" href="/create">Create</a>
+    <a class="shrink-0 rounded-md px-2 py-1.5 text-xs hover:bg-accent" href="/render">Videos</a>
+    <a class="shrink-0 rounded-md px-2 py-1.5 text-xs hover:bg-accent" href="/">Studio</a>
+    <a class="shrink-0 rounded-md px-2 py-1.5 text-xs hover:bg-accent" href="/scenes">Scenes</a>
+    <a class="shrink-0 rounded-md px-2 py-1.5 text-xs hover:bg-accent" href="/characters">Characters</a>
+    <a class="shrink-0 rounded-md px-2 py-1.5 text-xs hover:bg-accent" href="/assets">Assets</a>
+    <a class="shrink-0 rounded-md px-2 py-1.5 text-xs hover:bg-accent" href="/settings">Settings</a>
+  </nav>
+  <aside class="hidden w-48 shrink-0 flex-col border-r border-border p-3 md:flex">
     <div class="px-2 pt-3 pb-1 text-sm font-semibold tracking-wide">VideoFlow</div>
     <!-- Current-project row: the entry point to /projects (switch, create, manage). -->
     <a
@@ -145,7 +159,7 @@
       <ActivityTray />
     </div>
   </aside>
-  <main class="flex-1 overflow-auto">
+  <main class="min-h-0 min-w-0 flex-1 overflow-auto">
     {@render children?.()}
   </main>
 </div>

@@ -73,6 +73,10 @@ def _migrate(target_engine) -> None:
         if cols and "stage" not in cols:
             conn.exec_driver_sql("ALTER TABLE render_jobs ADD COLUMN stage VARCHAR")
             conn.commit()
+        cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(ops)")]
+        if cols and "project_id" not in cols:
+            conn.exec_driver_sql("ALTER TABLE ops ADD COLUMN project_id VARCHAR")
+            conn.commit()
         # Projects: scope columns on every project-owned table. Backfilling
         # NULLs into the default project happens lazily in
         # project_service.get_active (adopt_orphans).

@@ -10,9 +10,10 @@ from app.main import create_app
 def test_generate_video_starts_background_operation(monkeypatch):
     captured: dict = {}
 
-    def fake_start_op(kind, coro_factory, *, summarize):
+    def fake_start_op(kind, coro_factory, *, summarize, project_id):
         captured["kind"] = kind
         captured["summarize"] = summarize
+        captured["project_id"] = project_id
         return SimpleNamespace(id="op_video_1", status="running")
 
     monkeypatch.setattr("app.api.videos.op_service.start_op", fake_start_op)

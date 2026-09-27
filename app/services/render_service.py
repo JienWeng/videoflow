@@ -72,6 +72,23 @@ def resolve_dialogue_language(session: Session) -> str:
     return _humanize_language(value)
 
 
+def apply_generation_brief(prompt: str, brief: dict | None) -> str:
+    """Carry the Create flow's selected language and direction into video render."""
+    if not brief:
+        return prompt
+    language = str(brief.get("language") or "").strip()
+    if language:
+        start = prompt.find("Spoken dialogue in ")
+        if start >= 0:
+            end = prompt.find(",", start)
+            if end >= 0:
+                prompt = prompt[:start] + f"Spoken dialogue in {language}" + prompt[end:]
+    instruction = str(brief.get("instruction") or "").strip()
+    if instruction:
+        prompt += f" Creative direction: {instruction}."
+    return prompt
+
+
 def resolve_render_negatives(session: Session) -> tuple[str, str, list[str]]:
     """Resolver-backed negative-prompt fragments for a render:
     (no_text_negative, no_clone_negative, extra_negatives).
@@ -238,7 +255,9 @@ async def start_render(session: Session, spec: RenderSpec) -> RenderJob:
     return job
 
 
-async def render_scene(session: Session, scene_id: str) -> RenderJob:
+async def render_scene(
+    session: Session, scene_id: str, generation_brief: dict | None = None
+) -> RenderJob:
     """Deterministic whole-scene render: stored shots become the multi-shot
     storyboard (customize, indexed), and every linked reference — characters'
     images, scene/shot assets and the scene's 分镜图 — feeds Kling images[]."""
@@ -350,7 +369,9 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
     # the negatives so every render of this cast uses the same voices.
     voices = voice_line(bibles)
     # Resolver-backed dialogue language + negatives (configurable per project).
-    dialogue_language = resolve_dialogue_language(session)
+    dialogue_language = str((generation_brief or {}).get("language") or "").strip()
+    if not dialogue_language:
+        dialogue_language = resolve_dialogue_language(session)
     no_text, no_clone, extra_negatives = resolve_render_negatives(session)
     extra_neg = (", " + ", ".join(extra_negatives)) if extra_negatives else ""
     prompt = (
@@ -366,6 +387,7 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
         f"{no_text}, no watermark, no outfit changes, no extra "
         f"characters, no distorted faces, {no_clone}{extra_neg}."
     )
+    prompt = apply_generation_brief(prompt, generation_brief)
     # Deterministic style enforcement on the whole-scene video prompt.
     prompt = style_service.apply_style(prompt, style_service.get_style(session))
     from app.services import settings_service

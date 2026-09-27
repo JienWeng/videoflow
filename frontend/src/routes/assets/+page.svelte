@@ -13,6 +13,8 @@
   import { toast } from 'svelte-sonner';
   import { Upload, Palette, Wand2, Pin, Trash2, X, Sparkles, Maximize2 } from '@lucide/svelte';
 
+  const isAudio = (path?: string | null) => !!path && /\.(mp3|m4a|aac|wav|ogg|flac|opus)$/i.test(path);
+
   let assets: any[] = $state([]);
   let characters: any[] = $state([]);
   let error = $state('');
@@ -475,7 +477,9 @@
               <!-- svelte-ignore a11y_media_has_caption -->
               <video preload="metadata" src={mediaUrl(asset.file_path)}
                 class="w-full rounded-md bg-black mb-2 aspect-video object-contain pointer-events-none"></video>
-            {:else if asset.file_path && mediaUrl(asset.file_path)}
+            {:else if asset.type === 'audio' || isAudio(asset.file_path)}
+              <div class="mb-2 grid aspect-square w-full place-items-center rounded-md bg-muted text-sm text-muted-foreground">Audio asset</div>
+            {:else if asset.file_path && mediaUrl(asset.file_path) && isImage(asset.file_path)}
               <img class="w-full aspect-square object-cover rounded-md bg-muted mb-2 cursor-zoom-in"
                 src={mediaUrl(asset.file_path)} alt={asset.name} loading="lazy" />
             {:else}
@@ -540,11 +544,17 @@
             <!-- svelte-ignore a11y_media_has_caption -->
             <video controls preload="metadata" src={mediaUrl(detail.file_path)}
               class="max-h-[70vh] w-full rounded-md bg-black object-contain"></video>
-          {:else if mediaUrl(detail.file_path)}
+          {:else if detail.type === 'audio' || isAudio(detail.file_path)}
+            {#if mediaUrl(detail.file_path)}
+              <audio controls preload="metadata" src={mediaUrl(detail.file_path)} class="w-full"></audio>
+            {:else}
+              <p class="p-8 text-sm text-muted-foreground">This audio file has no playable local URL.</p>
+            {/if}
+          {:else if mediaUrl(detail.file_path) && isImage(detail.file_path)}
             <img class="max-h-[70vh] w-auto max-w-full rounded-md object-contain"
               src={mediaUrl(detail.file_path)} alt={detail.name || detail.id} />
           {:else}
-            <div class="p-8 text-sm text-muted-foreground">No previewable media.</div>
+            <div class="p-8 text-sm text-muted-foreground">This file type cannot be previewed here.</div>
           {/if}
         </div>
         <div class="space-y-3 text-xs">

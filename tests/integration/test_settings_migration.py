@@ -39,6 +39,7 @@ def _legacy_engine(tmp_path):
         # The migration also touches render_outputs/scenes; create minimal ones.
         conn.execute(text("CREATE TABLE render_outputs (id VARCHAR PRIMARY KEY)"))
         conn.execute(text("CREATE TABLE scenes (id VARCHAR PRIMARY KEY)"))
+        conn.execute(text("CREATE TABLE ops (id VARCHAR PRIMARY KEY, kind VARCHAR)"))
     return engine
 
 
@@ -59,6 +60,13 @@ def test_migrate_adds_render_progress_and_stage(tmp_path):
     cols = _cols(engine, "render_jobs")
     assert "progress" in cols
     assert "stage" in cols
+
+
+def test_migrate_adds_operation_project_scope(tmp_path):
+    engine = _legacy_engine(tmp_path)
+    assert "project_id" not in _cols(engine, "ops")
+    _migrate(engine)
+    assert "project_id" in _cols(engine, "ops")
 
 
 def test_migrate_is_idempotent(tmp_path):

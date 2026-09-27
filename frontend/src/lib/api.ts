@@ -10,16 +10,30 @@ export const API_BASE =
 
 async function handle(resp: Response) {
   if (!resp.ok) {
-    let detail = resp.statusText;
+    let detail: unknown = resp.statusText;
     try {
       const body = await resp.json();
       detail = body.detail ?? JSON.stringify(body);
     } catch {
       /* keep statusText */
     }
-    throw new Error(`${resp.status}: ${detail}`);
+    throw new Error(`${resp.status}: ${formatDetail(detail)}`);
   }
   return resp.json();
+}
+
+function formatDetail(detail: unknown): string {
+  if (Array.isArray(detail)) {
+    return detail.map((item: any) => {
+      const loc = Array.isArray(item?.loc)
+        ? item.loc.filter((part: unknown) => part !== 'body').map(String).join('.')
+        : '';
+      const message = typeof item?.msg === 'string' ? item.msg : JSON.stringify(item);
+      return loc ? `${loc}: ${message}` : message;
+    }).join('; ');
+  }
+  if (detail && typeof detail === 'object') return JSON.stringify(detail);
+  return String(detail);
 }
 
 export const get = (path: string) => fetch(`${API_BASE}${path}`).then(handle);

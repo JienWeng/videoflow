@@ -353,7 +353,7 @@
                     <BookOpen class="size-3 mr-1" />{busy === `bible-${c.id}` ? 'Generating…' : 'Generate bible'}
                   </Button>
                   <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateSheets(c)}>
-                    <Images class="size-3 mr-1" />{busy === `sheets-${c.id}` ? 'Generating…' : 'Reference sheets (ERNIE)'}
+                    <Images class="size-3 mr-1" />{busy === `sheets-${c.id}` ? 'Generating…' : 'Generate reference sheets'}
                   </Button>
                   <label class="inline-flex items-center gap-1 cursor-pointer rounded-md border border-border px-2 py-1 text-xs hover:bg-accent">
                     <Upload class="size-3" />Upload reference photo

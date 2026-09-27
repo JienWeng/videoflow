@@ -145,6 +145,7 @@ async def create_script(
     idea: str,
     target_duration: int | None = None,
     scene_count: int | None = None,
+    generation_brief: dict | None = None,
 ) -> tuple[Script, ScriptDraft]:
     """Generate a script, persist it as a Script row, and persist each scene
     stub as a Scene row linked back via script_id.
@@ -156,6 +157,7 @@ async def create_script(
         idea=idea,
         target_duration=target_duration,
         scene_count=scene_count,
+        generation_brief=generation_brief,
         style=style_service.style_context(style_service.get_style(session)),
         # Full character catalog so the agent casts existing characters by
         # their EXACT names (auto_link_scene later tags + links the mentions)
@@ -170,7 +172,7 @@ async def create_script(
         project_id=pid,
         title=draft.title,
         summary=draft.summary,
-        draft_json=draft.model_dump(),
+        draft_json={**draft.model_dump(), **({"generation_brief": generation_brief} if generation_brief else {})},
     )
     session.add(script)
     for s in draft.scenes:
@@ -208,6 +210,9 @@ def story_context(session: Session, scene: Scene) -> dict | None:
         conversation = (script.draft_json or {}).get("conversation_profile")
         if conversation:
             parts["conversation_profile"] = conversation
+        brief = (script.draft_json or {}).get("generation_brief")
+        if brief:
+            parts["generation_brief"] = brief
         siblings = [
             s for s in list_scenes(session)
             if s.script_id == scene.script_id and s.id != scene.id

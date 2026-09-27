@@ -37,6 +37,20 @@ def test_story_context_with_script_and_siblings(session):
     assert ctx["other_scenes"] == [{"title": "Flight", "summary": "cat soars"}]
 
 
+def test_story_context_carries_generation_brief_to_later_stages(session):
+    brief = {"language": "Malay", "instruction": "Keep the narration gentle"}
+    session.add(Script(
+        id="script_brief", idea="a cat story", title="Cat", summary="Journey",
+        draft_json={"generation_brief": brief},
+    ))
+    session.add(Scene(id="scene_brief", title="Start", summary="First scene", script_id="script_brief"))
+    session.commit()
+
+    ctx = story_context(session, session.get(Scene, "scene_brief"))
+
+    assert ctx["generation_brief"] == brief
+
+
 def test_story_context_without_script_uses_all_other_scenes(session):
     session.add(Scene(id="sc_1", title="A", summary="first"))
     session.add(Scene(id="sc_2", title="B", summary="second"))

@@ -25,6 +25,7 @@
   // Set when the /graph probe fails so we can show a Retry card instead of a
   // blank/stale canvas (mirrors the scenes-page error pattern).
   let graphError = $state('');
+  let mobile = $state(false);
 
   async function checkEmpty() {
     try {
@@ -53,6 +54,10 @@
   // canvas/chat-specific palette callbacks here and clears them on unmount.
   onMount(() => {
     checkEmpty();
+    const media = window.matchMedia('(max-width: 767px)');
+    const update = () => (mobile = media.matches);
+    update();
+    media.addEventListener('change', update);
     palette.setHandlers({
       onfocus: (id) => canvas?.focusNode(id),
       onnewstory: () => chat?.startNewStory()
@@ -61,12 +66,13 @@
     return () => {
       palette.clearHandlers();
       stopJobs();
+      media.removeEventListener('change', update);
     };
   });
 </script>
 
-<PaneGroup direction="horizontal" class="h-full">
-  <Pane defaultSize={72} minSize={40}>
+<PaneGroup direction={mobile ? 'vertical' : 'horizontal'} class="h-full">
+  <Pane defaultSize={mobile ? 58 : 72} minSize={mobile ? 35 : 40}>
     <div class="relative h-full">
       <EntityCanvas bind:this={canvas} onselect={(n) => (selected = n)} />
 
@@ -114,10 +120,28 @@
                 <li class="flex items-start gap-2.5">
                   <Palette class="size-4 mt-0.5 shrink-0 text-muted-foreground" />
                   <span>
+                    <a href="/settings" class="font-medium underline underline-offset-2 inline-flex items-center gap-0.5">
+                      Configure AI providers<ArrowUpRight class="size-3" />
+                    </a>
+                    <span class="block text-muted-foreground">Check credentials and model routes before generation.</span>
+                  </span>
+                </li>
+                <li class="flex items-start gap-2.5">
+                  <Palette class="size-4 mt-0.5 shrink-0 text-muted-foreground" />
+                  <span>
                     <a href="/scenes" class="font-medium underline underline-offset-2 inline-flex items-center gap-0.5">
                       Open advanced workspace<ArrowUpRight class="size-3" />
                     </a>
                     <span class="block text-muted-foreground">Edit scenes, characters, assets, and renders manually.</span>
+                  </span>
+                </li>
+                <li class="flex items-start gap-2.5">
+                  <Palette class="size-4 mt-0.5 shrink-0 text-muted-foreground" />
+                  <span>
+                    <a href="/settings" class="font-medium underline underline-offset-2 inline-flex items-center gap-0.5">
+                      Configure AI providers<ArrowUpRight class="size-3" />
+                    </a>
+                    <span class="block text-muted-foreground">Check credentials and model routes before generation.</span>
                   </span>
                 </li>
                 <li class="flex items-start gap-2.5">
@@ -137,7 +161,7 @@
     </div>
   </Pane>
   <Handle withHandle />
-  <Pane defaultSize={28} minSize={20}>
+  <Pane defaultSize={mobile ? 42 : 28} minSize={mobile ? 30 : 20}>
     <div class="h-full border-l border-border">
       <ChatPanel
         bind:this={chat}

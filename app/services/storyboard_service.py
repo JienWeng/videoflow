@@ -123,6 +123,7 @@ async def generate_storyboard(
     aspect_ratio: str = "1:1",
     style: StyleGuide | None = None,
     image_provider: AtlasCloudImageProvider | None = None,
+    generation_brief: dict | None = None,
 ) -> Asset:
     """Generate the sheet, download it, and persist a 'storyboard' Asset.
 
@@ -143,6 +144,8 @@ async def generate_storyboard(
     prompt = build_storyboard_prompt(
         beats=beats, character_lines=character_lines, setting=setting, lighting=lighting
     )
+    if generation_brief:
+        prompt += "\n\nGeneration brief to follow: " + str(generation_brief)
     # Deterministic style enforcement — the project style guide text is part
     # of the prompt regardless of what the agents wrote.
     prompt = style_service.apply_style(prompt, style)
@@ -250,6 +253,7 @@ async def generate_storyboard_for_scene(
     reference_urls = await resolver.resolve(reference_ids) if reference_ids else []
 
     scene_json = scene.scene_json or {}
+    context = scene_service.story_context(session, scene) or {}
     asset = await generate_storyboard(
         session,
         beats=[s.prompt for s in shots],
@@ -261,6 +265,7 @@ async def generate_storyboard_for_scene(
         aspect_ratio=scene.aspect_ratio or "1:1",
         style=style,
         image_provider=image_provider,
+        generation_brief=context.get("generation_brief"),
     )
     asset.name = f"分镜图 {scene.title}"
     asset.project_id = scene.project_id
