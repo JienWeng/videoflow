@@ -34,7 +34,23 @@ After the initial audit, `uv run pytest -q --tb=no` reported **593 passed, 23 fa
 
 Added coverage exercises provider-specific model defaults, route selection when omitted from `/render`, video model capability validation, visual-reference/frame-anchor separation, authenticated content retrieval, local asset data URLs, image output multiplicity/MIME, media file extensions, and expired job status.
 
-## Failed tests
+## AtlasCloud and UI follow-up
+
+Final local verification after the route, workflow, and UI changes:
+
+| Check | Result |
+|---|---|
+| `uv run pytest -q` | **640 passed**, one Starlette/httpx deprecation warning |
+| Focused AtlasCloud payload, preflight, provider metadata, and settings migration tests | **36 passed** |
+| `npm run check` in frontend | **0 errors, 0 warnings** |
+| `npm run build` in frontend | **Passed**; Vite reported plugin timing information, not a build failure |
+| `git diff --check` | Passed |
+
+The 23 failures in the initial audit were assertions for earlier provider payloads and defaults. The current suite exercises the actual AtlasCloud `refers` payload, H3 Developer model IDs, provider-specific resolution limits, and the OpenRouter contracts. No test was skipped or marked as expected failure. The older failure table below is retained as historical diagnostic context.
+
+The AtlasCloud route check remains local and deterministic: it does not call AtlasCloud. No paid provider generation, account credential validation, output retrieval, or browser walkthrough was performed. Passing tests and preflight therefore confirm application wiring and payload construction, not remote account access or generation quality.
+
+## Initial audit failures (historical; addressed in the current branch)
 
 | File | Failing tests / reason |
 |---|---|

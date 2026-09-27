@@ -77,11 +77,46 @@ def video_preflight(
             "route": "video",
             "reason": f"Model ID '{video_model}' is custom and has not been verified by VideoFlow.",
         })
+    effective_ref_limit = (
+        app["max_video_refs"]
+        if app["max_video_refs"] is not None
+        else settings.atlas_video_max_refs
+    )
+    expected_reference_count = capabilities.min_reference_count
+    if effective_ref_limit < capabilities.min_reference_count:
+        missing.append({
+            "route": "video",
+            "setting": "/settings#engines",
+            "reason": (
+                f"This model needs at least {capabilities.min_reference_count} "
+                "reference; increase the video reference limit."
+            ),
+        })
+    configured_resolution = (
+        settings.atlas_video_resolution.upper()
+        if video_provider == "atlascloud"
+        else None
+    )
+    if (
+        configured_resolution
+        and capabilities.supported_resolutions
+        and configured_resolution not in capabilities.supported_resolutions
+    ):
+        supported = ", ".join(sorted(capabilities.supported_resolutions))
+        missing.append({
+            "route": "video",
+            "setting": "/settings#engines",
+            "reason": (
+                f"Set ATLAS_VIDEO_RESOLUTION to {supported} for "
+                f"{video_model}."
+            ),
+        })
     compatibility = validate_render_capabilities(
         capabilities,
         duration=capabilities.min_duration,
         aspect_ratio=aspect_ratio,
-        reference_count=0,
+        # Create generates a storyboard before submitting its video request.
+        reference_count=expected_reference_count,
         has_video_reference=False,
     )
     if compatibility:
@@ -105,9 +140,25 @@ def video_preflight(
                 "provider": video_provider,
                 "model": video_model,
                 "verified": capabilities.metadata["verified"],
-                "max_reference_images": capabilities.max_reference_images,
+                "max_reference_images": (
+                    effective_ref_limit
+                    if capabilities.min_reference_count
+                    else capabilities.max_reference_images or 0
+                ),
+                "min_reference_count": capabilities.min_reference_count,
                 "supports_video_reference": capabilities.supports_video_reference,
+                "supports_generated_audio": capabilities.supports_generated_audio,
+                "reference_limit_source": (
+                    "application"
+                    if video_provider == "atlascloud" and capabilities.min_reference_count
+                    else "provider"
+                    if capabilities.max_reference_images
+                    else "none"
+                ),
+                "min_duration": capabilities.min_duration,
                 "max_duration": capabilities.max_duration,
+                "resolution": configured_resolution,
+                "supported_resolutions": sorted(capabilities.supported_resolutions),
                 "aspect_ratios": sorted(capabilities.aspect_ratios),
             },
         },

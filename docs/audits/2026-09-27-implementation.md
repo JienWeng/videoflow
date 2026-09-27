@@ -25,7 +25,7 @@ Initial review covered the working tree on top of `011641f`; see the dated OpenR
 | Guided Create video pipeline | Partial | [orchestrator](../../app/services/video_generation_service.py); stores artifacts and submits scene jobs, but progress/recovery/narration are incomplete |
 | Guided chat and relationship canvas | Implemented | [chat service](../../app/services/chat_service.py), [Studio](../../frontend/src/routes/+page.svelte); browser interaction unverified |
 | LLM connections, overrides, schema validation | Implemented; model-dependent | [connections](../../app/llm/connections.py), [structured client](../../app/llm/structured_client.py); tests are not live provider certification |
-| AtlasCloud video adapter migration | Partial/regressed | [adapter](../../app/providers/atlascloud_video.py) now emits H3 payloads; older reference/multi-shot contracts no longer hold |
+| AtlasCloud video adapter migration | Resolved in local code/tests; remote account and render checks remain | [adapter](../../app/providers/atlascloud_video.py) sends H3 Developer references, chronological dialogue prompts, and model-specific resolutions |
 | OpenRouter media support | Contract tests pass; live checks outstanding | Dedicated adapters and settings routes; see [compatibility matrix](2026-09-27-openrouter.md) |
 | Render queue, polling and downloads | Implemented with provider-specific retrieval | [worker](../../app/jobs/worker.py), [poll service](../../app/services/poll_service.py); live content retrieval unverified |
 | QA and corrective retry | Implemented, best effort | [QA agent](../../app/agents/qa_agent.py); sampled images, not direct audio review; retries affected by adapter migration |
@@ -67,13 +67,13 @@ The OpenRouter fixes covered by [the compatibility follow-up](2026-09-27-openrou
 
 **Acceptance:** resolve provider plus model as one typed configuration for all generation paths; test fresh environment-only setup, UI overrides, project overrides, and retries. Invalid combinations fail before submission.
 
-### F04 — AtlasCloud migration drops existing visual contracts (P1)
+### F04 — AtlasCloud migration dropped visual contracts (P1, adapter path resolved; live provider check outstanding)
 
-**Evidence:** [AtlasCloud video adapter](../../app/providers/atlascloud_video.py) no longer sends images, video references, audio flags, or structured multi-shot fields. It emits `ratio`, resolution and one rewritten prompt regardless of an arbitrary saved model ID. Several existing scene/reference/retry tests fail.
+**Initial audit evidence:** [AtlasCloud video adapter](../../app/providers/atlascloud_video.py) had replaced earlier provider payload assumptions, and the initial suite contained stale assertions for those payloads. The follow-up now routes the default to H3 Developer Reference-to-Video, passes stored references in `refers`, flattens ordered shot dialogue into one prompt, requests audible dialogue, and validates resolutions according to the selected H3 model. The older H3 reference model ID remains supported with its own resolution set.
 
 **Impact:** stored character sheets, storyboards, and frame anchors can look active in the UI while having no image influence on H3. Legacy model IDs can receive H3-shaped payloads.
 
-**Acceptance:** model-family-specific adapters or an explicitly narrowed supported-model list; truthful capabilities and UI; migration guidance; contract tests for each retained route. Do not simply weaken reference tests to make CI green.
+**Acceptance:** model-specific capabilities, truthful UI, migration behavior, and contract tests are implemented. Live account credentials, provider-side acceptance, generated speech quality, and video retrieval remain unverified.
 
 ### F05 — OpenRouter reference semantics and limits are guessed (P1, request contract resolved; live inputs unverified)
 
@@ -126,4 +126,4 @@ The OpenRouter fixes covered by [the compatibility follow-up](2026-09-27-openrou
 
 The guided flow does not explicitly create character records or reference sheets from a newly invented cast. Empty-project generation can therefore proceed with names in prompts but without durable character identities. Add a cast-review/creation stage if automatic persistent characters are part of the intended first-video promise. Automatic asset-generation errors are also logged and swallowed by `create_shots`, so users can receive shots without the expected props; expose that as a recoverable warning.
 
-The 23 backend failures need triage into intentional default changes and behavioral regressions. Route-specific replacements must preserve promised behavior or clearly retire it. A release gate also needs a fresh-install run, a browser walkthrough, and a scoped paid provider smoke test. This audit branch is not a release approval.
+The 23 backend failures from the initial audit have been addressed; the current local suite reports **640 passed**. The changed assertions now match the provider-specific payloads, with route behavior covered by regression tests. A release gate still needs a fresh-install run, a browser walkthrough, and a scoped paid provider smoke test. This audit branch is not a release approval.

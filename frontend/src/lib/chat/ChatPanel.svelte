@@ -36,6 +36,9 @@
   import CircleX from '@lucide/svelte/icons/circle-x';
   import Eraser from '@lucide/svelte/icons/eraser';
   import MessageSquare from '@lucide/svelte/icons/message-square';
+  import Maximize2 from '@lucide/svelte/icons/maximize-2';
+  import Minimize2 from '@lucide/svelte/icons/minimize-2';
+  import PanelRightClose from '@lucide/svelte/icons/panel-right-close';
   import MousePointerClick from '@lucide/svelte/icons/mouse-pointer-click';
   import PenLine from '@lucide/svelte/icons/pen-line';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
@@ -87,10 +90,16 @@
   let {
     onfocus,
     onmutate,
+    onhide,
+    onresize,
+    expanded = false,
     selected = null
   }: {
     onfocus?: (id: string) => void;
     onmutate?: () => void | Promise<void>;
+    onhide?: () => void;
+    onresize?: () => void;
+    expanded?: boolean;
     selected?: SelectedNode | null;
   } = $props();
 
@@ -648,7 +657,27 @@
         Project command center
       </div>
     </div>
-    <div class="ml-auto">
+    <div class="ml-auto flex items-center gap-1">
+      <Button
+        variant="ghost"
+        size="icon"
+        class="size-7 text-muted-foreground"
+        aria-label={expanded ? 'Restore chat panel size' : 'Expand chat panel'}
+        title={expanded ? 'Restore chat panel size' : 'Expand chat panel'}
+        onclick={onresize}
+      >
+        {#if expanded}<Minimize2 class="size-3.5" />{:else}<Maximize2 class="size-3.5" />{/if}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        class="size-7 text-muted-foreground"
+        aria-label="Hide chat panel"
+        title="Hide chat panel"
+        onclick={onhide}
+      >
+        <PanelRightClose class="size-3.5" />
+      </Button>
       <Tooltip.Provider delayDuration={300}>
         <Tooltip.Root>
           <Tooltip.Trigger>

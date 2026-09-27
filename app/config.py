@@ -11,6 +11,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.providers.model_ids import H3_REFERENCE_TO_VIDEO
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -51,16 +53,17 @@ class Settings(BaseSettings):
         default="openai/gpt-image-2/text-to-image", alias="ATLAS_IMAGE_MODEL"
     )
     atlas_video_model: str = Field(
-        default="minimax/h3-developer/text-to-video",
+        default=H3_REFERENCE_TO_VIDEO,
         alias="ATLAS_VIDEO_MODEL",
     )
     atlas_image_quality: str = Field(default="low", alias="ATLAS_IMAGE_QUALITY")
-    atlas_video_resolution: str = Field(default="480P", alias="ATLAS_VIDEO_RESOLUTION")
+    atlas_video_resolution: str = Field(default="768P", alias="ATLAS_VIDEO_RESOLUTION")
     atlas_video_prompt_expansion: bool = Field(
         default=False, alias="ATLAS_VIDEO_PROMPT_EXPANSION"
     )
-    # Max reference images for the video model — live-verified Kling o3-pro
-    # limit (ret:1201 "max number is 7" above 7, despite docs claiming 10).
+    # Application cap for uploaded video references. AtlasCloud's H3
+    # Reference-to-Video docs do not publish an upper limit; keep this tunable
+    # default to bound upload and generation cost.
     atlas_video_max_refs: int = Field(default=7, alias="ATLAS_VIDEO_MAX_REFS")
     # Reference-image generation (分镜图 with character sheets as inputs).
     atlas_image_ref_model: str = Field(

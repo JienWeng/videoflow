@@ -37,7 +37,7 @@ Named connections are LLM routes. A named OpenRouter connection's independently 
 
 Set `ATLASCLOUD_API_KEY` in `.env`, or save the AtlasCloud provider key in Settings. The environment distinguishes the media base URL (`ATLASCLOUD_BASE_URL`, ending `/api/v1`) from the LLM base URL (`ATLAS_LLM_BASE_URL`, ending `/v1`). Keep those endpoint roles separate.
 
-In **Engines**, inspect the image/video provider and model. The current AtlasCloud video adapter sends H3-shaped text-to-video payloads. Changing its model field to a legacy Kling model does not restore the old Kling adapter. Image references and sound controls in stored render specs do not all reach H3.
+In **Engines**, inspect the image/video provider and model. AtlasCloud defaults to H3 Developer Reference-to-Video (`minimax/h3-developer/reference-to-video`): the adapter uploads stored image references, sends their public URLs in `refers`, and flattens ordered shots into one chronological prompt. The route can generate audio, and the prompt asks it to speak each written dialogue line. H3 Developer Text-to-Video remains selectable, but ignores image references. Both Developer routes accept 4–15 seconds and 480P, 768P, or 2K; the local preflight reports an invalid resolution before generation. The app caps uploaded image references at the configured maximum.
 
 ## OpenRouter media
 

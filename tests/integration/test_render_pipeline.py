@@ -630,10 +630,9 @@ def test_qa_retry_corrective_rerender(client):
 
     payload2 = client.fake_atlas.payloads[1]
     assert "Corrections from review: face distorted; wrong outfit" in payload2["prompt"]
-    # Storyboard entries stay exactly as authored.
-    assert [p["prompt"] for p in payload2["multi_prompt"]] == [
-        "shot one 「你好」", "shot two 「再见」",
-    ]
+    # Stored storyboard beats stay in the flattened provider prompt in order.
+    assert "Beat 1: shot one 「你好」" in payload2["prompt"]
+    assert "Beat 2: shot two 「再见」" in payload2["prompt"]
 
     # Retry of the retry: previous suffix is stripped, only the LATEST issues remain.
     out2 = body2["outputs"][0]
@@ -1067,8 +1066,10 @@ def test_resubmit_failed_job_replays_stored_spec(client):
     assert new_job_id != "job_failed"
     body = _wait_for_job(client, new_job_id)
     assert body["job"]["status"] == "succeeded", body
-    # The replayed payload carries the same prompt (verbatim, no corrections).
-    assert client.fake_atlas.payloads[-1]["prompt"] == "@Image hero"
+    # The replay starts from the same prompt and does not append QA corrections;
+    # the adapter adds its stable continuity guidance during mapping.
+    assert "@Image hero" in client.fake_atlas.payloads[-1]["prompt"]
+    assert "Corrections from review:" not in client.fake_atlas.payloads[-1]["prompt"]
 
 
 def test_resubmit_job_without_spec_rejected(client):

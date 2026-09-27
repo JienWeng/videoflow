@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.config import get_settings
+from app.providers.model_ids import H3_REFERENCE_TO_VIDEO
 from app.schemas.common import AspectRatio
 
 
@@ -29,7 +30,7 @@ class RenderSpec(BaseModel):
     """Provider-agnostic render request mapped to the configured video model."""
 
     provider: Literal["atlascloud", "openrouter"] = "atlascloud"
-    model: str = "minimax/h3-developer/text-to-video"
+    model: str = H3_REFERENCE_TO_VIDEO
 
     scene_id: str
     shot_id: str | None = None

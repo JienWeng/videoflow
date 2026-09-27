@@ -26,6 +26,24 @@
   // blank/stale canvas (mirrors the scenes-page error pattern).
   let graphError = $state('');
   let mobile = $state(false);
+  let chatPane: any = $state();
+  let chatHidden = $state(false);
+  let chatExpanded = $state(false);
+
+  function hideChat() {
+    chatHidden = true;
+    chatPane?.collapse();
+  }
+
+  function restoreChat() {
+    chatHidden = false;
+    chatPane?.expand();
+  }
+
+  function toggleChatSize() {
+    chatExpanded = !chatExpanded;
+    chatPane?.resize(chatExpanded ? (mobile ? 65 : 55) : (mobile ? 42 : 28));
+  }
 
   async function checkEmpty() {
     try {
@@ -160,11 +178,21 @@
       {/if}
     </div>
   </Pane>
-  <Handle withHandle />
-  <Pane defaultSize={mobile ? 42 : 28} minSize={mobile ? 30 : 20}>
+  {#if !chatHidden}<Handle withHandle />{/if}
+  <Pane
+    bind:this={chatPane}
+    collapsible
+    collapsedSize={0}
+    defaultSize={mobile ? 42 : 28}
+    minSize={mobile ? 30 : 20}
+    onCollapse={() => (chatHidden = true)}
+    onExpand={() => (chatHidden = false)}>
     <div class="h-full border-l border-border">
       <ChatPanel
         bind:this={chat}
+        expanded={chatExpanded}
+        onhide={hideChat}
+        onresize={toggleChatSize}
         onfocus={(id) => canvas?.focusNode(id)}
         onmutate={refreshAll}
         selected={selected
@@ -178,5 +206,13 @@
     </div>
   </Pane>
 </PaneGroup>
+
+{#if chatHidden}
+  <div class="fixed bottom-4 right-4 z-40">
+    <Button variant="secondary" class="shadow-lg" onclick={restoreChat}>
+      <MessageSquare class="mr-1.5 size-4" />Show chat
+    </Button>
+  </div>
+{/if}
 
 <Onboarding onpalette={() => (palette.open = true)} />

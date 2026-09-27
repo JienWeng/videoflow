@@ -128,19 +128,16 @@ def test_from_shot_sends_characters_and_assets_with_multishot_voice(ctx):
 
     payload = fake_atlas.video_payloads[0]
     # Exactly ONE image for Grace (first sheet only) plus the background:
-    # her second sheet and the shot's extra photo of her are dropped so Kling
-    # never sees two named refs of the same person (clone bug).
-    assert payload["images"] == [
-        "https://static.atlascloud.ai/up/char.png",
-        "https://static.atlascloud.ai/up/bg.png",
+    # her second sheet and the shot's extra photo are dropped before upload.
+    assert payload["refers"] == [
+        {"url": "https://static.atlascloud.ai/up/char.png", "type": "image"},
+        {"url": "https://static.atlascloud.ai/up/bg.png", "type": "image"},
     ]
     # No "Grace 2" reference was ever shown to the prompt agent.
     assert "Grace 2" not in fake_llm.render_prompts[0]
-    # Voice + multi-shot enforced even though the LLM turned them off.
-    assert payload["sound"] is True
-    assert payload["keep_original_sound"] is True
-    assert payload["multi_shot"] is True
-    assert payload["shot_type"] == "intelligence"
+    # The shot prompt and cast voice direction survive the provider's
+    # single-prompt H3 contract even though legacy multi-shot controls are not sent.
+    assert "@Grace waves by @Meadow" in payload["prompt"]
     # The LLM wrote no voice direction — the pipeline appends the cast's
     # voice_rules deterministically (build_render_spec -> enforce_render_defaults).
     assert (

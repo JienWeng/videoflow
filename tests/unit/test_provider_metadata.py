@@ -21,6 +21,7 @@ from app.providers import atlascloud_image as image_mod
 from app.providers import atlascloud_video as video_mod
 from app.providers.atlascloud_image import AtlasCloudImageProvider
 from app.providers.atlascloud_video import AtlasCloudVideoProvider
+from app.providers.model_ids import H3_REFERENCE_TO_VIDEO
 from app.schemas import ReferenceImage, RenderSpec
 from app.services import settings_service
 
@@ -60,18 +61,21 @@ class _SessionResolver:
 # --------------------------------------------------------------- video metadata
 
 def test_video_declares_duration_clamp_metadata():
-    assert video_mod.VIDEO_MIN_DURATION == 3
+    assert video_mod.VIDEO_MIN_DURATION == 4
     assert video_mod.VIDEO_MAX_DURATION == 15
     assert video_mod.DEFAULT_VIDEO_MAX_REFS == 7
+    assert _settings().atlas_video_model == H3_REFERENCE_TO_VIDEO
     caps = video_mod.CAPABILITIES
-    assert caps["min_duration_s"] == 3
+    assert caps["min_duration_s"] == 4
     assert caps["max_duration_s"] == 15
-    assert caps["max_reference_images"] == 7
+    assert caps["default_reference_image_limit"] == 7
+    assert caps["required_reference_count"] == 1
+    assert caps["resolutions"] == ["2K", "480P", "768P"]
 
 
 @pytest.mark.parametrize(
     "requested,expected",
-    [(1, 3), (2, 3), (3, 3), (9, 9), (15, 15), (20, 15)],
+    [(1, 4), (2, 4), (3, 4), (9, 9), (15, 15), (20, 15)],
 )
 async def test_duration_is_clamped_to_metadata_range(
     monkeypatch, session, requested, expected
@@ -100,7 +104,7 @@ async def test_video_max_refs_default_unchanged(monkeypatch, session):
         ],
     )
     payload = await provider.build_payload(spec, _SessionResolver(session))
-    assert len(payload["images"]) == 7
+    assert len(payload["refers"]) == 7
 
 
 async def test_video_max_refs_tunable_via_resolver(monkeypatch, session):
@@ -115,7 +119,7 @@ async def test_video_max_refs_tunable_via_resolver(monkeypatch, session):
         ],
     )
     payload = await provider.build_payload(spec, _SessionResolver(session))
-    assert len(payload["images"]) == 3
+    assert len(payload["refers"]) == 3
 
 
 async def test_video_falls_back_to_config_without_session(monkeypatch):
@@ -138,35 +142,31 @@ async def test_video_falls_back_to_config_without_session(monkeypatch):
         ],
     )
     payload = await provider.build_payload(spec, _NoSessionResolver())
-    assert len(payload["images"]) == 7
+    assert len(payload["refers"]) == 7
 
 
 # --------------------------------------------------------------- image metadata
 
-def test_image_declares_storyboard_cap_and_param_defaults():
+def test_image_declares_storyboard_cap_and_size_default():
     assert image_mod.STORYBOARD_IMAGE_CAP == 10
-    assert image_mod.DEFAULT_NUM_INFERENCE_STEPS == 8
-    assert image_mod.DEFAULT_GUIDANCE_SCALE == 1
     assert image_mod.DEFAULT_IMAGE_SIZE == "1024x1024"
-    assert image_mod.DEFAULT_SEED == -1
     caps = image_mod.CAPABILITIES
     assert caps["max_reference_images"] == 10
+    assert caps["default_size"] == "1024x1024"
 
 
-async def test_image_payload_defaults_unchanged_without_session(monkeypatch):
+async def test_image_payload_uses_current_atlascloud_contract_without_session(monkeypatch):
     monkeypatch.setattr(image_mod, "get_settings", _settings)
     provider = AtlasCloudImageProvider(client=object())
     payload = await provider.build_payload(prompt="cinematic night city", n=2)
     assert payload == {
-        "model": "baidu/ERNIE-Image-Turbo/text-to-image",
+        "model": "openai/gpt-image-2/text-to-image",
         "prompt": "cinematic night city",
         "size": "1024x1024",
+        "quality": "low",
         "n": 2,
-        "seed": -1,
-        "use_pe": True,
-        "num_inference_steps": 8,
-        "guidance_scale": 1,
-        "enable_sync_mode": True,
+        "output_format": "jpeg",
+        "enable_sync_mode": False,
         "enable_base64_output": False,
     }
 
@@ -175,16 +175,13 @@ async def test_image_params_tunable_via_resolver(monkeypatch, session):
     """Image-gen params resolve from the settings store when a session is wired."""
     monkeypatch.setattr(image_mod, "get_settings", _settings)
     settings_service.set_app_setting(session, "image_model", "baidu/custom")
-    # Steps/guidance/seed/size aren't in the Foundation key allowlist; the
-    # resolver still reads any persisted row for them (get_app_setting has no
-    # allowlist), so insert rows directly to prove they are resolver-read.
+    # Size and quality are supported payload fields. Insert their resolver rows
+    # directly because they aren't exposed in the settings form.
     from app.models.setting import AppSetting
 
     for k, v in (
-        ("image_num_inference_steps", 12),
-        ("image_guidance_scale", 2.5),
-        ("image_seed", 99),
         ("image_size", "768x768"),
+        ("image_quality", "medium"),
     ):
         session.add(AppSetting(key=k, scope="global", value=v))
     session.commit()
@@ -192,10 +189,9 @@ async def test_image_params_tunable_via_resolver(monkeypatch, session):
     provider = AtlasCloudImageProvider(client=object(), session=session)
     payload = await provider.build_payload(prompt="x")
     assert payload["model"] == "baidu/custom"
-    assert payload["num_inference_steps"] == 12
-    assert payload["guidance_scale"] == 2.5
-    assert payload["seed"] == 99
     assert payload["size"] == "768x768"
+    assert payload["quality"] == "medium"
+    assert "num_inference_steps" not in payload
 
 
 async def test_reference_payload_caps_at_storyboard_metadata(monkeypatch):

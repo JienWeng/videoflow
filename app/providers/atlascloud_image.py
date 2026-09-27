@@ -13,32 +13,14 @@ from app.providers.atlascloud_client import (
 from app.providers.base import PollResult, normalise_status
 
 # ---------------------------------------------------------------------------
-# Declared provider capabilities + tunable image-gen params, consolidated here
-# as module metadata. The reference (edit) model accepts at most 10 reference
-# images; the generation params (steps/guidance/seed/size) are read through the
-# settings resolver so quality/cost is tunable per-deployment WITHOUT changing
-# the defaults (a fresh DB resolves to exactly these numbers).
+# Declared provider capabilities + supported tunable image-gen params.
 # ---------------------------------------------------------------------------
 STORYBOARD_IMAGE_CAP = 10
-DEFAULT_NUM_INFERENCE_STEPS = 8
-DEFAULT_GUIDANCE_SCALE = 1
 DEFAULT_IMAGE_SIZE = "1024x1024"
-DEFAULT_SEED = -1
 
 CAPABILITIES: dict = {
     "max_reference_images": STORYBOARD_IMAGE_CAP,
-    "default_num_inference_steps": DEFAULT_NUM_INFERENCE_STEPS,
-    "default_guidance_scale": DEFAULT_GUIDANCE_SCALE,
     "default_size": DEFAULT_IMAGE_SIZE,
-    "default_seed": DEFAULT_SEED,
-}
-
-# Settings-resolver keys for the tunable image-gen params (defaults above).
-_PARAM_KEYS = {
-    "num_inference_steps": ("image_num_inference_steps", DEFAULT_NUM_INFERENCE_STEPS),
-    "guidance_scale": ("image_guidance_scale", DEFAULT_GUIDANCE_SCALE),
-    "seed": ("image_seed", DEFAULT_SEED),
-    "size": ("image_size", DEFAULT_IMAGE_SIZE),
 }
 
 
@@ -75,10 +57,6 @@ class AtlasCloudImageProvider:
     def _ref_image_model(self) -> str:
         return self._resolve("ref_image_model", self._settings.atlas_image_ref_model)
 
-    def _param(self, name: str):
-        key, default = _PARAM_KEYS[name]
-        return self._resolve(key, default)
-
     async def build_payload(
         self, *, prompt: str, n: int = 1, size: str | None = None
     ) -> dict:
@@ -88,7 +66,7 @@ class AtlasCloudImageProvider:
         return {
             "model": self._image_model(),
             "prompt": prompt,
-            "size": size if size is not None else self._param("size"),
+            "size": size if size is not None else self._resolve("image_size", DEFAULT_IMAGE_SIZE),
             "quality": self._resolve("image_quality", self._settings.atlas_image_quality),
             "n": n,
             "output_format": "jpeg",

@@ -90,7 +90,7 @@ async def render_from_shot(
         asset_ids=shot_asset_ids,
     )
     # Characters: explicit ids win, otherwise fall back to the scene's cast so
-    # their reference images always reach Kling images[].
+    # their reference images reach the selected provider adapter.
     character_ids = body.character_ids or list(scene.character_ids_json or [])
     bibles = [
         scene_service.character_to_bible(c)

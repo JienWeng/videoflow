@@ -102,6 +102,16 @@
     }
   }
 
+  function videoRouteSummary(route: any): string {
+    const duration = `${route.min_duration}–${route.max_duration}s`;
+    const resolution = route.resolution ? `, ${route.resolution}` : '';
+    const references = route.max_reference_images > 0
+      ? `${route.min_reference_count ? `${route.min_reference_count}+ image reference required; ` : ''}up to ${route.max_reference_images} image references${route.reference_limit_source === 'application' ? ' (VideoFlow upload cap)' : ''}`
+      : 'no image references (storyboards are not sent to this route)';
+    const audio = route.supports_generated_audio ? ', generated audio supported' : '';
+    return `${route.provider} / ${route.model || 'no model selected'} (${duration}${resolution}; ${references}${audio})`;
+  }
+
   async function restoreOperation() {
     try {
       activeProject = await get('/projects/active');
@@ -221,6 +231,9 @@
             <option value="9:16">Vertical · 9:16</option>
             <option value="16:9">Landscape · 16:9</option>
             <option value="1:1">Square · 1:1</option>
+            <option value="3:4">Portrait · 3:4</option>
+            <option value="4:3">Landscape · 4:3</option>
+            <option value="21:9">Ultrawide · 21:9</option>
           </select>
         </label>
         <label class="grid gap-1.5 text-sm">
@@ -249,7 +262,7 @@
           <p class="mt-2 text-muted-foreground">Checking configured models and supported video settings…</p>
         {:else}
           <p class="mt-2">Effective project style: <strong>{preflight.effective_style}</strong></p>
-          <p class="mt-1 text-muted-foreground">This request plans a story, scenes, shots, dialogue, storyboard images, and video render jobs. Image provider: {preflight.routes.image.provider} (storyboards). Character and prop images use AtlasCloud. Video: {preflight.routes.video.provider} / {preflight.routes.video.model || 'no model selected'} (up to {preflight.routes.video.max_duration}s, {preflight.routes.video.max_reference_images} image references).</p>
+          <p class="mt-1 text-muted-foreground">This request plans a story, scenes, shots, dialogue, storyboard images, and video render jobs. Image provider: {preflight.routes.image.provider} (storyboards). Character and prop images use AtlasCloud. Video: {videoRouteSummary(preflight.routes.video)}.</p>
           {#each preflight.warnings ?? [] as warning}
             <p class="mt-2 text-amber-700 dark:text-amber-300">Unverified route: {warning.reason}</p>
           {/each}

@@ -29,7 +29,7 @@ Succeeded does not guarantee that QA passed. QA is best effort and can be absent
 
 A failed-job **resubmit** reconstructs the saved render spec and sends another provider request. A corrective output retry adds QA feedback. Either can create a new charge. A download failure can happen after the provider already generated and billed a video; inspect that job before paying for another generation.
 
-The current provider migration also changes how saved specs map to payloads. A stored Kling-shaped request does not guarantee that resubmission sends the historical Kling payload. This is an audit blocker for reliable replay.
+Saved `RenderSpec` rows are mapped through the currently selected provider adapter. AtlasCloud H3 Developer Reference-to-Video (`minimax/h3-developer/reference-to-video`) receives references through `refers` and a chronological prompt with spoken-dialogue instructions; resubmission preserves the stored model and prompt, then rebuilds that provider payload. A job created with H3 Developer Text-to-Video continues to replay through that model without image references. The older `minimax/h3/reference-to-video` model ID remains supported with its own 768P/2K resolution set.
 
 ## What is currently missing
 

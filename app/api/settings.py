@@ -115,7 +115,7 @@ class AppSettingsBody(BaseModel):
     ref_image_model: str | None = None
     video_model: str | None = None
     vl_model: str | None = None
-    max_video_refs: int | None = None
+    max_video_refs: int | None = Field(default=None, ge=1)
     render_negatives: list[str] | None = None
 
 

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import get_settings
+from app.providers.model_ids import H3_REFERENCE_TO_VIDEO, H3_TEXT_TO_VIDEO
 
 _settings = get_settings()
 
@@ -97,6 +99,17 @@ def _migrate(target_engine) -> None:
         if cols and "sample_dialogue" not in cols:
             conn.exec_driver_sql(
                 "ALTER TABLE characters ADD COLUMN sample_dialogue VARCHAR NOT NULL DEFAULT ''"
+            )
+            conn.commit()
+        # The former AtlasCloud default was text-to-video, which ignored the
+        # generated storyboard and character references. Move only rows that
+        # contain that exact former default; preserve custom model selections.
+        cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(app_settings)")]
+        if cols and {"key", "value"}.issubset(cols):
+            conn.exec_driver_sql(
+                "UPDATE app_settings SET value = ? "
+                "WHERE key = 'video_model' AND value = ?",
+                (json.dumps(H3_REFERENCE_TO_VIDEO), json.dumps(H3_TEXT_TO_VIDEO)),
             )
             conn.commit()
 

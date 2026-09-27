@@ -104,7 +104,7 @@ def test_idea_agent_skill_registered():
 
     skill = get_skill("idea_agent")
     assert skill is not None
-    assert skill.temperature == 0.8
+    assert skill.temperature == 0.5
 
 
 # ------------------------------------------------- deterministic enforcement

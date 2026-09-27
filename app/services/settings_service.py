@@ -476,6 +476,25 @@ def resolve(
     return default
 
 
+def resolve_video_reference_limit(
+    session: Session,
+    *,
+    project_id: str | None = None,
+    settings: Settings | None = None,
+) -> int:
+    """Return the effective image-reference cap shared by prompts and adapters."""
+    settings = settings or get_settings()
+    return int(
+        resolve(
+            session,
+            "max_video_refs",
+            default=settings.atlas_video_max_refs,
+            project_id=project_id,
+            settings=settings,
+        )
+    )
+
+
 def app_settings_view(
     session: Session,
     project_id: str | None = None,

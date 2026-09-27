@@ -1,7 +1,7 @@
 """Render service — where AI-produced JSON (RenderSpec) meets the provider.
 
 This is the only place agents and providers converge. It resolves reference
-assets to URLs, builds the Kling payload, submits the job (so submit errors
+assets to URLs, builds the selected provider payload, submits the job (so submit errors
 surface immediately), persists a RenderJob, and enqueues background polling.
 """
 
@@ -27,6 +27,7 @@ from app.models.base import new_id, utcnow
 from app.providers.atlascloud_client import get_atlas_client
 from app.providers.registry import get_video_provider
 from app.providers.url_resolver import AtlasCloudUploadResolver, OpenRouterAssetResolver
+from app.providers.model_ids import H3_REFERENCE_TO_VIDEO, is_h3_reference_model
 from app.schemas import ReferenceImage, RenderSpec, StoryboardShot
 from app.services.dialogue import has_dialogue
 from app.services import project_service
@@ -217,8 +218,43 @@ async def start_render(session: Session, spec: RenderSpec) -> RenderJob:
     effective_spec = spec
     # RenderSpec's legacy default is AtlasCloud's model. When the caller selected
     # OpenRouter without specifying a model, use its configured model instead.
-    if spec.provider == "openrouter" and spec.model == "minimax/h3-developer/text-to-video":
+    if spec.provider == "openrouter" and spec.model == H3_REFERENCE_TO_VIDEO:
         effective_spec = spec.model_copy(update={"model": settings.openrouter_video_model})
+
+    # H3 Reference-to-Video requires at least one public reference. When a direct
+    # render has no character, prop, or storyboard images, create the scene
+    # storyboard first so every AtlasCloud render uses the selected model's real
+    # image-guided route instead of failing at submission.
+    if (
+        effective_spec.provider == "atlascloud"
+        and is_h3_reference_model(effective_spec.model)
+        and not effective_spec.all_reference_image_asset_ids
+        and not effective_spec.video_asset_id
+    ):
+        from app.services import storyboard_service
+
+        storyboard = storyboard_service.latest_storyboard_for_scene(
+            session, effective_spec.scene_id
+        )
+        if storyboard is None:
+            await storyboard_service.generate_storyboard_for_scene(
+                session, effective_spec.scene_id
+            )
+            storyboard = storyboard_service.latest_storyboard_for_scene(
+                session, effective_spec.scene_id
+            )
+        if storyboard is None:
+            raise ValidationFailedError(
+                "AtlasCloud Reference-to-Video needs a storyboard or another image reference"
+            )
+        effective_spec = effective_spec.model_copy(
+            update={
+                "reference_images": [
+                    *effective_spec.reference_images,
+                    ReferenceImage(name="分镜图", asset_id=storyboard.id),
+                ]
+            }
+        )
     provider = get_video_provider(effective_spec)
     resolver = (
         OpenRouterAssetResolver(session)
@@ -258,10 +294,9 @@ async def start_render(session: Session, spec: RenderSpec) -> RenderJob:
 async def render_scene(
     session: Session, scene_id: str, generation_brief: dict | None = None
 ) -> RenderJob:
-    """Deterministic whole-scene render: stored shots become the multi-shot
-    storyboard (customize, indexed), and every linked reference — characters'
-    images, scene/shot assets and the scene's 分镜图 — feeds Kling images[]."""
-    from app.services import scene_service, storyboard_service, style_service
+    """Deterministic whole-scene render: stored shots become ordered prompt beats,
+    and linked character, scene/shot, and storyboard images reach the provider."""
+    from app.services import scene_service, settings_service, storyboard_service, style_service
 
     scene = scene_service.get_scene(session, scene_id)
     shots = scene_service.list_shots(session, scene_id)
@@ -300,8 +335,8 @@ async def render_scene(
         aid: a.name for aid in asset_ids
         if (a := session.get(Asset, aid)) and a.name
     }
-    # Reference priority groups for the live Kling cap (ret:1201 above
-    # settings.atlas_video_max_refs): characters > 分镜图 storyboard >
+    # Reference priority groups under the configured video reference cap:
+    # characters > 分镜图 storyboard >
     # 上一场景 frame anchor > scene/shot prop assets. Characters and props are
     # collected in TWO passes of collect_named_references — the second pass
     # repeats the bibles so the dedup / clone-name-collision rules stay exactly
@@ -334,7 +369,12 @@ async def render_scene(
                 shot.id, shot.shot_order, scene_id,
             )
 
-    limit = get_settings().atlas_video_max_refs
+    settings = get_settings()
+    limit = settings_service.resolve_video_reference_limit(
+        session,
+        project_id=scene.project_id,
+        settings=settings,
+    )
     storyboard = storyboard_service.latest_storyboard_for_scene(session, scene_id)
     storyboard_refs = (
         [{"name": "分镜图", "asset_id": storyboard.id}]
@@ -360,8 +400,7 @@ async def render_scene(
 
     refs = cap_references([char_refs, storyboard_refs, anchor_refs, prop_refs], limit)
     kept_ids = {r["asset_id"] for r in refs}
-    # Mention @分镜图/@上一场景 in the prompt ONLY when their reference
-    # actually survived the cap — a token without its image confuses Kling.
+    # Mention @分镜图/@上一场景 only when that reference survived the cap.
     storyboard_kept = storyboard is not None and storyboard.id in kept_ids
     anchored = bool(anchor_refs) and anchor_refs[0]["asset_id"] in kept_ids
 
