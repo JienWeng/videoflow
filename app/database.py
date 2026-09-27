@@ -14,7 +14,10 @@ _settings = get_settings()
 engine = create_engine(
     _settings.database_url,
     echo=False,
-    connect_args={"check_same_thread": False},
+    # The API, worker, and local dev browser can touch SQLite concurrently.
+    # Wait briefly for the writer instead of surfacing a transient
+    # `database is locked` as a graph/network error.
+    connect_args={"check_same_thread": False, "timeout": 30.0},
 )
 
 

@@ -7,10 +7,17 @@ from app.config import Settings
 from app.llm.connection_client import ConnectionClient
 from app.llm.structured_client import StructuredLLMClient
 from app.errors import ProviderError
+from app.llm.connections import definition
 
 
 class Answer(BaseModel):
     answer: str
+
+
+def test_opencode_go_deepseek_uses_chat_protocol():
+    entry = definition("opencode-go")
+    assert entry["protocol"] == "chat"
+    assert entry["model"] == "deepseek-v4-flash"
 
 
 async def test_responses_validates_retries_and_maps_images(monkeypatch):

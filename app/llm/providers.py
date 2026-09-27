@@ -33,6 +33,12 @@ _PROVIDER_DEFAULT_MODE: dict[str, instructor.Mode] = {
     "anthropic": instructor.Mode.ANTHROPIC_TOOLS,
     # AtlasCloud-hosted open models (qwen3-vl etc.): schema-in-prompt is safest.
     "atlas": instructor.Mode.MD_JSON,
+    # OpenCode Go exposes an OpenAI-compatible chat endpoint. JSON mode keeps
+    # planning agents constrained to their Pydantic response models rather than
+    # letting a creative model return prose or an unrelated script.
+    "opencode-go": instructor.Mode.JSON,
+    "opencode": instructor.Mode.JSON,
+    "deepseek": instructor.Mode.JSON,
 }
 
 
@@ -58,6 +64,7 @@ def default_model(provider: ProviderName, settings: Settings) -> str:
         "openai": settings.openai_model,
         "anthropic": settings.anthropic_model,
         "gemini": settings.gemini_model,
+        "deepseek": settings.deepseek_model,
         "atlas": settings.atlas_vl_model,
     }.get(provider, env_value(provider, "MODEL", definition(provider)["model"]))
 
@@ -99,6 +106,11 @@ def build_backend(
     mode = resolve_mode(provider, model)
 
     protocol = definition(provider)["protocol"]
+    # Existing Connection rows may still contain the old "chat" protocol from
+    # before OpenCode Go/Luna was corrected. Resolve the model-specific route at
+    # dispatch time so saving settings is enough; no DB reset is required.
+    if provider == "opencode-go" and model == "gpt-5.6-luna":
+        protocol = "responses"
     if protocol in ("responses", "codex"):
         from app.llm.connection_client import ConnectionClient
         return Backend(ConnectionClient(provider, settings, timeout_s), "openai", model, mode)

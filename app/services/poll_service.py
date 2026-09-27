@@ -61,7 +61,12 @@ async def process_job(job_id: str) -> None:
         event_bus.publish({"job_id": job.id, "status": "running"})
         _set_stage(session, job, "generating")
 
-        provider = AtlasCloudVideoProvider()
+        if job.provider == "openrouter":
+            from app.providers.openrouter_video import OpenRouterVideoProvider
+
+            provider = OpenRouterVideoProvider()
+        else:
+            provider = AtlasCloudVideoProvider()
         try:
             result = await poll_until_terminal(
                 provider, job.provider_job_id,

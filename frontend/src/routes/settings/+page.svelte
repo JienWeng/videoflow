@@ -54,6 +54,8 @@
   };
   type AppSettings = {
     default_aspect_ratio: string;
+    default_video_provider: string;
+    default_image_provider: string;
     default_scene_duration: number;
     caption_style: string;
     caption_language: string;
@@ -488,12 +490,35 @@
     }
   }
 
-  // Engine model fields: dropdown of suggested atlas models + "Custom…".
-  // Atlas hosts the render models, so we draw suggestions from its catalog plus
-  // the currently-saved value (so a custom id stays selected).
+  const MEDIA_MODELS = {
+    atlascloud: {
+      image: ['openai/gpt-image-2/text-to-image', 'google/nano-banana-2/edit'],
+      video: ['minimax/h3-developer/text-to-video']
+    },
+    openrouter: {
+      image: ['openai/gpt-image-2'],
+      video: ['google/veo-3.1-lite', 'google/veo-3.1-fast', 'kwaivgi/kling-v3.0-pro']
+    }
+  } as const;
+
+  function mediaProviderChanged(kind: 'image' | 'video', provider: string) {
+    const modelKey = kind === 'image' ? 'image_model' : 'video_model';
+    const models = MEDIA_MODELS[provider as keyof typeof MEDIA_MODELS][kind];
+    saveApp({
+      [kind === 'image' ? 'default_image_provider' : 'default_video_provider']: provider,
+      [modelKey]: models[0]
+    } as Partial<AppSettings>);
+  }
+
   function engineOptions(current: string): string[] {
     const atlas = byName['atlas']?.suggested_models ?? [];
-    const set = new Set<string>(atlas);
+    const set = new Set<string>([
+      ...atlas,
+      ...MEDIA_MODELS.atlascloud.image,
+      ...MEDIA_MODELS.atlascloud.video,
+      ...MEDIA_MODELS.openrouter.image,
+      ...MEDIA_MODELS.openrouter.video
+    ]);
     if (current) set.add(current);
     return [...set];
   }
@@ -834,6 +859,42 @@
                   </div>
                 </div>
               {/each}
+
+              <Separator />
+
+              <div class="flex flex-wrap items-center gap-3">
+                <div class="min-w-[180px] flex-1">
+                  <div class="text-sm font-medium">Video provider</div>
+                  <div class="text-[11px] text-muted-foreground">Used by one-click renders.</div>
+                </div>
+                <select
+                  aria-label="Video provider"
+                  class="w-64 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                  disabled={busy === 'app'}
+                  value={app.default_video_provider}
+                  onchange={(e) => mediaProviderChanged('video', (e.currentTarget as HTMLSelectElement).value)}
+                >
+                  <option value="atlascloud">Atlas Cloud</option>
+                  <option value="openrouter">OpenRouter</option>
+                </select>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-3">
+                <div class="min-w-[180px] flex-1">
+                  <div class="text-sm font-medium">Image provider</div>
+                  <div class="text-[11px] text-muted-foreground">Used for storyboard keyframes.</div>
+                </div>
+                <select
+                  aria-label="Image provider"
+                  class="w-64 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                  disabled={busy === 'app'}
+                  value={app.default_image_provider}
+                  onchange={(e) => mediaProviderChanged('image', (e.currentTarget as HTMLSelectElement).value)}
+                >
+                  <option value="atlascloud">Atlas Cloud</option>
+                  <option value="openrouter">OpenRouter</option>
+                </select>
+              </div>
 
               <Separator />
 

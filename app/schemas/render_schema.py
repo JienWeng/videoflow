@@ -1,13 +1,4 @@
-"""RenderSpec — the contract between the prompt agent and the video provider.
-
-Designed around `kwaivgi/kling-video-o3-pro/reference-to-video`:
-  - multiple NAMED reference images so the prompt can use @Name tokens that
-    resolve into the provider `images[]` array (e.g. "@Kling Lipstick", "@Image");
-  - voice/sound on by default (`sound` + `keep_original_sound`);
-  - multi-shot storyboards with the provider's exact validation rules
-    (shot_type required when multi_shot; for `customize`, per-shot durations must
-    sum to the top-level duration and each be >= 1).
-"""
+"""RenderSpec — the contract between the prompt agent and the video provider."""
 
 from __future__ import annotations
 
@@ -35,11 +26,10 @@ class StoryboardShot(BaseModel):
 
 
 class RenderSpec(BaseModel):
-    """Provider-agnostic render request. Mapped to a Kling o3 payload by the
-    AtlasCloud video provider."""
+    """Provider-agnostic render request mapped to the configured video model."""
 
-    provider: Literal["atlascloud"] = "atlascloud"
-    model: str = "kwaivgi/kling-video-o3-pro/reference-to-video"
+    provider: Literal["atlascloud", "openrouter"] = "atlascloud"
+    model: str = "minimax/h3-developer/text-to-video"
 
     scene_id: str
     shot_id: str | None = None

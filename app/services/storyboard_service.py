@@ -133,9 +133,16 @@ async def generate_storyboard(
     settings.ensure_dirs()
     # Pass the session so image-gen params (steps/guidance/seed/size, model id)
     # are read through the settings resolver — defaults unchanged.
-    provider = image_provider or AtlasCloudImageProvider(
-        get_atlas_client(), session=session
-    )
+    if image_provider is not None:
+        provider = image_provider
+    else:
+        from app.services import settings_service
+        selected = settings_service.resolve(session, "default_image_provider", default="atlascloud", project_id=project_service.active_project_id(session))
+        if selected == "openrouter":
+            from app.providers.openrouter_image import OpenRouterImageProvider
+            provider = OpenRouterImageProvider()
+        else:
+            provider = AtlasCloudImageProvider(get_atlas_client(), session=session)
     prompt = build_storyboard_prompt(
         beats=beats, character_lines=character_lines, setting=setting, lighting=lighting
     )

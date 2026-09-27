@@ -17,6 +17,8 @@ from app.models.base import new_id, utcnow
 from app.schemas import CharacterBible, IdeaOptions, SceneSpec, ScriptDraft, ShotSpec
 from app.services import project_service, style_service
 from app.services.dialogue import has_dialogue
+from app.services.continuity_service import context_for_scene
+from app.services.visual_dependency_service import build_shot_dependencies
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +217,26 @@ def story_context(session: Session, scene: Scene) -> dict | None:
     if siblings:
         parts["other_scenes"] = [
             {"title": s.title, "summary": (s.summary or "")[:200]} for s in siblings[:12]
+        ]
+    pid = scene.project_id or project_service.active_project_id(session)
+    characters = [
+        {"name": c.name, "appearance": c.appearance or ""}
+        for c in session.exec(select(Character).where(Character.project_id == pid)).all()
+    ]
+    assets = [
+        {"name": a.name, "description": a.description or ""}
+        for a in session.exec(select(Asset).where(Asset.project_id == pid)).all()
+    ]
+    continuity = context_for_scene(
+        story=" ".join([scene.title, scene.summary, parts.get("story", {}).get("summary", "")]),
+        scenes=[{"id": s.id, "title": s.title, "summary": s.summary} for s in siblings],
+        characters=characters,
+        assets=assets,
+    )
+    if continuity:
+        parts["continuity"] = [
+            {"id": item.id, "kind": item.kind, "text": item.text}
+            for item in continuity
         ]
     return parts or None
 
@@ -446,6 +468,18 @@ async def create_shots(
         )
         session.add(row)
         rows.append(row)
+    dependencies = build_shot_dependencies(
+        [{"id": row.id, "depends_on": row.shot_json.get("depends_on", [])} for row in rows]
+    )
+    by_id = {item.shot_id: item for item in dependencies}
+    for row in rows:
+        dependency = by_id[row.id]
+        row.shot_json = {
+            **(row.shot_json or {}),
+            "depends_on": list(dependency.depends_on),
+            "dependency_layer": dependency.layer,
+        }
+        session.add(row)
     session.commit()
     await _ensure_shot_dialogue(session, scene, rows)
     _auto_link(session, scene.id)

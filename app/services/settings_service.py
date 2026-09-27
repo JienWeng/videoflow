@@ -39,6 +39,7 @@ from app.models.setting import AgentSetting, AppSetting, ProviderSecret
 _KNOWN_MODELS: dict[str, list[str]] = {
     "minimax": ["MiniMax-Text-01", "MiniMax-M2"],
     "openai": ["gpt-5.6-luna", "gpt-4o-mini", "gpt-4o"],
+    "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro"],
     "anthropic": ["claude-sonnet-4-6", "claude-opus-4-8"],
     "gemini": ["gemini-2.5-flash", "gemini-2.5-pro"],
     "atlas": ["qwen/qwen3-vl-30b-a3b-instruct", "glm-5v"],
@@ -54,6 +55,8 @@ PROVIDERS: list[ProviderName] = list(catalog())
 # ---------------------------------------------------------------------------
 APP_SETTING_DEFAULTS: dict[str, str] = {
     "default_aspect_ratio": "default_aspect_ratio",
+    "default_video_provider": "default_video_provider",
+    "default_image_provider": "default_image_provider",
     "default_scene_duration": "default_scene_duration",
     "caption_style": "caption_style",
     "caption_language": "caption_language",

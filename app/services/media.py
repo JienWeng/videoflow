@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import shutil
 from pathlib import Path
@@ -14,6 +15,10 @@ logger = logging.getLogger("videoflow.media")
 
 async def download(url: str, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if url.startswith("data:"):
+        _, encoded = url.split(",", 1)
+        dest.write_bytes(base64.b64decode(encoded))
+        return dest
     async with httpx.AsyncClient(timeout=120.0) as client:
         async with client.stream("GET", url) as resp:
             resp.raise_for_status()

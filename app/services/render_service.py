@@ -345,6 +345,7 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
     extra_neg = (", " + ", ".join(extra_negatives)) if extra_negatives else ""
     prompt = (
         f"{scene.summary}. "
+        + "Preserve the ordered camera continuity graph for the shot sequence. "
         + ("Follow the @分镜图 storyboard panels in order for composition, scene "
            "continuity and lighting. " if storyboard_kept else "")
         + (f"Match the lighting, color grading and character appearance of "
@@ -357,7 +358,19 @@ async def render_scene(session: Session, scene_id: str) -> RenderJob:
     )
     # Deterministic style enforcement on the whole-scene video prompt.
     prompt = style_service.apply_style(prompt, style_service.get_style(session))
+    from app.services import settings_service
+    provider_name = settings_service.resolve(
+        session, "default_video_provider", default="atlascloud", project_id=scene.project_id
+    )
+    model_name = settings_service.resolve(
+        session,
+        "video_model",
+        default=(get_settings().atlas_video_model if provider_name == "atlascloud" else get_settings().openrouter_video_model),
+        project_id=scene.project_id,
+    )
     spec = RenderSpec(
+        provider=provider_name,
+        model=model_name,
         scene_id=scene.id,
         duration=total,
         aspect_ratio=scene.aspect_ratio,

@@ -1,18 +1,17 @@
-"""AtlasCloud video provider — Kling o3-pro reference-to-video.
+"""AtlasCloud video provider — MiniMax H3 Developer text-to-video.
 
-Maps a RenderSpec to the exact Kling input schema:
-  model, aspect_ratio, duration(3-15), images[], video, prompt,
-  sound, keep_original_sound, multi_shot, shot_type, multi_prompt[].
+Maps a RenderSpec to the H3 Developer text-to-video schema. Reference assets
+are preserved in the prompt as continuity descriptions upstream; this model
+does not accept the old Kling reference/multi-shot fields.
 
-Multiple NAMED reference images resolve (in @-token order) into images[];
-voice/sound flags pass through; multi-shot storyboards are validated by RenderSpec
-itself (durations sum to total, each >= 1).
+The render prompt carries named entities and ordered beats; the text-to-video
+endpoint receives one controlled chronological prompt rather than unsupported
+Kling reference/multi-shot fields.
 """
 
 from __future__ import annotations
 
 from app.config import get_settings
-from app.errors import ValidationFailedError
 from app.providers.atlascloud_client import (
     AtlasCloudClient,
     extract_outputs,
@@ -23,14 +22,13 @@ from app.providers.url_resolver import AssetUrlResolver
 from app.schemas import RenderSpec
 
 # ---------------------------------------------------------------------------
-# Declared provider capabilities — Kling o3-pro reference-to-video hard limits,
+# Declared provider capabilities — H3 Developer text-to-video hard limits,
 # consolidated here as module metadata instead of scattered magic numbers.
-#   - duration: the live API accepts 3-15s; out-of-range values are clamped.
-#   - reference images: ret:1201 "max number is 7" above 7 (live-verified,
-#     despite docs claiming 10). The effective cap is read from the settings
-#     resolver (key 'max_video_refs'); this is the fallback default.
+#   - duration: the live API accepts 4-15s; out-of-range values are clamped.
+#   - max_reference_images remains exposed for compatibility with the existing
+#     asset planner; H3 text-to-video itself does not receive images[].
 # ---------------------------------------------------------------------------
-VIDEO_MIN_DURATION = 3
+VIDEO_MIN_DURATION = 4
 VIDEO_MAX_DURATION = 15
 DEFAULT_VIDEO_MAX_REFS = 7
 
@@ -71,39 +69,27 @@ class AtlasCloudVideoProvider:
         )
 
     async def build_payload(self, spec: RenderSpec, resolver: AssetUrlResolver) -> dict:
-        images = await resolver.resolve(spec.all_reference_image_asset_ids)
-        if not images:
-            raise ValidationFailedError(
-                "reference-to-video requires at least one reference image"
+        settings = self._settings
+        prompt = spec.prompt.strip()
+        if spec.multi_shot and spec.multi_prompt:
+            beats = " ".join(
+                f"Beat {i}: {shot.prompt.strip()}"
+                for i, shot in enumerate(spec.multi_prompt, 1)
             )
-        # Belt-and-braces: the live API rejects more images than this with
-        # ret:1201; the upstream priority cap should already hold the limit.
-        images = images[: self._max_refs(resolver)]
-
-        video_url = None
-        if spec.video_asset_id:
-            video_url = await resolver.resolve_one(spec.video_asset_id)
-
+            prompt = f"{prompt} Create one continuous, chronological video. {beats}"
+        prompt = (
+            f"{prompt} Maintain the same characters, wardrobe, location, lighting, "
+            "and props across every beat. No new characters, no scene jumps, no "
+            "subtitles, on-screen text, watermark, or random outfit changes."
+        )
         payload: dict = {
             "model": spec.model or self._settings.atlas_video_model,
-            "aspect_ratio": spec.aspect_ratio,
+            "ratio": spec.aspect_ratio,
             "duration": clamp_duration(spec.duration),
-            "prompt": spec.prompt,
-            "images": images,
-            "sound": spec.sound,
-            "keep_original_sound": spec.keep_original_sound,
-            "multi_shot": spec.multi_shot,
+            "resolution": settings.atlas_video_resolution,
+            "prompt": prompt,
+            "prompt_expansion": settings.atlas_video_prompt_expansion,
         }
-        if video_url:
-            payload["video"] = video_url
-        if spec.multi_shot:
-            payload["shot_type"] = spec.shot_type
-            if spec.shot_type == "customize":
-                # Live API requires index on every entry (ret:1201), 1-based.
-                payload["multi_prompt"] = [
-                    {"index": i + 1, "prompt": s.prompt, "duration": s.duration}
-                    for i, s in enumerate(spec.multi_prompt)
-                ]
         return payload
 
     async def submit(self, payload: dict) -> str:

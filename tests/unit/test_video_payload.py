@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from app.config import Settings
-from app.errors import ValidationFailedError
 from app.providers.atlascloud_video import AtlasCloudVideoProvider
 from app.schemas import ReferenceImage, RenderSpec, StoryboardShot
 
@@ -46,20 +45,13 @@ async def test_single_shot_payload_with_named_refs(provider):
     )
     payload = await provider.build_payload(spec, FakeResolver())
 
-    assert payload["model"] == "kwaivgi/kling-video-o3-pro/reference-to-video"
-    assert payload["aspect_ratio"] == "9:16"
+    assert payload["model"] == "minimax/h3-developer/text-to-video"
+    assert payload["ratio"] == "9:16"
     assert payload["duration"] == 5
-    # Named references map, in @-token order, into images[].
-    assert payload["images"] == [
-        "https://static.atlascloud.ai/asset_a.png",
-        "https://static.atlascloud.ai/asset_b.png",
-    ]
-    # Voice/sound on by default.
-    assert payload["sound"] is True
-    assert payload["keep_original_sound"] is True
-    assert payload["multi_shot"] is False
-    assert "multi_prompt" not in payload
-    assert "video" not in payload
+    assert payload["resolution"] == "480P"
+    assert payload["prompt_expansion"] is False
+    assert "images" not in payload
+    assert "Kling Lipstick" in payload["prompt"]
 
 
 async def test_multi_shot_customize_payload(provider):
@@ -73,14 +65,9 @@ async def test_multi_shot_customize_payload(provider):
         ],
     )
     payload = await provider.build_payload(spec, FakeResolver())
-    assert payload["multi_shot"] is True
-    assert payload["shot_type"] == "customize"
-    # Live API ret:1201 — "each entry in multi_prompt must have index and duration".
-    assert payload["multi_prompt"] == [
-        {"index": 1, "prompt": "color river streaks", "duration": 3},
-        {"index": 2, "prompt": "lipstick blooms on water", "duration": 2},
-    ]
-    assert sum(s["duration"] for s in payload["multi_prompt"]) == payload["duration"]
+    assert "Beat 1: color river streaks" in payload["prompt"]
+    assert "Beat 2: lipstick blooms on water" in payload["prompt"]
+    assert "chronological" in payload["prompt"]
 
 
 async def test_reference_video_included(provider):
@@ -90,18 +77,16 @@ async def test_reference_video_included(provider):
         video_asset_id="vid_1",
     )
     payload = await provider.build_payload(spec, FakeResolver())
-    assert payload["video"] == "https://static.atlascloud.ai/vid_1.mp4"
+    assert "video" not in payload
 
 
-async def test_missing_reference_images_rejected(provider):
+async def test_text_to_video_does_not_require_reference_images(provider):
     spec = RenderSpec(scene_id="s1", duration=5, prompt="p")
-    with pytest.raises(ValidationFailedError):
-        await provider.build_payload(spec, FakeResolver())
+    payload = await provider.build_payload(spec, FakeResolver())
+    assert payload["model"] == "minimax/h3-developer/text-to-video"
 
 
-async def test_images_defensively_sliced_to_live_kling_limit(provider):
-    """Belt-and-braces: even if upstream capping is bypassed, the payload never
-    carries more than atlas_video_max_refs images (live ret:1201 above 7)."""
+async def test_reference_images_are_not_sent_to_text_to_video(provider):
     spec = RenderSpec(
         scene_id="s1", duration=5, prompt="p",
         reference_images=[
@@ -109,8 +94,4 @@ async def test_images_defensively_sliced_to_live_kling_limit(provider):
         ],
     )
     payload = await provider.build_payload(spec, FakeResolver())
-    assert len(payload["images"]) == 7
-    # The FIRST seven (highest priority upstream) survive, in order.
-    assert payload["images"] == [
-        f"https://static.atlascloud.ai/asset_{i}.png" for i in range(7)
-    ]
+    assert "images" not in payload

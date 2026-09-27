@@ -1,4 +1,4 @@
-"""AtlasCloud image provider — ERNIE text-to-image."""
+"""AtlasCloud image provider — GPT Image 2 text-to-image."""
 
 from __future__ import annotations
 
@@ -82,18 +82,17 @@ class AtlasCloudImageProvider:
     async def build_payload(
         self, *, prompt: str, n: int = 1, size: str | None = None
     ) -> dict:
+        # GPT Image 2 has a smaller, different contract from the old ERNIE
+        # adapter. Keep this request cheap by default and let the prediction
+        # endpoint handle completion asynchronously.
         return {
             "model": self._image_model(),
             "prompt": prompt,
             "size": size if size is not None else self._param("size"),
+            "quality": self._resolve("image_quality", self._settings.atlas_image_quality),
             "n": n,
-            "seed": self._param("seed"),
-            "use_pe": True,
-            "num_inference_steps": self._param("num_inference_steps"),
-            "guidance_scale": self._param("guidance_scale"),
-            # Sync on purpose: AtlasCloud's async ERNIE dispatch fails upstream
-            # ("failed to parse upstream response"), confirmed live 2026-06-10.
-            "enable_sync_mode": True,
+            "output_format": "jpeg",
+            "enable_sync_mode": False,
             "enable_base64_output": False,
         }
 
@@ -109,7 +108,7 @@ class AtlasCloudImageProvider:
             "prompt": prompt,
             "images": images[:STORYBOARD_IMAGE_CAP],
             "aspect_ratio": aspect_ratio,
-            "enable_sync_mode": True,
+            "enable_sync_mode": False,
             "enable_base64_output": False,
         }
 
@@ -118,7 +117,8 @@ class AtlasCloudImageProvider:
         job_id = data["id"]
         status = normalise_status(data.get("status"))
         if status in ("succeeded", "failed"):
-            # Sync mode finished in-request; serve it from cache, never poll.
+            # Some gateway responses can still be terminal; retain those while
+            # normal requests continue through prediction polling.
             self._sync_results[job_id] = PollResult(
                 status=status,
                 output_urls=extract_outputs(data) if status == "succeeded" else [],
