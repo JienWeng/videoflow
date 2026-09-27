@@ -1,3 +1,5 @@
+> Historical design plan. For current behavior, use the [handbook](docs/handbook/README.md) and [implementation audit](docs/audits/2026-09-27-implementation.md). The proposed layout, models, and capabilities below are not installation instructions.
+
 # AI Video Workflow Studio — Project Plan
 
 ## 1. Goal
