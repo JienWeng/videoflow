@@ -61,7 +61,12 @@ async def process_job(job_id: str) -> None:
         event_bus.publish({"job_id": job.id, "status": "running"})
         _set_stage(session, job, "generating")
 
-        provider = AtlasCloudVideoProvider()
+        if job.provider == "openrouter":
+            from app.providers.openrouter_video import OpenRouterVideoProvider
+
+            provider = OpenRouterVideoProvider()
+        else:
+            provider = AtlasCloudVideoProvider()
         try:
             result = await poll_until_terminal(
                 provider, job.provider_job_id,
@@ -80,7 +85,12 @@ async def process_job(job_id: str) -> None:
         out_dir = settings.outputs_dir / (job.scene_id or "misc")
         video_path = out_dir / f"{job.id}.mp4"
         try:
-            await media.download(result.output_urls[0], video_path)
+            if job.provider == "openrouter":
+                content, _ = await provider.download_output(job.provider_job_id, 0)
+                video_path.parent.mkdir(parents=True, exist_ok=True)
+                video_path.write_bytes(content)
+            else:
+                await media.download(result.output_urls[0], video_path)
         except Exception as exc:
             _fail(session, job, f"download failed: {exc}")
             return

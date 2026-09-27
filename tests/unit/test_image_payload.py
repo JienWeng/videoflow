@@ -1,4 +1,4 @@
-"""Unit test locking the ERNIE text-to-image payload to the AtlasCloud reference."""
+"""Unit tests for the GPT Image 2 AtlasCloud payload."""
 
 from __future__ import annotations
 
@@ -20,24 +20,20 @@ def provider(monkeypatch):
 async def test_payload_matches_atlascloud_reference(provider):
     payload = await provider.build_payload(prompt="cinematic night city", n=2, size="1024x1024")
     assert payload == {
-        "model": "baidu/ERNIE-Image-Turbo/text-to-image",
+        "model": "openai/gpt-image-2/text-to-image",
         "prompt": "cinematic night city",
         "size": "1024x1024",
         "n": 2,
-        "seed": -1,
-        "use_pe": True,
-        "num_inference_steps": 8,
-        "guidance_scale": 1,
-        # Sync mode on purpose: AtlasCloud's async ERNIE dispatch fails upstream
-        # ("failed to parse upstream response"), confirmed live 2026-06-10.
-        "enable_sync_mode": True,
+        "quality": "low",
+        "output_format": "jpeg",
+        "enable_sync_mode": False,
         "enable_base64_output": False,
     }
 
 
 async def test_reference_payload_targets_the_edit_model(provider):
     """分镜图 with character sheets: nano-banana-2/edit contract — prompt +
-    images[] + aspect_ratio, sync mode (live API schema, fetched 2026-06-10)."""
+    images[] + aspect_ratio, async polling."""
     payload = await provider.build_reference_payload(
         prompt="storyboard grid",
         images=["https://x/char1.png", "https://x/char2.png"],
@@ -48,7 +44,7 @@ async def test_reference_payload_targets_the_edit_model(provider):
         "prompt": "storyboard grid",
         "images": ["https://x/char1.png", "https://x/char2.png"],
         "aspect_ratio": "9:16",
-        "enable_sync_mode": True,
+        "enable_sync_mode": False,
         "enable_base64_output": False,
     }
 

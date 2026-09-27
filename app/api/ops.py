@@ -12,7 +12,14 @@ router = APIRouter(tags=["ops"])
 
 
 @router.get("/ops")
-def list_ops(limit: int = 50, session: Session = Depends(get_session)):
+def list_ops(
+    limit: int = 50,
+    project_id: str | None = None,
+    kind: str | None = None,
+    session: Session = Depends(get_session),
+):
+    if project_id:
+        return op_service.list_project_ops(session, project_id, kind=kind, limit=limit)
     return op_service.list_ops(session, limit=limit)
 
 

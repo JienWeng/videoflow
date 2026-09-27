@@ -271,7 +271,10 @@ async def generate_scene_assets(
             shot.updated_at = utcnow()
             session.add(shot)
 
-    provider = image_provider or AtlasCloudImageProvider(get_atlas_client())
+    from app.providers.registry import get_asset_resolver, get_image_provider_for_session
+    provider = image_provider or get_image_provider_for_session(
+        session, scene.project_id, atlas_client=get_atlas_client()
+    )
 
     # Style enforcement: the guide's text is appended to every prompt in code,
     # and reference sheets (style guide refs first, then the cast's) steer the
@@ -280,7 +283,7 @@ async def generate_scene_assets(
     reference_ids = collect_style_reference_ids(session, scene, style)
     reference_urls: list[str] = []
     if reference_ids and to_generate:
-        resolver = AtlasCloudUploadResolver(session, get_atlas_client())
+        resolver = get_asset_resolver(session, provider.name, atlas_client=get_atlas_client())
         reference_urls = await resolver.resolve(reference_ids)
 
     created: list[Asset] = []
@@ -301,7 +304,7 @@ async def generate_scene_assets(
         )
         asset_id = new_id("asset")
         dest = settings.assets_dir / f"{asset_id}.png"
-        await media.download(result.output_urls[0], dest)
+        dest = await media.download(result.output_urls[0], dest)
         asset = Asset(
             id=asset_id,
             project_id=scene.project_id,

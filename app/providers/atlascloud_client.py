@@ -75,8 +75,7 @@ class AtlasCloudClient:
         return pid
 
     async def generate_image(self, payload: dict) -> dict:
-        """Return the full prediction data block. With enable_sync_mode the
-        outputs are already terminal in this response — no polling needed."""
+        """Submit an image prediction and return its data block for polling."""
         body = await self._post_json("/model/generateImage", payload)
         data = body.get("data") or body
         self._prediction_id(body)  # validate an id is present

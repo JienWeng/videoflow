@@ -47,6 +47,22 @@ def summarize_result(kind: str, value: object) -> dict:
     return _SUMMARIZERS[kind](value)
 
 
+def update_op_progress(session: Session, op_id: str, stage: str) -> None:
+    """Persist a video-generation stage while the background task is running."""
+    op = session.get(Op, op_id)
+    if op is None:
+        return
+    result = dict(op.result_json or {})
+    stages = list(result.get("stages", []))
+    if stage not in stages:
+        stages.append(stage)
+    result.update(stage=stage, stages=stages)
+    op.result_json = result
+    op.updated_at = utcnow()
+    session.add(op)
+    session.commit()
+
+
 def _publish(op_id: str, kind: str, status: str, scene_id: str | None,
              output_id: str | None, error: str | None = None) -> None:
     event = {
@@ -67,6 +83,7 @@ def start_op(
     *,
     scene_id: str | None = None,
     output_id: str | None = None,
+    project_id: str | None = None,
     summarize: Callable[[object], dict] | None = None,
 ) -> Op:
     """Create a running Op row, then run `coro_factory(session)` as an asyncio
@@ -74,7 +91,7 @@ def start_op(
     call time) so test monkeypatching of `app.database.engine` takes effect."""
     from app import database
 
-    op = Op(kind=kind, scene_id=scene_id, output_id=output_id, status="running")
+    op = Op(kind=kind, scene_id=scene_id, output_id=output_id, project_id=project_id, status="running")
     with Session(database.engine) as session:
         session.add(op)
         session.commit()
@@ -101,7 +118,7 @@ def start_op(
             if row is not None:
                 row.status = status
                 row.error = error
-                row.result_json = result
+                row.result_json = {**(row.result_json or {}), **result}
                 row.updated_at = utcnow()
                 session.add(row)
                 session.commit()
@@ -122,6 +139,16 @@ def get_op(session: Session, op_id: str) -> Op:
 
 def list_ops(session: Session, limit: int = 50) -> list[Op]:
     stmt = select(Op).order_by(Op.created_at.desc()).limit(limit)
+    return list(session.exec(stmt).all())
+
+
+def list_project_ops(
+    session: Session, project_id: str, kind: str | None = None, limit: int = 20
+) -> list[Op]:
+    stmt = select(Op).where(Op.project_id == project_id)
+    if kind:
+        stmt = stmt.where(Op.kind == kind)
+    stmt = stmt.order_by(Op.created_at.desc()).limit(limit)
     return list(session.exec(stmt).all())
 
 

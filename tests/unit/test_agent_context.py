@@ -21,6 +21,7 @@ GRACE = CharacterBible(
     appearance="girl in pink dress",
     personality="cheerful",
     visual_rules=["always wears the pink dress"],
+    sample_dialogue="Let's find out together!",
 )
 ASSETS = [
     {"name": "Red Cup", "type": "prop", "description": "a shiny red cup"},
@@ -37,6 +38,7 @@ async def test_generate_shots_includes_cast_block():
     assert "Cast (use @Name to reference them)" in llm.user_prompt
     assert "Grace" in llm.user_prompt
     assert "girl in pink dress" in llm.user_prompt
+    assert "Let's find out together!" in llm.user_prompt
 
 
 async def test_generate_shots_includes_linked_assets_block():

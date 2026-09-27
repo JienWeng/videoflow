@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-AspectRatio = Literal["16:9", "9:16", "1:1"]
+AspectRatio = Literal["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
 
 # Canonical asset vocabulary — ONE source of truth shared by the upload dropdown,
 # the recogniser/planner outputs, and the library type filter. Keep this list and

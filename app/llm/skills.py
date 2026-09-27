@@ -25,12 +25,11 @@ class AgentSkill:
     max_retries: int = 3
 
 
-# Default routing. Text agents ride MiniMax (key live-verified 2026-06-10:
-# MiniMax-Text-01 and the M-series both work on this plan); the QA agent rides
-# an AtlasCloud-hosted vision model so it can actually SEE frames (the gemini
-# key in .env is empty, so gemini routing would fail at runtime).
-_P = "minimax"  # text-agent provider; flip to "openai"/"anthropic"/"gemini" anytime
-_M = None  # None -> the provider's default model from settings
+# Default routing. The named connection remains overridable per agent in the
+# Settings UI, but the story/scene/shot chain starts on the configured
+# OpenCode Go JSON-capable endpoint for more reliable continuity.
+_P = "opencode-go"
+_M = "deepseek-v4-flash"
 
 SKILLS: dict[str, AgentSkill] = {
     "asset_recogniser": AgentSkill(
@@ -40,14 +39,14 @@ SKILLS: dict[str, AgentSkill] = {
         "character_memory", PROMPTS["character_memory"], provider=_P, model=_M, temperature=0.4
     ),
     "script_agent": AgentSkill(
-        "script_agent", PROMPTS["script_agent"], provider=_P, model=_M, temperature=0.8
+        "script_agent", PROMPTS["script_agent"], provider=_P, model=_M, temperature=0.3
     ),
     "idea_agent": AgentSkill(
-        "idea_agent", PROMPTS["idea_agent"], provider=_P, model=_M, temperature=0.8
+        "idea_agent", PROMPTS["idea_agent"], provider=_P, model=_M, temperature=0.5
     ),
-    "scene_agent": AgentSkill("scene_agent", PROMPTS["scene_agent"], provider=_P, model=_M, temperature=0.6),
-    "shot_agent": AgentSkill("shot_agent", PROMPTS["shot_agent"], provider=_P, model=_M, temperature=0.5),
-    "prompt_agent": AgentSkill("prompt_agent", PROMPTS["prompt_agent"], provider=_P, model=_M, temperature=0.6),
+    "scene_agent": AgentSkill("scene_agent", PROMPTS["scene_agent"], provider=_P, model=_M, temperature=0.3),
+    "shot_agent": AgentSkill("shot_agent", PROMPTS["shot_agent"], provider=_P, model=_M, temperature=0.2),
+    "prompt_agent": AgentSkill("prompt_agent", PROMPTS["prompt_agent"], provider=_P, model=_M, temperature=0.2),
     # Vision QA: AtlasCloud OpenAI-compatible endpoint, qwen3-vl by default.
     "qa_agent": AgentSkill("qa_agent", PROMPTS["qa_agent"], provider="atlas", model=None, temperature=0.2),
     "intent_agent": AgentSkill(

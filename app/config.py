@@ -11,6 +11,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.providers.model_ids import H3_REFERENCE_TO_VIDEO
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -29,7 +31,7 @@ class Settings(BaseSettings):
     # Additional LLM providers (optional; used when a skill routes to them)
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_base_url: str | None = Field(default=None, alias="OPENAI_BASE_URL")
-    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
+    openai_model: str = Field(default="gpt-5.6-luna", alias="OPENAI_MODEL")
 
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     anthropic_model: str = Field(default="claude-sonnet-4-6", alias="ANTHROPIC_MODEL")
@@ -40,6 +42,7 @@ class Settings(BaseSettings):
         alias="GEMINI_BASE_URL",
     )
     gemini_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")
+    deepseek_model: str = Field(default="deepseek-v4-flash", alias="DEEPSEEK_MODEL")
 
     # AtlasCloud (image + video gateway)
     atlascloud_api_key: str = Field(default="", alias="ATLASCLOUD_API_KEY")
@@ -47,14 +50,20 @@ class Settings(BaseSettings):
         default="https://api.atlascloud.ai/api/v1", alias="ATLASCLOUD_BASE_URL"
     )
     atlas_image_model: str = Field(
-        default="baidu/ERNIE-Image-Turbo/text-to-image", alias="ATLAS_IMAGE_MODEL"
+        default="openai/gpt-image-2/text-to-image", alias="ATLAS_IMAGE_MODEL"
     )
     atlas_video_model: str = Field(
-        default="kwaivgi/kling-video-o3-pro/reference-to-video",
+        default=H3_REFERENCE_TO_VIDEO,
         alias="ATLAS_VIDEO_MODEL",
     )
-    # Max reference images for the video model — live-verified Kling o3-pro
-    # limit (ret:1201 "max number is 7" above 7, despite docs claiming 10).
+    atlas_image_quality: str = Field(default="low", alias="ATLAS_IMAGE_QUALITY")
+    atlas_video_resolution: str = Field(default="768P", alias="ATLAS_VIDEO_RESOLUTION")
+    atlas_video_prompt_expansion: bool = Field(
+        default=False, alias="ATLAS_VIDEO_PROMPT_EXPANSION"
+    )
+    # Application cap for uploaded video references. AtlasCloud's H3
+    # Reference-to-Video docs do not publish an upper limit; keep this tunable
+    # default to bound upload and generation cost.
     atlas_video_max_refs: int = Field(default=7, alias="ATLAS_VIDEO_MAX_REFS")
     # Reference-image generation (分镜图 with character sheets as inputs).
     atlas_image_ref_model: str = Field(
@@ -68,8 +77,21 @@ class Settings(BaseSettings):
         default="qwen/qwen3-vl-30b-a3b-instruct", alias="ATLAS_VL_MODEL"
     )
 
+    openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
+    openrouter_base_url: str = Field(
+        default="https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL"
+    )
+    openrouter_image_model: str = Field(
+        default="openai/gpt-image-2", alias="OPENROUTER_IMAGE_MODEL"
+    )
+    openrouter_video_model: str = Field(
+        default="google/veo-3.1-lite", alias="OPENROUTER_VIDEO_MODEL"
+    )
+
     # Default video aspect ratio (16:9 | 9:16 | 1:1). Configurable per deployment.
     default_aspect_ratio: str = Field(default="9:16", alias="DEFAULT_ASPECT_RATIO")
+    default_video_provider: str = Field(default="atlascloud", alias="DEFAULT_VIDEO_PROVIDER")
+    default_image_provider: str = Field(default="atlascloud", alias="DEFAULT_IMAGE_PROVIDER")
 
     # Storage / DB
     storage_root: Path = Field(default=Path("./storage"), alias="STORAGE_ROOT")

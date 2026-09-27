@@ -44,6 +44,18 @@ class TestVoiceLine:
         line = voice_line([bible("Grace", [], ["warm voice"]), bible("Alan", [])])
         assert line == "Voices: @Grace — warm voice"
 
+    def test_sample_dialogue_is_included(self):
+        character = CharacterBible(
+            character_id="char_maya",
+            name="Maya",
+            appearance="",
+            personality="curious",
+            sample_dialogue="What is that?",
+        )
+        assert voice_line([character]) == (
+            "Voices: @Maya; sample dialogue: 「What is that?」"
+        )
+
     def test_empty_when_nobody_has_rules(self):
         assert voice_line([bible("Grace", []), bible("Alan", [])]) == ""
         assert voice_line([]) == ""

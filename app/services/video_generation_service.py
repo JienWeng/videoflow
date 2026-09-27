@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from sqlmodel import Session
 
 from app.schemas import ConversationBrief
@@ -53,6 +55,7 @@ async def generate_video(
     language: str = "English",
     conversation_mode: str = "dialogue",
     instruction: str = "",
+    on_stage: Callable[[str], None] | None = None,
 ) -> dict:
     """Run the user-facing video pipeline and return inspectable IDs.
 
@@ -61,14 +64,28 @@ async def generate_video(
     """
     _apply_style_preset(session, style)
     stages: list[str] = []
+    existing_style = style_service.get_style(session)
+    generation_brief = {
+        "language": language,
+        "instruction": instruction.strip(),
+        "effective_style": style_service.style_context(existing_style),
+        "aspect_ratio": aspect_ratio,
+        "conversation_mode": "dialogue",
+    }
+
+    def complete(stage: str) -> None:
+        stages.append(stage)
+        if on_stage:
+            on_stage(stage)
 
     script, _draft = await scene_service.create_script(
         session,
         idea=idea,
         target_duration=target_duration,
         scene_count=scene_count,
+        generation_brief=generation_brief,
     )
-    stages.append("story")
+    complete("story")
 
     scenes = [s for s in scene_service.list_scenes(session) if s.script_id == script.id]
     for scene in scenes:
@@ -82,7 +99,8 @@ async def generate_video(
         session.add(scene)
         session.commit()
         await scene_service.create_shots(session, scene.id, auto_assets=True)
-    stages.extend(["scenes", "shots"])
+    complete("scenes")
+    complete("shots")
 
     if conversation_mode == "dialogue":
         await refine_service.convert_scenes_to_conversational(
@@ -98,14 +116,18 @@ async def generate_video(
                 allow_narration=False,
             ),
         )
-        stages.append("dialogue")
+        complete("dialogue")
 
     render_job_ids: list[str] = []
     for scene in scenes:
         await storyboard_service.generate_storyboard_for_scene(session, scene.id)
-        job = await render_service.render_scene(session, scene.id)
+    complete("visuals")
+    for scene in scenes:
+        job = await render_service.render_scene(
+            session, scene.id, generation_brief=generation_brief
+        )
         render_job_ids.append(job.id)
-    stages.extend(["visuals", "render"])
+    complete("render")
 
     return {
         "project_id": project_service.active_project_id(session),

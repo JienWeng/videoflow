@@ -11,6 +11,7 @@ from app.models import (
     Asset,
     Character,
     Project,
+    Op,
     RenderJob,
     RenderOutput,
     Scene,
@@ -94,6 +95,18 @@ def test_activate_is_exclusive(session):
 
     with pytest.raises(NotFoundError):
         project_service.activate(session, "project_nope")
+
+
+def test_activate_cannot_switch_projects_during_video_generation(session):
+    active = project_service.get_active(session)
+    other = project_service.create_project(session, name="B")
+    session.add(Op(kind="video_generation", status="running", project_id=active.id))
+    session.commit()
+
+    with pytest.raises(ValidationFailedError, match="video generation is still running"):
+        project_service.activate(session, other.id)
+
+    assert project_service.get_active(session).id == active.id
 
 
 def test_delete_active_project_rejected(session):

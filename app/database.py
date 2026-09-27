@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import get_settings
+from app.providers.model_ids import H3_REFERENCE_TO_VIDEO, H3_TEXT_TO_VIDEO
 
 _settings = get_settings()
 
@@ -14,7 +16,10 @@ _settings = get_settings()
 engine = create_engine(
     _settings.database_url,
     echo=False,
-    connect_args={"check_same_thread": False},
+    # The API, worker, and local dev browser can touch SQLite concurrently.
+    # Wait briefly for the writer instead of surfacing a transient
+    # `database is locked` as a graph/network error.
+    connect_args={"check_same_thread": False, "timeout": 30.0},
 )
 
 
@@ -54,6 +59,10 @@ def _migrate(target_engine) -> None:
         if cols and "script_id" not in cols:
             conn.exec_driver_sql("ALTER TABLE scenes ADD COLUMN script_id VARCHAR")
             conn.commit()
+        cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(scenes)")]
+        if cols and "scene_order" not in cols:
+            conn.exec_driver_sql("ALTER TABLE scenes ADD COLUMN scene_order INTEGER")
+            conn.commit()
         # Settings: per-project agent overrides (NULL = global/default override).
         cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(agent_settings)")]
         if cols and "project_id" not in cols:
@@ -70,6 +79,10 @@ def _migrate(target_engine) -> None:
         if cols and "stage" not in cols:
             conn.exec_driver_sql("ALTER TABLE render_jobs ADD COLUMN stage VARCHAR")
             conn.commit()
+        cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(ops)")]
+        if cols and "project_id" not in cols:
+            conn.exec_driver_sql("ALTER TABLE ops ADD COLUMN project_id VARCHAR")
+            conn.commit()
         # Projects: scope columns on every project-owned table. Backfilling
         # NULLs into the default project happens lazily in
         # project_service.get_active (adopt_orphans).
@@ -82,6 +95,23 @@ def _migrate(target_engine) -> None:
                     f"ALTER TABLE {table} ADD COLUMN project_id VARCHAR"
                 )
                 conn.commit()
+        cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(characters)")]
+        if cols and "sample_dialogue" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE characters ADD COLUMN sample_dialogue VARCHAR NOT NULL DEFAULT ''"
+            )
+            conn.commit()
+        # The former AtlasCloud default was text-to-video, which ignored the
+        # generated storyboard and character references. Move only rows that
+        # contain that exact former default; preserve custom model selections.
+        cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(app_settings)")]
+        if cols and {"key", "value"}.issubset(cols):
+            conn.exec_driver_sql(
+                "UPDATE app_settings SET value = ? "
+                "WHERE key = 'video_model' AND value = ?",
+                (json.dumps(H3_REFERENCE_TO_VIDEO), json.dumps(H3_TEXT_TO_VIDEO)),
+            )
+            conn.commit()
 
 
 def get_session() -> Iterator[Session]:

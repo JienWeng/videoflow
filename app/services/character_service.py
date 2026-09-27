@@ -60,6 +60,7 @@ def update_character(
     personality: str | None = None,
     visual_rules: list[str] | None = None,
     voice_rules: list[str] | None = None,
+    sample_dialogue: str | None = None,
 ) -> Character:
     """Patch the editable identity fields of a character.
 
@@ -83,6 +84,8 @@ def update_character(
         char.visual_rules_json = list(visual_rules)
     if voice_rules is not None:
         char.voice_rules_json = list(voice_rules)
+    if sample_dialogue is not None:
+        char.sample_dialogue = sample_dialogue.strip()
 
     char.updated_at = utcnow()
     session.add(char)
@@ -144,6 +147,7 @@ async def generate_bible(session: Session, character_id: str, notes: str) -> Cha
     char.personality = bible.personality
     char.visual_rules_json = bible.visual_rules
     char.voice_rules_json = bible.voice_rules
+    char.sample_dialogue = bible.sample_dialogue
     char.reference_asset_ids_json = bible.reference_asset_ids or ref_ids
     char.updated_at = utcnow()
     session.add(char)
@@ -183,13 +187,16 @@ async def generate_reference_sheets(
     settings = get_settings()
     char = get_character(session, character_id)
     angles = angles or DEFAULT_ANGLES
-    provider = image_provider or AtlasCloudImageProvider(get_atlas_client())
+    from app.providers.registry import get_asset_resolver, get_image_provider_for_session
+    provider = image_provider or get_image_provider_for_session(
+        session, char.project_id, atlas_client=get_atlas_client()
+    )
 
     style = style_service.get_style(session)
     style_ref_ids = list(style.reference_asset_ids_json or []) if style else []
     reference_urls: list[str] = []
     if style_ref_ids:
-        resolver = AtlasCloudUploadResolver(session, get_atlas_client())
+        resolver = get_asset_resolver(session, provider.name, atlas_client=get_atlas_client())
         reference_urls = await resolver.resolve(style_ref_ids)
 
     dest_dir = settings.characters_dir / char.id
@@ -214,7 +221,7 @@ async def generate_reference_sheets(
             continue
         asset_id = new_id("asset")
         dest = dest_dir / f"{asset_id}.png"
-        await media.download(result.output_urls[0], dest)
+        dest = await media.download(result.output_urls[0], dest)
         asset = Asset(
             id=asset_id,
             project_id=char.project_id,

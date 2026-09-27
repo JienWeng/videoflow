@@ -432,7 +432,7 @@
     </header>
 
     <!-- Main -->
-    <div class="flex min-h-0 flex-1">
+    <div class="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
       <!-- Left: player + transport + timeline -->
       <div class="flex min-w-0 flex-1 flex-col gap-3 p-4">
         <div class="relative mx-auto min-h-0 w-full max-w-3xl flex-1">
@@ -538,7 +538,7 @@
       </div>
 
       <!-- Right: inspector -->
-      <aside class="w-80 shrink-0 border-l border-border">
+      <aside class="w-full shrink-0 border-t border-border md:w-80 md:border-l md:border-t-0">
         <Inspector
           {selection}
           {segments}

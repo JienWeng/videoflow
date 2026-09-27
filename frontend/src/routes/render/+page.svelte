@@ -23,6 +23,7 @@
 
   let jobs: any[] = $state([]);
   let scenes: any[] = $state([]);
+  let scripts: any[] = $state([]);
   let shots: any[] = $state([]);
   let outputs: Record<string, any[]> = $state({});
   let error = $state('');
@@ -39,6 +40,7 @@
 
   // Master–detail selection: which scene's render activity is shown on the right.
   let selectedId: string | null = $state(null);
+  let groupSort = $state<'latest' | 'story'>('latest');
 
   // Ticks once a second so elapsed timers on active renders stay live.
   let now = $state(Date.now());
@@ -108,7 +110,9 @@
   }
 
   async function refresh() {
-    [jobs, scenes] = await Promise.all([get('/render-jobs'), get('/scenes')]);
+    [jobs, scenes, scripts] = await Promise.all([
+      get('/render-jobs'), get('/scenes'), get('/scripts')
+    ]);
     const done = jobs.filter((j) => j.status === 'succeeded');
     for (const j of done) {
       if (!outputs[j.id]) {
@@ -185,10 +189,29 @@
     succeeded: number;
     failed: number;
     latest: string; // newest created_at, for ordering
+    storyTime: number;
+    storyOrder: number;
   };
 
   let groups: SceneGroup[] = $derived.by(() => {
     const titles = new Map(scenes.map((s: any) => [s.id, s.title]));
+    const storyPositions = new Map<string, { time: number; order: number }>();
+    const sortedScripts = scripts.slice().sort((a, b) =>
+      (a.created_at ?? '').localeCompare(b.created_at ?? '')
+    );
+    for (let scriptIndex = 0; scriptIndex < sortedScripts.length; scriptIndex += 1) {
+      const script = sortedScripts[scriptIndex];
+      const scriptScenes = scenes
+        .filter((scene: any) => scene.script_id === script.id)
+        .sort((a: any, b: any) => (a.scene_order ?? Number.MAX_SAFE_INTEGER) - (b.scene_order ?? Number.MAX_SAFE_INTEGER) ||
+          (a.created_at ?? '').localeCompare(b.created_at ?? ''));
+      for (const [sceneIndex, scene] of scriptScenes.entries()) {
+        storyPositions.set(scene.id, {
+          time: new Date(script.created_at ?? scene.created_at ?? 0).getTime(),
+          order: scriptIndex * 10000 + (scene.scene_order ?? sceneIndex)
+        });
+      }
+    }
     const bySceneId = new Map<string, any[]>();
     for (const j of jobs) {
       const key = j.scene_id && titles.has(j.scene_id) ? j.scene_id : '__other__';
@@ -205,11 +228,20 @@
         active: list.filter((j) => isActive(j.status)),
         succeeded: list.filter((j) => j.status === 'succeeded').length,
         failed: list.filter((j) => j.status === 'failed').length,
-        latest: list[0]?.created_at ?? ''
+        latest: list[0]?.created_at ?? '',
+        storyTime: storyPositions.get(key)?.time ?? new Date(scenes.find((s: any) => s.id === key)?.created_at ?? 0).getTime(),
+        storyOrder: storyPositions.get(key)?.order ?? 0
       });
     }
-    // Newest activity first; the fallback bucket sorts by its own newest job too.
-    out.sort((a, b) => b.latest.localeCompare(a.latest));
+    if (groupSort === 'latest') {
+      out.sort((a, b) => b.latest.localeCompare(a.latest));
+    } else {
+      out.sort((a, b) =>
+        (a.sceneId === '__other__' ? Number.MAX_SAFE_INTEGER : a.storyTime) -
+          (b.sceneId === '__other__' ? Number.MAX_SAFE_INTEGER : b.storyTime) ||
+        a.storyOrder - b.storyOrder || a.title.localeCompare(b.title)
+      );
+    }
     return out;
   });
 
@@ -357,6 +389,16 @@
               </form>
             </CollapsibleContent>
           </Collapsible>
+          <div class="mt-2 flex items-center gap-1" role="group" aria-label="Render scene order">
+            <span class="mr-1 text-[11px] text-muted-foreground">Order:</span>
+            {#each [{ value: 'latest', label: 'Latest' }, { value: 'story', label: 'Story order' }] as option}
+              <button type="button" aria-pressed={groupSort === option.value}
+                class="rounded-full px-2 py-0.5 text-[11px] transition-colors {groupSort === option.value ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-accent'}"
+                onclick={() => (groupSort = option.value as 'latest' | 'story')}>
+                {option.label}
+              </button>
+            {/each}
+          </div>
         </div>
 
         <!-- The list itself -->

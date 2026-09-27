@@ -123,6 +123,7 @@ async def generate_storyboard(
     aspect_ratio: str = "1:1",
     style: StyleGuide | None = None,
     image_provider: AtlasCloudImageProvider | None = None,
+    generation_brief: dict | None = None,
 ) -> Asset:
     """Generate the sheet, download it, and persist a 'storyboard' Asset.
 
@@ -133,12 +134,18 @@ async def generate_storyboard(
     settings.ensure_dirs()
     # Pass the session so image-gen params (steps/guidance/seed/size, model id)
     # are read through the settings resolver — defaults unchanged.
-    provider = image_provider or AtlasCloudImageProvider(
-        get_atlas_client(), session=session
-    )
+    if image_provider is not None:
+        provider = image_provider
+    else:
+        from app.providers.registry import get_image_provider_for_session
+        provider = get_image_provider_for_session(
+            session, project_service.active_project_id(session), atlas_client=get_atlas_client()
+        )
     prompt = build_storyboard_prompt(
         beats=beats, character_lines=character_lines, setting=setting, lighting=lighting
     )
+    if generation_brief:
+        prompt += "\n\nGeneration brief to follow: " + str(generation_brief)
     # Deterministic style enforcement — the project style guide text is part
     # of the prompt regardless of what the agents wrote.
     prompt = style_service.apply_style(prompt, style)
@@ -163,7 +170,7 @@ async def generate_storyboard(
 
     asset_id = new_id("asset")
     dest = settings.assets_dir / f"{asset_id}.png"
-    await media.download(result.output_urls[0], dest)
+    dest = await media.download(result.output_urls[0], dest)
     asset = Asset(
         id=asset_id,
         # Stamped at creation so the row is never committed project-less (a
@@ -235,10 +242,18 @@ async def generate_storyboard_for_scene(
     )
     reference_ids.extend(prop_ids)
 
-    resolver = AtlasCloudUploadResolver(session, get_atlas_client())
+    from app.providers.registry import get_asset_resolver
+    provider_name = image_provider.name if image_provider is not None else None
+    if provider_name is None:
+        from app.providers.registry import get_image_provider_for_session
+        provider_name = get_image_provider_for_session(
+            session, scene.project_id, atlas_client=get_atlas_client()
+        ).name
+    resolver = get_asset_resolver(session, provider_name, atlas_client=get_atlas_client())
     reference_urls = await resolver.resolve(reference_ids) if reference_ids else []
 
     scene_json = scene.scene_json or {}
+    context = scene_service.story_context(session, scene) or {}
     asset = await generate_storyboard(
         session,
         beats=[s.prompt for s in shots],
@@ -250,6 +265,7 @@ async def generate_storyboard_for_scene(
         aspect_ratio=scene.aspect_ratio or "1:1",
         style=style,
         image_provider=image_provider,
+        generation_brief=context.get("generation_brief"),
     )
     asset.name = f"分镜图 {scene.title}"
     asset.project_id = scene.project_id

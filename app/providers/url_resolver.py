@@ -8,6 +8,9 @@ renders never re-upload. Swappable for Base64/Bucket strategies via the protocol
 
 from __future__ import annotations
 
+import base64
+import mimetypes
+from pathlib import Path
 from typing import Protocol
 
 from sqlmodel import Session
@@ -52,3 +55,27 @@ class AtlasCloudUploadResolver:
         for aid in asset_ids:
             urls.append(await self.resolve_one(aid))
         return urls
+
+
+class OpenRouterAssetResolver:
+    """Resolve local image assets to inline data URLs for OpenRouter requests."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    async def resolve_one(self, asset_id: str) -> str:
+        asset = self._session.get(Asset, asset_id)
+        if asset is None:
+            raise NotFoundError(f"asset {asset_id} not found")
+        if not asset.file_path:
+            raise ProviderError(f"asset {asset_id} has no file")
+        path = Path(asset.file_path)
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise ProviderError(f"could not read asset {asset_id}: {exc}") from exc
+        mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return f"data:{mime_type};base64,{base64.b64encode(content).decode('ascii')}"
+
+    async def resolve(self, asset_ids: list[str]) -> list[str]:
+        return [await self.resolve_one(asset_id) for asset_id in asset_ids]

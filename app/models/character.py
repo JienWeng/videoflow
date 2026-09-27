@@ -21,6 +21,7 @@ class Character(SQLModel, table=True):
     personality: str = ""
     visual_rules_json: list = Field(default_factory=list, sa_column=Column(JSON))
     voice_rules_json: list = Field(default_factory=list, sa_column=Column(JSON))
+    sample_dialogue: str = ""
     reference_asset_ids_json: list = Field(default_factory=list, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

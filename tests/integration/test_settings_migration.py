@@ -9,9 +9,12 @@ The migration must be idempotent (safe to run on an already-migrated DB).
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import create_engine, inspect, text
 
 from app.database import _migrate
+from app.providers.model_ids import H3_REFERENCE_TO_VIDEO, H3_TEXT_TO_VIDEO
 
 
 def _legacy_engine(tmp_path):
@@ -39,6 +42,8 @@ def _legacy_engine(tmp_path):
         # The migration also touches render_outputs/scenes; create minimal ones.
         conn.execute(text("CREATE TABLE render_outputs (id VARCHAR PRIMARY KEY)"))
         conn.execute(text("CREATE TABLE scenes (id VARCHAR PRIMARY KEY)"))
+        conn.execute(text("CREATE TABLE ops (id VARCHAR PRIMARY KEY, kind VARCHAR)"))
+        conn.execute(text("CREATE TABLE characters (id VARCHAR PRIMARY KEY, name VARCHAR)"))
     return engine
 
 
@@ -61,6 +66,27 @@ def test_migrate_adds_render_progress_and_stage(tmp_path):
     assert "stage" in cols
 
 
+def test_migrate_adds_operation_project_scope(tmp_path):
+    engine = _legacy_engine(tmp_path)
+    assert "project_id" not in _cols(engine, "ops")
+    _migrate(engine)
+    assert "project_id" in _cols(engine, "ops")
+
+
+def test_migrate_adds_character_sample_dialogue(tmp_path):
+    engine = _legacy_engine(tmp_path)
+    assert "sample_dialogue" not in _cols(engine, "characters")
+    _migrate(engine)
+    assert "sample_dialogue" in _cols(engine, "characters")
+
+
+def test_migrate_adds_scene_order(tmp_path):
+    engine = _legacy_engine(tmp_path)
+    assert "scene_order" not in _cols(engine, "scenes")
+    _migrate(engine)
+    assert "scene_order" in _cols(engine, "scenes")
+
+
 def test_migrate_is_idempotent(tmp_path):
     engine = _legacy_engine(tmp_path)
     _migrate(engine)
@@ -68,3 +94,40 @@ def test_migrate_is_idempotent(tmp_path):
     _migrate(engine)
     cols = _cols(engine, "render_jobs")
     assert "progress" in cols and "stage" in cols
+
+
+def test_migrate_moves_only_the_former_video_default_to_reference_model(tmp_path):
+    engine = _legacy_engine(tmp_path)
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE app_settings (id VARCHAR PRIMARY KEY, key VARCHAR, value JSON)"
+        )
+        conn.execute(
+            text("INSERT INTO app_settings (id, key, value) VALUES (:id, :key, :value)"),
+            {
+                "id": "old-default",
+                "key": "video_model",
+                "value": json.dumps(H3_TEXT_TO_VIDEO),
+            },
+        )
+        conn.execute(
+            text("INSERT INTO app_settings (id, key, value) VALUES (:id, :key, :value)"),
+            {
+                "id": "custom-model",
+                "key": "video_model",
+                "value": json.dumps("custom/video-model"),
+            },
+        )
+
+    _migrate(engine)
+    _migrate(engine)
+
+    with engine.connect() as conn:
+        models = {
+            row.id: json.loads(row.value)
+            for row in conn.execute(text("SELECT id, value FROM app_settings"))
+        }
+    assert models == {
+        "old-default": H3_REFERENCE_TO_VIDEO,
+        "custom-model": "custom/video-model",
+    }

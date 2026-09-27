@@ -104,6 +104,8 @@ class AppSettingsBody(BaseModel):
     """Partial upsert of app defaults — only supplied (non-null) keys change."""
 
     default_aspect_ratio: str | None = None
+    default_video_provider: Literal["atlascloud", "openrouter"] | None = None
+    default_image_provider: Literal["atlascloud", "openrouter"] | None = None
     default_scene_duration: float | None = None
     caption_style: str | None = None
     caption_language: str | None = None
@@ -113,7 +115,7 @@ class AppSettingsBody(BaseModel):
     ref_image_model: str | None = None
     video_model: str | None = None
     vl_model: str | None = None
-    max_video_refs: int | None = None
+    max_video_refs: int | None = Field(default=None, ge=1)
     render_negatives: list[str] | None = None
 
 

@@ -109,11 +109,15 @@ def voice_line(character_bibles: list[CharacterBible]) -> str:
     rules are skipped; '' when nobody has rules. Shared by the prompt-agent
     path and render_service so the same character sounds identical in every
     render instead of Kling picking a random voice."""
-    parts = [
-        f"@{bible.name} — {', '.join(rule.strip() for rule in rules)}"
-        for bible in character_bibles
-        if (rules := [r for r in bible.voice_rules if r.strip()])
-    ]
+    parts = []
+    for bible in character_bibles:
+        rules = [rule.strip() for rule in bible.voice_rules if rule.strip()]
+        if not rules and not bible.sample_dialogue.strip():
+            continue
+        direction = f"@{bible.name} — {', '.join(rules)}" if rules else f"@{bible.name}"
+        if bible.sample_dialogue.strip():
+            direction += f"; sample dialogue: 「{bible.sample_dialogue.strip()}」"
+        parts.append(direction)
     return f"Voices: {'; '.join(parts)}" if parts else ""
 
 

@@ -26,6 +26,7 @@ class UpdateCharacter(BaseModel):
     personality: str | None = None
     visual_rules: list[str] | None = None
     voice_rules: list[str] | None = None
+    sample_dialogue: str | None = None
 
 
 class BibleRequest(BaseModel):
@@ -68,6 +69,7 @@ def update_character(
         personality=body.personality,
         visual_rules=body.visual_rules,
         voice_rules=body.voice_rules,
+        sample_dialogue=body.sample_dialogue,
     )
 
 

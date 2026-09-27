@@ -17,6 +17,8 @@ from app.models.base import new_id, utcnow
 from app.schemas import CharacterBible, IdeaOptions, SceneSpec, ScriptDraft, ShotSpec
 from app.services import project_service, style_service
 from app.services.dialogue import has_dialogue
+from app.services.continuity_service import context_for_scene
+from app.services.visual_dependency_service import build_shot_dependencies
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +112,7 @@ def character_to_bible(char: Character) -> CharacterBible:
         personality=char.personality,
         visual_rules=list(char.visual_rules_json or []),
         voice_rules=list(char.voice_rules_json or []),
+        sample_dialogue=char.sample_dialogue,
         reference_asset_ids=list(char.reference_asset_ids_json or []),
     )
 
@@ -143,6 +146,7 @@ async def create_script(
     idea: str,
     target_duration: int | None = None,
     scene_count: int | None = None,
+    generation_brief: dict | None = None,
 ) -> tuple[Script, ScriptDraft]:
     """Generate a script, persist it as a Script row, and persist each scene
     stub as a Scene row linked back via script_id.
@@ -154,6 +158,7 @@ async def create_script(
         idea=idea,
         target_duration=target_duration,
         scene_count=scene_count,
+        generation_brief=generation_brief,
         style=style_service.style_context(style_service.get_style(session)),
         # Full character catalog so the agent casts existing characters by
         # their EXACT names (auto_link_scene later tags + links the mentions)
@@ -168,14 +173,15 @@ async def create_script(
         project_id=pid,
         title=draft.title,
         summary=draft.summary,
-        draft_json=draft.model_dump(),
+        draft_json={**draft.model_dump(), **({"generation_brief": generation_brief} if generation_brief else {})},
     )
     session.add(script)
-    for s in draft.scenes:
+    for scene_order, s in enumerate(draft.scenes):
         scene = Scene(
             id=new_id("scene"),
             project_id=pid,
             script_id=script.id,
+            scene_order=scene_order,
             title=s.title,
             summary=s.summary,
             duration=s.suggested_duration,
@@ -206,6 +212,9 @@ def story_context(session: Session, scene: Scene) -> dict | None:
         conversation = (script.draft_json or {}).get("conversation_profile")
         if conversation:
             parts["conversation_profile"] = conversation
+        brief = (script.draft_json or {}).get("generation_brief")
+        if brief:
+            parts["generation_brief"] = brief
         siblings = [
             s for s in list_scenes(session)
             if s.script_id == scene.script_id and s.id != scene.id
@@ -215,6 +224,26 @@ def story_context(session: Session, scene: Scene) -> dict | None:
     if siblings:
         parts["other_scenes"] = [
             {"title": s.title, "summary": (s.summary or "")[:200]} for s in siblings[:12]
+        ]
+    pid = scene.project_id or project_service.active_project_id(session)
+    characters = [
+        {"name": c.name, "appearance": c.appearance or ""}
+        for c in session.exec(select(Character).where(Character.project_id == pid)).all()
+    ]
+    assets = [
+        {"name": a.name, "description": a.description or ""}
+        for a in session.exec(select(Asset).where(Asset.project_id == pid)).all()
+    ]
+    continuity = context_for_scene(
+        story=" ".join([scene.title, scene.summary, parts.get("story", {}).get("summary", "")]),
+        scenes=[{"id": s.id, "title": s.title, "summary": s.summary} for s in siblings],
+        characters=characters,
+        assets=assets,
+    )
+    if continuity:
+        parts["continuity"] = [
+            {"id": item.id, "kind": item.kind, "text": item.text}
+            for item in continuity
         ]
     return parts or None
 
@@ -446,6 +475,18 @@ async def create_shots(
         )
         session.add(row)
         rows.append(row)
+    dependencies = build_shot_dependencies(
+        [{"id": row.id, "depends_on": row.shot_json.get("depends_on", [])} for row in rows]
+    )
+    by_id = {item.shot_id: item for item in dependencies}
+    for row in rows:
+        dependency = by_id[row.id]
+        row.shot_json = {
+            **(row.shot_json or {}),
+            "depends_on": list(dependency.depends_on),
+            "dependency_layer": dependency.layer,
+        }
+        session.add(row)
     session.commit()
     await _ensure_shot_dialogue(session, scene, rows)
     _auto_link(session, scene.id)

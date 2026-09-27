@@ -4,8 +4,9 @@
   let {
     status = 'running',
     stages = [],
-    error = ''
-  }: { status?: string; stages?: string[]; error?: string } = $props();
+    error = '',
+    onopen
+  }: { status?: string; stages?: string[]; error?: string; onopen?: () => void } = $props();
 
   const labels: Stage[] = [
     { key: 'story', label: 'Story' },
@@ -13,7 +14,7 @@
     { key: 'shots', label: 'Shots' },
     { key: 'dialogue', label: 'Dialogue' },
     { key: 'visuals', label: 'Visuals' },
-    { key: 'render', label: 'Render' }
+    { key: 'render', label: 'Submit render jobs' }
   ];
 
   const completed = $derived(new Set(stages));
@@ -25,13 +26,17 @@
 <div class="rounded-xl border border-border bg-card p-5 shadow-sm">
   <div class="mb-4 flex items-center justify-between gap-3">
     <div>
-      <h2 class="font-semibold">Creating your video</h2>
+      <h2 class="font-semibold">{status === 'rendering' ? 'Rendering your video' : status === 'completed' ? 'Video complete' : 'Creating your video'}</h2>
       <p class="text-sm text-muted-foreground">
         VideoFlow is handling the scenes, dialogue, visuals, and render.
       </p>
     </div>
     {#if status === 'running'}
-      <span class="text-xs text-muted-foreground">Working…</span>
+      <span class="text-xs text-muted-foreground">Planning and submitting…</span>
+    {:else if status === 'rendering'}
+      <span class="text-xs text-muted-foreground">Rendering…</span>
+    {:else if status === 'completed'}
+      <span class="text-xs text-emerald-700">Complete</span>
     {:else if status === 'failed'}
       <span class="text-xs text-destructive">Needs attention</span>
     {/if}
@@ -53,9 +58,12 @@
 
   {#if error}
     <div class="mt-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
-      <p class="font-medium text-destructive">Generation stopped</p>
+      <p class="font-medium text-destructive">{status === 'running' || status === 'rendering' ? 'Connection interrupted' : 'Generation stopped'}</p>
       <p class="mt-1 break-words text-muted-foreground">{error}</p>
-      <p class="mt-2 text-xs text-muted-foreground">Your completed work is available in the advanced workspace.</p>
+      {#if status === 'failed'}
+        <p class="mt-2 text-xs text-muted-foreground">Your completed work is available in the advanced workspace.</p>
+        {#if onopen}<button type="button" class="mt-2 underline underline-offset-2" onclick={onopen}>Open existing scenes</button>{/if}
+      {/if}
     </div>
   {/if}
 </div>

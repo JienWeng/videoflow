@@ -13,6 +13,7 @@ async def generate_script(
     scene_count: int | None = None,
     style: dict | None = None,
     characters: list[dict] | None = None,
+    generation_brief: dict | None = None,
     client=None,
 ) -> ScriptDraft:
     parts = [
@@ -21,6 +22,8 @@ async def generate_script(
     ]
     if style:
         parts.append(as_block("Project style guide", style))
+    if generation_brief:
+        parts.append(as_block("Generation brief (follow throughout planning and rendering)", generation_brief))
     if characters:
         # Contract: the agent writes EXACT catalog names; downstream
         # auto_link_scene converts those bare names to @tags and DB links.

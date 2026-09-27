@@ -51,6 +51,7 @@ def get_active(session: Session = Depends(get_session)):
 def create_project(body: CreateProject, session: Session = Depends(get_session)):
     """Create a project AND make it active — creating a project means
     switching into it."""
+    project_service.ensure_switch_allowed(session)
     project = project_service.create_project(
         session, name=body.name, description=body.description
     )

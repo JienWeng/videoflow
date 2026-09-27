@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from sqlalchemy.pool import StaticPool
+from sqlmodel import SQLModel, Session, create_engine
 
 import pytest
 
-from app.services.op_service import summarize_result
+from app.services.op_service import list_project_ops, summarize_result, update_op_progress
+from app.models import Op
 
 
 def test_summarize_storyboard():
@@ -48,3 +51,33 @@ def test_summarize_style_ingest():
 def test_summarize_unknown_kind_rejected():
     with pytest.raises(KeyError):
         summarize_result("nope", object())
+
+
+def test_update_op_progress_persists_stage_history():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        op = Op(kind="video_generation", project_id="project_1")
+        session.add(op)
+        session.commit()
+
+        update_op_progress(session, op.id, "story")
+        update_op_progress(session, op.id, "scenes")
+
+        stored = session.get(Op, op.id)
+        assert stored.project_id == "project_1"
+        assert stored.result_json == {"stage": "scenes", "stages": ["story", "scenes"]}
+
+
+def test_list_project_ops_only_returns_requested_project():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add_all([
+            Op(kind="video_generation", project_id="project_1"),
+            Op(kind="video_generation", project_id="project_2"),
+        ])
+        session.commit()
+        rows = list_project_ops(session, "project_1", kind="video_generation")
+    assert len(rows) == 1
+    assert rows[0].project_id == "project_1"

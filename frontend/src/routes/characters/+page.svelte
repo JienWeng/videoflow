@@ -42,7 +42,8 @@
     appearance: '',
     personality: '',
     visual_rules: '', // one rule per line
-    voice_rules: '' // one rule per line
+    voice_rules: '', // one rule per line
+    sample_dialogue: ''
   });
 
   // --- delete confirm ---
@@ -113,7 +114,8 @@
       appearance: c.appearance ?? '',
       personality: c.personality ?? '',
       visual_rules: (c.visual_rules_json ?? []).join('\n'),
-      voice_rules: (c.voice_rules_json ?? []).join('\n')
+      voice_rules: (c.voice_rules_json ?? []).join('\n'),
+      sample_dialogue: c.sample_dialogue ?? ''
     };
   }
 
@@ -134,7 +136,8 @@
       voice_rules: editForm.voice_rules
         .split('\n')
         .map((s) => s.trim())
-        .filter(Boolean)
+        .filter(Boolean),
+      sample_dialogue: editForm.sample_dialogue.trim()
     };
     if (!body.name) {
       toast.error('Name cannot be empty.');
@@ -303,6 +306,11 @@
                     <Textarea id="edit-voice-{c.id}" rows={3} bind:value={editForm.voice_rules}
                       placeholder="cheerful high-pitched voice&#10;speaks quickly" />
                   </div>
+                  <div class="grid gap-1.5">
+                    <Label for="edit-sample-dialogue-{c.id}">Sample dialogue</Label>
+                    <Textarea id="edit-sample-dialogue-{c.id}" rows={2} bind:value={editForm.sample_dialogue}
+                      placeholder="A short line that sounds like this character" />
+                  </div>
                   <div class="flex gap-2 pt-1">
                     <Button size="sm" disabled={busy === `save-${c.id}`} onclick={() => saveEdit(c)}>
                       <Save class="size-3 mr-1" />{busy === `save-${c.id}` ? 'Saving…' : 'Save'}
@@ -320,6 +328,9 @@
                 {/if}
                 {#if c.personality}
                   <div class="text-xs"><span class="text-muted-foreground">Personality:</span> {c.personality}</div>
+                {/if}
+                {#if c.sample_dialogue}
+                  <div class="text-xs"><span class="text-muted-foreground">Sample dialogue:</span> 「{c.sample_dialogue}」</div>
                 {/if}
                 {#if c.visual_rules_json?.length}
                   <div class="flex flex-wrap gap-1">
@@ -353,7 +364,7 @@
                     <BookOpen class="size-3 mr-1" />{busy === `bible-${c.id}` ? 'Generating…' : 'Generate bible'}
                   </Button>
                   <Button variant="outline" size="sm" disabled={!!busy} onclick={() => generateSheets(c)}>
-                    <Images class="size-3 mr-1" />{busy === `sheets-${c.id}` ? 'Generating…' : 'Reference sheets (ERNIE)'}
+                    <Images class="size-3 mr-1" />{busy === `sheets-${c.id}` ? 'Generating…' : 'Generate reference sheets'}
                   </Button>
                   <label class="inline-flex items-center gap-1 cursor-pointer rounded-md border border-border px-2 py-1 text-xs hover:bg-accent">
                     <Upload class="size-3" />Upload reference photo

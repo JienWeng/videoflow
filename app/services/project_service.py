@@ -33,6 +33,7 @@ from app.errors import NotFoundError, ValidationFailedError
 from app.models import (
     Asset,
     Character,
+    Op,
     Project,
     RenderJob,
     RenderOutput,
@@ -117,6 +118,24 @@ def get_project(session: Session, project_id: str) -> Project:
     return project
 
 
+def ensure_switch_allowed(session: Session, target_project_id: str | None = None) -> None:
+    """Reject project switches while video generation uses active-project scope."""
+    active = get_active(session)
+    if target_project_id == active.id:
+        return
+    running_generation = session.exec(
+        select(Op).where(
+            Op.kind == "video_generation",
+            Op.status == "running",
+            (Op.project_id == active.id) | (Op.project_id.is_(None)),
+        )
+    ).first()
+    if running_generation is not None:
+        raise ValidationFailedError(
+            "cannot switch projects while video generation is still running"
+        )
+
+
 def create_project(session: Session, *, name: str, description: str = "") -> Project:
     """Create a new (inactive) project. Callers that want to switch into it
     activate it explicitly (the POST /projects endpoint does both)."""
@@ -133,6 +152,7 @@ def create_project(session: Session, *, name: str, description: str = "") -> Pro
 def activate(session: Session, project_id: str) -> Project:
     """Make *project_id* the single active project (clears all other flags)."""
     project = get_project(session, project_id)
+    ensure_switch_allowed(session, project.id)
     for other in session.exec(select(Project).where(Project.is_active)).all():
         if other.id != project.id:
             other.is_active = False

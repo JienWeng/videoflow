@@ -25,6 +25,25 @@
   // Set when the /graph probe fails so we can show a Retry card instead of a
   // blank/stale canvas (mirrors the scenes-page error pattern).
   let graphError = $state('');
+  let mobile = $state(false);
+  let chatPane: any = $state();
+  let chatHidden = $state(false);
+  let chatExpanded = $state(false);
+
+  function hideChat() {
+    chatHidden = true;
+    chatPane?.collapse();
+  }
+
+  function restoreChat() {
+    chatHidden = false;
+    chatPane?.expand();
+  }
+
+  function toggleChatSize() {
+    chatExpanded = !chatExpanded;
+    chatPane?.resize(chatExpanded ? (mobile ? 65 : 55) : (mobile ? 42 : 28));
+  }
 
   async function checkEmpty() {
     try {
@@ -53,6 +72,10 @@
   // canvas/chat-specific palette callbacks here and clears them on unmount.
   onMount(() => {
     checkEmpty();
+    const media = window.matchMedia('(max-width: 767px)');
+    const update = () => (mobile = media.matches);
+    update();
+    media.addEventListener('change', update);
     palette.setHandlers({
       onfocus: (id) => canvas?.focusNode(id),
       onnewstory: () => chat?.startNewStory()
@@ -61,12 +84,13 @@
     return () => {
       palette.clearHandlers();
       stopJobs();
+      media.removeEventListener('change', update);
     };
   });
 </script>
 
-<PaneGroup direction="horizontal" class="h-full">
-  <Pane defaultSize={72} minSize={40}>
+<PaneGroup direction={mobile ? 'vertical' : 'horizontal'} class="h-full">
+  <Pane defaultSize={mobile ? 58 : 72} minSize={mobile ? 35 : 40}>
     <div class="relative h-full">
       <EntityCanvas bind:this={canvas} onselect={(n) => (selected = n)} />
 
@@ -114,10 +138,28 @@
                 <li class="flex items-start gap-2.5">
                   <Palette class="size-4 mt-0.5 shrink-0 text-muted-foreground" />
                   <span>
+                    <a href="/settings" class="font-medium underline underline-offset-2 inline-flex items-center gap-0.5">
+                      Configure AI providers<ArrowUpRight class="size-3" />
+                    </a>
+                    <span class="block text-muted-foreground">Check credentials and model routes before generation.</span>
+                  </span>
+                </li>
+                <li class="flex items-start gap-2.5">
+                  <Palette class="size-4 mt-0.5 shrink-0 text-muted-foreground" />
+                  <span>
                     <a href="/scenes" class="font-medium underline underline-offset-2 inline-flex items-center gap-0.5">
                       Open advanced workspace<ArrowUpRight class="size-3" />
                     </a>
                     <span class="block text-muted-foreground">Edit scenes, characters, assets, and renders manually.</span>
+                  </span>
+                </li>
+                <li class="flex items-start gap-2.5">
+                  <Palette class="size-4 mt-0.5 shrink-0 text-muted-foreground" />
+                  <span>
+                    <a href="/settings" class="font-medium underline underline-offset-2 inline-flex items-center gap-0.5">
+                      Configure AI providers<ArrowUpRight class="size-3" />
+                    </a>
+                    <span class="block text-muted-foreground">Check credentials and model routes before generation.</span>
                   </span>
                 </li>
                 <li class="flex items-start gap-2.5">
@@ -136,11 +178,21 @@
       {/if}
     </div>
   </Pane>
-  <Handle withHandle />
-  <Pane defaultSize={28} minSize={20}>
+  {#if !chatHidden}<Handle withHandle />{/if}
+  <Pane
+    bind:this={chatPane}
+    collapsible
+    collapsedSize={0}
+    defaultSize={mobile ? 42 : 28}
+    minSize={mobile ? 30 : 20}
+    onCollapse={() => (chatHidden = true)}
+    onExpand={() => (chatHidden = false)}>
     <div class="h-full border-l border-border">
       <ChatPanel
         bind:this={chat}
+        expanded={chatExpanded}
+        onhide={hideChat}
+        onresize={toggleChatSize}
         onfocus={(id) => canvas?.focusNode(id)}
         onmutate={refreshAll}
         selected={selected
@@ -154,5 +206,13 @@
     </div>
   </Pane>
 </PaneGroup>
+
+{#if chatHidden}
+  <div class="fixed bottom-4 right-4 z-40">
+    <Button variant="secondary" class="shadow-lg" onclick={restoreChat}>
+      <MessageSquare class="mr-1.5 size-4" />Show chat
+    </Button>
+  </div>
+{/if}
 
 <Onboarding onpalette={() => (palette.open = true)} />

@@ -55,8 +55,9 @@ def test_list_agents_covers_all_skills(client):
     assert agents == set(skills.SKILLS)
     one = next(a for a in resp.json() if a["agent"] == "script_agent")
     assert one["label"] == "Script writer"
-    assert one["default_provider"] == "minimax"
-    assert one["provider"] == "minimax"
+    assert one["default_provider"] == "opencode-go"
+    assert one["provider"] == "opencode-go"
+    assert one["default_model"] == "deepseek-v4-flash"
 
 
 def test_providers_catalog(client):
@@ -79,7 +80,7 @@ def test_put_override_then_get_reflects_it(client):
     agents = client.get("/settings/agents").json()
     one = next(a for a in agents if a["agent"] == "script_agent")
     assert one["model"] == "MiniMax-M2"
-    assert one["default_model"] == "MiniMax-Text-01"
+    assert one["default_model"] == "deepseek-v4-flash"
 
 
 def test_put_unconfigured_provider_is_422(client):

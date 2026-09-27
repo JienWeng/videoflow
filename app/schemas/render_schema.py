@@ -1,13 +1,4 @@
-"""RenderSpec — the contract between the prompt agent and the video provider.
-
-Designed around `kwaivgi/kling-video-o3-pro/reference-to-video`:
-  - multiple NAMED reference images so the prompt can use @Name tokens that
-    resolve into the provider `images[]` array (e.g. "@Kling Lipstick", "@Image");
-  - voice/sound on by default (`sound` + `keep_original_sound`);
-  - multi-shot storyboards with the provider's exact validation rules
-    (shot_type required when multi_shot; for `customize`, per-shot durations must
-    sum to the top-level duration and each be >= 1).
-"""
+"""RenderSpec — the contract between the prompt agent and the video provider."""
 
 from __future__ import annotations
 
@@ -16,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.config import get_settings
+from app.providers.model_ids import H3_REFERENCE_TO_VIDEO
 from app.schemas.common import AspectRatio
 
 
@@ -35,11 +27,10 @@ class StoryboardShot(BaseModel):
 
 
 class RenderSpec(BaseModel):
-    """Provider-agnostic render request. Mapped to a Kling o3 payload by the
-    AtlasCloud video provider."""
+    """Provider-agnostic render request mapped to the configured video model."""
 
-    provider: Literal["atlascloud"] = "atlascloud"
-    model: str = "kwaivgi/kling-video-o3-pro/reference-to-video"
+    provider: Literal["atlascloud", "openrouter"] = "atlascloud"
+    model: str = H3_REFERENCE_TO_VIDEO
 
     scene_id: str
     shot_id: str | None = None
@@ -58,6 +49,12 @@ class RenderSpec(BaseModel):
     extra_image_asset_ids: list[str] = Field(
         default_factory=list,
         description="Additional (unnamed) reference image asset ids",
+    )
+    first_frame_asset_id: str | None = Field(
+        default=None, description="Optional exact first-frame image for image-to-video"
+    )
+    last_frame_asset_id: str | None = Field(
+        default=None, description="Optional exact last-frame image for image-to-video"
     )
     video_asset_id: str | None = Field(
         default=None, description="Optional single reference video asset id"

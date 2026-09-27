@@ -24,9 +24,11 @@ PRESETS = {
     "gemini": Preset("Google Gemini", "chat", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash", "GEMINI"),
     "atlas": Preset("AtlasCloud", "chat", "https://api.atlascloud.ai/v1", "qwen/qwen3-vl-30b-a3b-instruct", "ATLASCLOUD"),
     "openrouter": Preset("OpenRouter", "chat", "https://openrouter.ai/api/v1", "", "OPENROUTER"),
-    "deepseek": Preset("DeepSeek", "chat", "https://api.deepseek.com", "deepseek-chat", "DEEPSEEK"),
+    "deepseek": Preset("DeepSeek", "chat", "https://api.deepseek.com", "deepseek-v4-flash", "DEEPSEEK"),
     "opencode": Preset("OpenCode Zen", "responses", "https://opencode.ai/zen/v1", "", "OPENCODE"),
-    "opencode-go": Preset("OpenCode Go", "chat", "https://opencode.ai/zen/go/v1", "", "OPENCODE_GO"),
+    # DeepSeek is selected as the default model for this OpenAI-compatible
+    # connection. Users can change it in Settings without changing the route.
+    "opencode-go": Preset("OpenCode Go", "chat", "https://opencode.ai/zen/go/v1", "deepseek-v4-flash", "OPENCODE_GO"),
     "codex": Preset("ChatGPT via Codex", "codex", model="gpt-5.6-luna"),
     "custom": Preset("Custom endpoint", "chat"),
 }
