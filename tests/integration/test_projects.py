@@ -13,7 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import app.models  # noqa: F401
 from app.database import get_session
-from app.models import Asset, Character, Scene, StyleGuide
+from app.models import Asset, Character, Op, Scene, StyleGuide
 
 
 @pytest.fixture
@@ -109,6 +109,25 @@ def test_switching_projects_scopes_everything(client):
     assert by_id[default_id]["counts"]["characters"] == 1
     assert by_id[b["id"]]["counts"]["characters"] == 1
     assert by_id[b["id"]]["counts"]["scenes"] == 0
+
+
+def test_create_project_during_video_generation_does_not_leave_inactive_project(client):
+    import app.database
+
+    active = client.get("/projects/active").json()
+    with Session(app.database.engine) as session:
+        session.add(
+            Op(kind="video_generation", status="running", project_id=active["id"])
+        )
+        session.commit()
+
+    response = client.post("/projects", json={"name": "Should not persist"})
+
+    assert response.status_code == 422
+    assert "video generation is still running" in response.text
+    projects = client.get("/projects").json()
+    assert [project["id"] for project in projects] == [active["id"]]
+    assert client.get("/projects/active").json()["id"] == active["id"]
 
 
 def test_patch_and_delete_project(client):
