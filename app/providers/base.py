@@ -13,7 +13,7 @@ PollStatus = Literal["pending", "running", "succeeded", "failed"]
 
 # Raw status strings AtlasCloud may return, normalised to our PollStatus.
 _TERMINAL_OK = {"completed", "succeeded", "success"}
-_TERMINAL_FAIL = {"failed", "error", "canceled", "cancelled"}
+_TERMINAL_FAIL = {"failed", "error", "canceled", "cancelled", "expired"}
 
 
 def normalise_status(raw: str | None) -> PollStatus:

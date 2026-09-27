@@ -136,13 +136,10 @@ async def generate_storyboard(
     if image_provider is not None:
         provider = image_provider
     else:
-        from app.services import settings_service
-        selected = settings_service.resolve(session, "default_image_provider", default="atlascloud", project_id=project_service.active_project_id(session))
-        if selected == "openrouter":
-            from app.providers.openrouter_image import OpenRouterImageProvider
-            provider = OpenRouterImageProvider()
-        else:
-            provider = AtlasCloudImageProvider(get_atlas_client(), session=session)
+        from app.providers.registry import get_image_provider_for_session
+        provider = get_image_provider_for_session(
+            session, project_service.active_project_id(session), atlas_client=get_atlas_client()
+        )
     prompt = build_storyboard_prompt(
         beats=beats, character_lines=character_lines, setting=setting, lighting=lighting
     )
@@ -170,7 +167,7 @@ async def generate_storyboard(
 
     asset_id = new_id("asset")
     dest = settings.assets_dir / f"{asset_id}.png"
-    await media.download(result.output_urls[0], dest)
+    dest = await media.download(result.output_urls[0], dest)
     asset = Asset(
         id=asset_id,
         # Stamped at creation so the row is never committed project-less (a
@@ -242,7 +239,14 @@ async def generate_storyboard_for_scene(
     )
     reference_ids.extend(prop_ids)
 
-    resolver = AtlasCloudUploadResolver(session, get_atlas_client())
+    from app.providers.registry import get_asset_resolver
+    provider_name = image_provider.name if image_provider is not None else None
+    if provider_name is None:
+        from app.providers.registry import get_image_provider_for_session
+        provider_name = get_image_provider_for_session(
+            session, scene.project_id, atlas_client=get_atlas_client()
+        ).name
+    resolver = get_asset_resolver(session, provider_name, atlas_client=get_atlas_client())
     reference_urls = await resolver.resolve(reference_ids) if reference_ids else []
 
     scene_json = scene.scene_json or {}

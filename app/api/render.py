@@ -32,6 +32,8 @@ class RenderFromShotRequest(BaseModel):
     named_references: list[NamedRef] = []
     character_ids: list[str] = []
     video_asset_id: str | None = None
+    first_frame_asset_id: str | None = None
+    last_frame_asset_id: str | None = None
     aspect_ratio: str | None = None  # falls back to DEFAULT_ASPECT_RATIO (9:16)
 
 
@@ -42,6 +44,18 @@ def _job_response(job) -> JSONResponse:
 @router.post("/render")
 async def render(spec: RenderSpec, session: Session = Depends(get_session)):
     """Submit a fully-formed RenderSpec (deterministic path)."""
+    if "provider" not in spec.model_fields_set:
+        from app.services import project_service, settings_service
+        pid = project_service.active_project_id(session)
+        provider = settings_service.resolve(
+            session, "default_video_provider", default="atlascloud", project_id=pid
+        )
+        model = spec.model
+        if "model" not in spec.model_fields_set:
+            model = settings_service.resolve(
+                session, "video_model", default=None, project_id=pid
+            ) or model
+        spec = spec.model_copy(update={"provider": provider, "model": model})
     job = await render_service.start_render(session, spec)
     return _job_response(job)
 
@@ -103,6 +117,21 @@ async def render_from_shot(
         style=style_service.style_context(style_service.get_style(session)),
         story=scene_service.story_context(session, scene),
     )
+    # Prompt agents return provider-neutral specs. Apply the active project's
+    # configured media route after generation so UI settings reach this path.
+    from app.services import settings_service
+    provider = settings_service.resolve(
+        session, "default_video_provider", default="atlascloud", project_id=scene.project_id
+    )
+    model = settings_service.resolve(
+        session, "video_model", default=None, project_id=scene.project_id
+    )
+    spec = spec.model_copy(update={
+        "provider": provider,
+        "model": model or spec.model,
+        "first_frame_asset_id": body.first_frame_asset_id,
+        "last_frame_asset_id": body.last_frame_asset_id,
+    })
     job = await render_service.start_render(session, spec)
     return _job_response(job)
 

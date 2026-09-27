@@ -13,7 +13,7 @@ Use these pages when identity, recurring objects, or a consistent visual style m
 5. Use **Upload reference photo** for your own images, or the reference-sheet generation action for AI angles.
 6. Link the character to the scene's cast in Scenes or Studio.
 
-The current reference-sheet action may still say “ERNIE”; the actual provider is AtlasCloud and the configured image model determines the request. Generating reference sheets can make several image requests. It does not currently honor the OpenRouter storyboard provider selection.
+The reference-sheet action may still say “ERNIE”; the selected image provider and model determine the request. Generating reference sheets can make several image requests. OpenRouter-generated outputs preserve their returned image format and extension.
 
 ## Add and describe assets
 
@@ -35,4 +35,4 @@ An existing project style guide takes precedence over the style selected on Crea
 
 ## Know the limits
 
-A character bible is reusable production information, not a trained identity model or a guarantee of consistent faces. H3 text-to-video currently receives descriptive prompts but no reference images. The OpenRouter adapter currently treats ordinary image references as first/last frames; this is recorded as a compatibility defect. Preview every generated take before accepting it.
+A character bible is reusable production information, not a trained identity model or a guarantee of consistent faces. H3 text-to-video currently receives descriptive prompts but no reference images. OpenRouter sends ordinary references as visual guidance; only explicit first/last-frame asset IDs become frame anchors. Preview every generated take before accepting it.

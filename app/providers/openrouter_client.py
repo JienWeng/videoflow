@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import httpx
+from urllib.parse import quote
 
 from app.config import Settings, get_settings
 from app.errors import ProviderError
@@ -44,6 +45,26 @@ class OpenRouterClient:
 
     async def get_video(self, job_id: str) -> dict:
         return await self._request("GET", f"/videos/{job_id}")
+
+    async def get_video_models(self) -> list[dict]:
+        response = await self._request("GET", "/videos/models")
+        data = response.get("data", [])
+        return [item for item in data if isinstance(item, dict)]
+
+    async def download_video(self, job_id: str, index: int = 0) -> tuple[bytes, str]:
+        """Download a completed video through the authenticated content endpoint."""
+        try:
+            response = await self._client.get(
+                f"/videos/{quote(job_id, safe='')}/content", params={"index": index}
+            )
+            response.raise_for_status()
+            return response.content, response.headers.get("content-type", "video/mp4")
+        except httpx.HTTPStatusError as exc:
+            raise ProviderError(
+                f"OpenRouter video download failed: HTTP {exc.response.status_code} {exc.response.text[:300]}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"OpenRouter video download failed: {exc}") from exc
 
     async def create_image(self, payload: dict) -> dict:
         return await self._request("POST", "/images", json=payload)

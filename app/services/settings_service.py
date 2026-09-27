@@ -432,6 +432,33 @@ def resolve(
     """The effective value of an app default, overlaying in precedence:
     project-override -> global -> config default -> *default* arg."""
     settings = settings or get_settings()
+    # Model defaults follow the selected provider. These two app settings used
+    # to resolve to AtlasCloud model ids even when OpenRouter was selected.
+    if key in {"video_model", "image_model"}:
+        provider_key = "default_video_provider" if key == "video_model" else "default_image_provider"
+        provider_default = _config_default(provider_key, settings)
+        if project_id:
+            provider_value = get_app_setting(session, provider_key, None, scope="project", project_id=project_id)
+        else:
+            provider_value = None
+        if provider_value is None:
+            provider_value = get_app_setting(session, provider_key, provider_default, scope="global")
+        if provider_value == "openrouter":
+            attr = "openrouter_video_model" if key == "video_model" else "openrouter_image_model"
+            provider_model_default = getattr(settings, attr, None)
+        else:
+            attr = APP_SETTING_DEFAULTS[key]
+            provider_model_default = getattr(settings, attr, None)
+        if project_id:
+            sentinel = object()
+            value = get_app_setting(session, key, sentinel, scope="project", project_id=project_id)
+            if value is not sentinel:
+                return value
+        sentinel = object()
+        value = get_app_setting(session, key, sentinel, scope="global")
+        if value is not sentinel:
+            return value
+        return provider_model_default if provider_model_default is not None else default
     if project_id:
         sentinel = object()
         pv = get_app_setting(

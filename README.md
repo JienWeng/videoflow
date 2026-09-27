@@ -12,11 +12,11 @@ A local AI video workspace for turning an idea into scripts, characters, scenes,
 
 ## Current readiness
 
-The 27 September 2026 audit covers the working implementation, including the OpenRouter and AtlasCloud model migration. **OpenRouter support is partial; a fully OpenRouter-only workflow is not established.** Character/prop generation and reference uploads still depend on AtlasCloud, and OpenRouter video retrieval has an authentication gap.
+The 27 September 2026 audit covers the current implementation, including the OpenRouter and AtlasCloud model migration. OpenRouter routing now covers image creation, video submission/polling/download, local image references, and all media-generation entry points. Mocked contract tests pass; actual model/account behavior and video data-URL reference acceptance still need a limited live smoke test.
 
 The current AtlasCloud video adapter emits H3 text-to-video payloads. It does not preserve the older Kling reference-image and structured multi-shot contract. Existing UI controls and saved specs can therefore overstate what reaches the model.
 
-Verification: **582 backend tests passed, 23 failed**. Frontend type check and production build passed. No paid provider generation or graphical browser walkthrough was verified. See the reports before relying on unattended generation:
+Verification: **593 backend tests passed, 23 failed**. The same 23 baseline failures remain in AtlasCloud payload migration, settings/agent expectations, and related scene contracts. Frontend type check passes. No paid provider generation or graphical browser walkthrough was verified. See the reports before relying on unattended generation:
 
 | Report | Contents |
 |---|---|

@@ -14,8 +14,8 @@ Start by identifying the stage that failed. Keep the project, scene, operation, 
 | Saved key seems impossible to clear | A saved override may fall back to `.env`; clear that source and restart if disconnection is intended |
 | JSON/schema validation fails | Try an output mode supported by the model and inspect its response; a successful key check is not a schema check |
 | OpenRouter fails despite a working text test | Text, image, and video use separate requests; review the compatibility audit and built-in media credentials |
-| OpenRouter-only story asks for AtlasCloud | Character/prop images and reference uploads still use AtlasCloud |
-| Video generated remotely but download fails | OpenRouter content requires authentication that the current downloader lacks; inspect the remote job before resubmitting |
+| OpenRouter-only story asks for AtlasCloud | Check Engines and agent routes; media provider and LLM provider settings are separate |
+| Video generated remotely but download fails | Check the OpenRouter render job and local disk/storage errors before resubmitting; retrieval uses the authenticated content endpoint |
 | Too many references or invalid duration | Check the selected model's actual limits and reduce inputs; current capability rules are incomplete |
 | Story progress appears stuck | Stage updates are currently saved at completion; inspect backend errors and Activity before restarting |
 | Refreshed Create page looks empty | Its operation tracking is in memory; inspect Scenes/My videos/Activity before creating a duplicate |

@@ -2,7 +2,7 @@
 
 This handbook describes the implementation inspected on 27 September 2026, including the pending provider and continuity changes. Start here whether you have an empty computer, an empty VideoFlow project, or an existing story.
 
-**Current readiness:** the workspace and authoring tools are implemented, but the provider migration is incomplete. OpenRouter is **partially integrated**, not fully compatible across the workflow. The audit recorded 582 passing backend tests and 23 failures. Read the [implementation audit](../audits/2026-09-27-implementation.md) before depending on unattended generation.
+**Current readiness:** the workspace and authoring tools are implemented. OpenRouter media routes have deterministic contract coverage, but live account/model behavior and video reference data-URL acceptance remain unverified. The full backend suite currently has 593 passing tests and 23 known failures in the AtlasCloud migration/settings expectations. Read the [implementation audit](../audits/2026-09-27-implementation.md) before depending on unattended generation.
 
 ## Read in order
 

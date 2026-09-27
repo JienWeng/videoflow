@@ -32,6 +32,6 @@ For cross-scene visual continuity, render and finish the preceding scene before 
 4. Ensure the sum of shot durations is valid for the selected model.
 5. Submit **Render** and inspect the job in My videos.
 
-The contact sheet supports up to 16 panels. The scene service currently accepts a 3–15 second range while adapters have different constraints (H3 clamps to 4–15; OpenRouter uses broad 4–8 or 4–15 checks). Exact supported durations need model-specific validation; a scene passing the first check can still fail later.
+The contact sheet supports up to 16 panels. The scene service accepts a 3–15 second range, while each OpenRouter video model may support a discrete set of durations. The OpenRouter adapter checks the selected model catalog before submission and reports unsupported durations/aspect ratios.
 
 Existing render outputs are historical takes. Editing shots or generating another storyboard does not retroactively update them. Keep the output that matches the final script and download it explicitly.

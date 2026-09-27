@@ -49,6 +49,12 @@ class RenderSpec(BaseModel):
         default_factory=list,
         description="Additional (unnamed) reference image asset ids",
     )
+    first_frame_asset_id: str | None = Field(
+        default=None, description="Optional exact first-frame image for image-to-video"
+    )
+    last_frame_asset_id: str | None = Field(
+        default=None, description="Optional exact last-frame image for image-to-video"
+    )
     video_asset_id: str | None = Field(
         default=None, description="Optional single reference video asset id"
     )

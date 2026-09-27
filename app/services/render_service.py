@@ -26,7 +26,7 @@ from app.models import Asset, Character, RenderJob, RenderOutput, RenderStatus, 
 from app.models.base import new_id, utcnow
 from app.providers.atlascloud_client import get_atlas_client
 from app.providers.registry import get_video_provider
-from app.providers.url_resolver import AtlasCloudUploadResolver
+from app.providers.url_resolver import AtlasCloudUploadResolver, OpenRouterAssetResolver
 from app.schemas import ReferenceImage, RenderSpec, StoryboardShot
 from app.services.dialogue import has_dialogue
 from app.services import project_service
@@ -196,10 +196,20 @@ async def _anchor_reference(session: Session, scene: Scene) -> dict | None:
 
 
 async def start_render(session: Session, spec: RenderSpec) -> RenderJob:
-    provider = get_video_provider(spec)
-    resolver = AtlasCloudUploadResolver(session, get_atlas_client())
+    settings = get_settings()
+    effective_spec = spec
+    # RenderSpec's legacy default is AtlasCloud's model. When the caller selected
+    # OpenRouter without specifying a model, use its configured model instead.
+    if spec.provider == "openrouter" and spec.model == "minimax/h3-developer/text-to-video":
+        effective_spec = spec.model_copy(update={"model": settings.openrouter_video_model})
+    provider = get_video_provider(effective_spec)
+    resolver = (
+        OpenRouterAssetResolver(session)
+        if effective_spec.provider == "openrouter"
+        else AtlasCloudUploadResolver(session, get_atlas_client())
+    )
 
-    payload = await provider.build_payload(spec, resolver)
+    payload = await provider.build_payload(effective_spec, resolver)
     provider_job_id = await provider.submit(payload)
 
     project_id = None
@@ -212,13 +222,13 @@ async def start_render(session: Session, spec: RenderSpec) -> RenderJob:
         project_id=project_id,
         scene_id=spec.scene_id,
         shot_id=spec.shot_id,
-        provider=spec.provider,
-        model=spec.model,
+        provider=effective_spec.provider,
+        model=effective_spec.model,
         provider_job_id=provider_job_id,
         status=RenderStatus.pending,
         # Provider payload plus the originating spec, so QA-driven retries can
         # rebuild and resubmit the exact RenderSpec (asset ids, not URLs).
-        request_json={**payload, "spec": spec.model_dump(mode="json")},
+        request_json={**payload, "spec": effective_spec.model_dump(mode="json")},
     )
     session.add(job)
     session.commit()

@@ -10,13 +10,13 @@ VideoFlow has three separate AI jobs: text planning, image generation, and video
 |---|---|---|
 | Story and planning agents | OpenCode Go, `deepseek-v4-flash` | Settings → Providers, then Agents |
 | Vision QA | AtlasCloud, `qwen/qwen3-vl-30b-a3b-instruct` | Settings → Agents |
-| Character and prop images | AtlasCloud | AtlasCloud credentials; these services currently select it directly |
-| Storyboard images | AtlasCloud, optionally OpenRouter | Settings → Engines |
-| Whole-scene video | AtlasCloud H3, optionally OpenRouter | Settings → Engines |
+| Character and prop images | AtlasCloud or OpenRouter | Settings → Engines |
+| Storyboard images | AtlasCloud or OpenRouter | Settings → Engines |
+| Whole-scene and shot video | AtlasCloud H3 or OpenRouter | Settings → Engines |
 
 These are configured IDs from the source, not verified recommendations or guarantees of account access. Confirm availability in your provider account. The initial account setup is: sign in on the provider website, create an API key, and enable the account usage needed by your chosen models. Keep the key private.
 
-For the current full authoring path, configure AtlasCloud plus a working text provider. You can use OpenRouter for text while retaining AtlasCloud for media. **An OpenRouter-only setup is not currently complete.** See the [compatibility report](../audits/2026-09-27-openrouter.md).
+OpenRouter can be selected for image and video media as well as text. Configure the built-in OpenRouter credential for media; named text connections keep independent credentials. Actual account/model behavior still needs a live smoke test, and local image references sent to video models use data URLs whose support is not specified in OpenRouter's video guide. See the [compatibility report](../audits/2026-09-27-openrouter.md).
 
 ## Configure a text connection
 
@@ -39,11 +39,11 @@ Set `ATLASCLOUD_API_KEY` in `.env`, or save the AtlasCloud provider key in Setti
 
 In **Engines**, inspect the image/video provider and model. The current AtlasCloud video adapter sends H3-shaped text-to-video payloads. Changing its model field to a legacy Kling model does not restore the old Kling adapter. Image references and sound controls in stored render specs do not all reach H3.
 
-## OpenRouter media: experimental path
+## OpenRouter media
 
-The code has image/video adapters, but several blockers remain: AtlasCloud reference uploads, character/prop routing, video download authentication, reference semantics, model capability validation, and inconsistent setting resolution. Use the compatibility report to assess these before spending on a render.
+Changing the provider in Engines selects the corresponding media model. The model is checked against OpenRouter's video model catalog before submission; unsupported duration or aspect ratio values return the supported values. Image guidance references and explicit first/last-frame anchors are sent through their separate API fields. The worker downloads completed videos through OpenRouter's authenticated content endpoint.
 
-The UI saves a suggested video model when changing the provider. Setting only `DEFAULT_VIDEO_PROVIDER=openrouter` in `.env` can still resolve the AtlasCloud `video_model` default. Explicitly inspect the resolved model in Engines. For OpenRouter image generation, the adapter currently reads `OPENROUTER_IMAGE_MODEL`, rather than the UI's `image_model` value; edit the environment and restart when testing that path.
+Local image assets are embedded as data URLs, avoiding an AtlasCloud upload. OpenRouter's image guide documents data URLs for image references; its video guide only shows ordinary URLs, so test a reference-image video on your account/model before relying on it. OpenRouter video references do not accept a reference video asset. Multi-shot specs are expressed as a timed shot sequence in the prompt because the dedicated endpoint has no native multi-shot field.
 
 ## How saved settings behave
 

@@ -4,7 +4,7 @@
 
 ## Scope
 
-The baseline was the current working tree on top of `011641f`, before this session's documentation edits. Runtime source and tests were not modified by the documentation audit. Pre-existing changes are included in review-branch commit `846705b` as an implementation snapshot.
+The first run was the current working tree on top of `011641f`, before documentation edits. A later OpenRouter repair added source and regression tests; current evidence is in the follow-up section below.
 
 ## Executed checks
 
@@ -26,7 +26,13 @@ The baseline was the current working tree on top of `011641f`, before this sessi
 
 Environment: Python 3.12 via uv, uv 0.12.1, Node 22.22.1, npm 9.2.0, Linux. Fresh API data used `/tmp/videoflow-handbook-audit.sqlite` and `/tmp/videoflow-handbook-storage`; the user's project database and media were not used for smoke data.
 
-The backend suite was run twice while collecting complete output; the retained run above is the report baseline. No tests were rewritten to accept the changed provider contracts.
+The backend suite was run twice while collecting complete output; the retained results above are the initial audit baseline. No tests were rewritten to accept the changed provider contracts.
+
+## OpenRouter repair follow-up
+
+After the initial audit, `uv run pytest -q --tb=no` reported **593 passed, 23 failed**. The 23 failures are the same tests and failure set recorded above for the AtlasCloud payload migration, settings/agent expectations, and related scene contracts. The new OpenRouter regression module is included among passing tests; focused provider/settings/resolver checks reported 24 passed. `npm run check` reported 0 errors and 0 warnings. `git diff --check` passed. No live or paid OpenRouter request was made.
+
+Added coverage exercises provider-specific model defaults, route selection when omitted from `/render`, video model capability validation, visual-reference/frame-anchor separation, authenticated content retrieval, local asset data URLs, image output multiplicity/MIME, media file extensions, and expired job status.
 
 ## Failed tests
 

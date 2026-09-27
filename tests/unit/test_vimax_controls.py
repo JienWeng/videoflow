@@ -5,6 +5,14 @@ from app.providers.openrouter_video import OpenRouterVideoProvider
 from app.services.visual_dependency_service import build_shot_dependencies, select_best_candidate
 
 
+class _VideoClient:
+    async def get_video_models(self):
+        return [{
+            "id": "google/veo-3.1-lite", "supported_durations": [4, 6, 8],
+            "supported_resolutions": ["720p"], "supported_aspect_ratios": ["9:16", "16:9"],
+        }]
+
+
 class _Resolver:
     async def resolve(self, asset_ids):
         return [f"https://cdn.test/{asset_id}.png" for asset_id in asset_ids]
@@ -56,7 +64,7 @@ def test_render_spec_accepts_openrouter_media_route():
     assert spec.provider == "openrouter"
 
 
-def test_openrouter_video_payload_uses_first_and_last_frame_references():
+def test_openrouter_video_payload_uses_guidance_references_not_frame_anchors():
     spec = RenderSpec(
         provider="openrouter",
         model="google/veo-3.1-lite",
@@ -65,12 +73,13 @@ def test_openrouter_video_payload_uses_first_and_last_frame_references():
         prompt="A character crosses the station",
         extra_image_asset_ids=["first", "last"],
     )
-    provider = OpenRouterVideoProvider(client=object())
+    provider = OpenRouterVideoProvider(client=_VideoClient())
     payload = __import__("asyncio").run(provider.build_payload(spec, _Resolver()))
     assert payload["model"] == "google/veo-3.1-lite"
-    assert [item["frame_type"] for item in payload["frame_images"]] == [
-        "first_frame", "last_frame"
+    assert [item["image_url"]["url"] for item in payload["input_references"]] == [
+        "https://cdn.test/first.png", "https://cdn.test/last.png"
     ]
+    assert "frame_images" not in payload
 
 
 def test_visual_dependencies_create_ordered_layers_and_select_best_candidate():

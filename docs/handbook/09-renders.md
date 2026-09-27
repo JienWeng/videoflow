@@ -35,4 +35,4 @@ The current provider migration also changes how saved specs map to payloads. A s
 
 There is no complete whole-project movie assembly/export flow. Render outputs are per scene or shot. There is no end-to-end cancellation/resume contract for every orchestration stage. Restart reconciliation can re-enqueue video polling, while interrupted non-render operations are marked failed.
 
-For OpenRouter, the existing downloader does not authenticate content downloads. The compatibility audit describes this blocker and the required fix. Do not interpret successful remote generation as proof that local output download will succeed.
+For OpenRouter, the worker retrieves video through the authenticated content endpoint. The contract is covered by mocked tests, but a live generation and download has not been run. A provider may complete and bill a job even if later local processing fails; inspect the job before resubmitting.

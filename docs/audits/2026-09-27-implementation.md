@@ -4,9 +4,9 @@
 
 ## Scope and conclusion
 
-Reviewed the current working tree on top of `011641f`, including pre-existing uncommitted OpenRouter, H3/GPT Image, settings, and continuity changes. This is a documentation and readiness audit. The implementation snapshot is preserved for review; the findings below are not marked fixed by publishing this report.
+Initial review covered the working tree on top of `011641f`; see the dated OpenRouter follow-up below for the subsequent compatibility repairs.
 
-**The workspace and authoring foundation are substantial. The new media-provider migration is incomplete, and the full guided workflow is not yet release-ready.** OpenRouter-only operation cannot currently be claimed. Local verification found **582 passing backend tests and 23 failures**; frontend check/build passed. No paid live model call or graphical walkthrough was performed.
+**The workspace and authoring foundation are substantial. The media-provider contracts have improved, but the full guided workflow is not release-ready.** OpenRouter media routing has mocked coverage; a live OpenRouter-only workflow has not been run. Current verification found **593 passing backend tests and 23 failures**, all in the known AtlasCloud migration/settings contract set. Frontend check passes; no paid model call or graphical walkthrough was performed.
 
 “Implemented” below means code and relevant entry points exist. It does not mean all models, operating systems, or end-to-end cases were verified.
 
@@ -14,19 +14,20 @@ Reviewed the current working tree on top of `011641f`, including pre-existing un
 
 | Area | State | Evidence and practical boundary |
 |---|---|---|
+| OpenRouter media request/routing | Implemented with live-verification gap | Provider-aware routing, model catalog validation, image MIME handling, and authenticated video content retrieval; see [follow-up audit](2026-09-27-openrouter.md) |
 | Local API, SQLite, storage initialization | Implemented; empty-database smoke passed | [main](../../app/main.py), [database](../../app/database.py); local health and empty lists returned 200 |
 | Projects, activation, rename, export/import | Implemented | [project API](../../app/api/projects.py), [service](../../app/services/project_service.py); active selection is server-wide |
 | Asset upload, metadata, reuse and links | Implemented | [asset service](../../app/services/asset_service.py), [asset generation](../../app/services/asset_gen_service.py) |
 | True asset image/video/audio recognition | Missing | [recogniser](../../app/agents/asset_recogniser.py) only receives user description and filename |
-| Character bibles and reference sheets | Implemented with provider limitation | [character service](../../app/services/character_service.py); sheets select AtlasCloud directly |
+| Character bibles and reference sheets | Implemented with selected image provider | [character service](../../app/services/character_service.py); actual account/model generation unverified |
 | Script, scene, shot generation and refinement | Implemented | [scene service](../../app/services/scene_service.py), [refine service](../../app/services/refine_service.py); external quality not verified |
-| Project style and reference-guided storyboards | Implemented with routing gaps | [style service](../../app/services/style_service.py), [storyboards](../../app/services/storyboard_service.py) |
+| Project style and reference-guided storyboards | Implemented with provider-aware routing | [style service](../../app/services/style_service.py), [storyboards](../../app/services/storyboard_service.py); live model behavior unverified |
 | Guided Create video pipeline | Partial | [orchestrator](../../app/services/video_generation_service.py); stores artifacts and submits scene jobs, but progress/recovery/narration are incomplete |
 | Guided chat and relationship canvas | Implemented | [chat service](../../app/services/chat_service.py), [Studio](../../frontend/src/routes/+page.svelte); browser interaction unverified |
 | LLM connections, overrides, schema validation | Implemented; model-dependent | [connections](../../app/llm/connections.py), [structured client](../../app/llm/structured_client.py); tests are not live provider certification |
 | AtlasCloud video adapter migration | Partial/regressed | [adapter](../../app/providers/atlascloud_video.py) now emits H3 payloads; older reference/multi-shot contracts no longer hold |
-| OpenRouter media support | Partial/blocking gaps | Dedicated adapters exist; see [compatibility matrix](2026-09-27-openrouter.md) |
-| Render queue, polling and downloads | Implemented with provider gap | [worker](../../app/jobs/worker.py), [poll service](../../app/services/poll_service.py); OpenRouter content authentication missing |
+| OpenRouter media support | Contract tests pass; live checks outstanding | Dedicated adapters and settings routes; see [compatibility matrix](2026-09-27-openrouter.md) |
+| Render queue, polling and downloads | Implemented with provider-specific retrieval | [worker](../../app/jobs/worker.py), [poll service](../../app/services/poll_service.py); live content retrieval unverified |
 | QA and corrective retry | Implemented, best effort | [QA agent](../../app/agents/qa_agent.py); sampled images, not direct audio review; retries affected by adapter migration |
 | Captions and output editor | Implemented; actual media run unverified here | [caption service](../../app/services/caption_service.py), [editor](../../frontend/src/routes/editor/[id]/+page.svelte) |
 | Local continuity retrieval | Implemented | [continuity service](../../app/services/continuity_service.py) ranks lexical overlap; no persistent vector index |
@@ -40,7 +41,11 @@ Reviewed the current working tree on top of `011641f`, including pre-existing un
 
 ## Highest-priority findings
 
-### F01 — OpenRouter video output cannot follow the documented download flow (P1)
+### Follow-up — OpenRouter compatibility repair (27 September 2026)
+
+The OpenRouter fixes covered by [the compatibility follow-up](2026-09-27-openrouter.md) resolve the earlier F01, F02, F03, and F05 code-path findings: video downloads now use the authenticated content endpoint; media services resolve the configured provider; settings pair provider and model defaults; and video references/frame anchors and capabilities use the documented API contract. F09's OpenRouter image response handling and expiry state are also covered. Local image data-URL references in the video endpoint, account-specific model behavior, and a full zero-AtlasCloud workflow remain live verification gates. The 23 failing tests match the original baseline failure set and do not include the new OpenRouter regression tests.
+
+### F01 — OpenRouter video output cannot follow the documented download flow (P1, resolved in follow-up)
 
 **Evidence:** `process_job` in [poll_service.py](../../app/services/poll_service.py) passes the provider URL to `media.download`. [media.py](../../app/services/media.py) makes an unauthenticated GET. OpenRouter's content URLs require its API credential; details and primary source are in the compatibility report.
 
@@ -48,7 +53,7 @@ Reviewed the current working tree on top of `011641f`, including pre-existing un
 
 **Acceptance:** authenticated download through the correct provider client; credential forwarding restricted to the intended origin; redirect handling tested; fallback content retrieval when appropriate; recovery downloads the existing job without regenerating it.
 
-### F02 — OpenRouter-only creation still invokes AtlasCloud (P1)
+### F02 — OpenRouter-only creation still invokes AtlasCloud (P1, routing resolved; live workflow unverified)
 
 **Evidence:** `start_render` and `generate_storyboard_for_scene` create `AtlasCloudUploadResolver`; character sheets and `generate_scene_assets` instantiate `AtlasCloudImageProvider` directly.
 
@@ -56,7 +61,7 @@ Reviewed the current working tree on top of `011641f`, including pre-existing un
 
 **Acceptance:** use provider-aware reference transport and one image-provider resolution path for characters, props, and storyboards; a mocked full workflow must make zero AtlasCloud calls in OpenRouter-only mode.
 
-### F03 — Provider/model settings disagree across paths (P1)
+### F03 — Provider/model settings disagree across paths (P1, resolved in follow-up)
 
 **Evidence:** `APP_SETTING_DEFAULTS['video_model']` maps to `atlas_video_model`. `resolve` uses configuration before its `default` argument. A local reproduction with `DEFAULT_VIDEO_PROVIDER=openrouter` returned `minimax/h3-developer/text-to-video`. The OpenRouter image adapter reads `openrouter_image_model` directly, ignoring the UI's `image_model` setting. Shot rendering also does not apply the same provider selection logic as whole-scene rendering.
 
@@ -70,7 +75,7 @@ Reviewed the current working tree on top of `011641f`, including pre-existing un
 
 **Acceptance:** model-family-specific adapters or an explicitly narrowed supported-model list; truthful capabilities and UI; migration guidance; contract tests for each retained route. Do not simply weaken reference tests to make CI green.
 
-### F05 — OpenRouter reference semantics and limits are guessed (P1)
+### F05 — OpenRouter reference semantics and limits are guessed (P1, request contract resolved; live inputs unverified)
 
 **Evidence:** [video adapter](../../app/providers/openrouter_video.py) maps the first two ordinary image references to first/last frames. [capabilities](../../app/providers/capabilities.py) assumes up to two references, generic aspect ratios, and duration ranges based on substrings in the model ID. See the provider report for the API distinction.
 
@@ -96,7 +101,7 @@ Reviewed the current working tree on top of `011641f`, including pre-existing un
 
 **Acceptance:** validate/topologically order dependencies or explicitly reject forward edges with an actionable error; cover cycles, duplicates, missing parents, and disconnected shots. Rendering must consume this metadata before it can be described as dependency-controlled generation.
 
-### F09 — Media representation and lifecycle assumptions are incomplete (P2)
+### F09 — Media representation and lifecycle assumptions are incomplete (P2, OpenRouter response handling resolved; general client lifecycle remains)
 
 **Evidence:** OpenRouter image polling consumes only the first result, assumes PNG, and removes the response from its process-local cache. AtlasCloud text-to-image requests JPEG while services name downloads `.png`. HTTP clients are created without a consistent close lifecycle. OpenRouter `expired` normalizes to pending (reproduced).
 

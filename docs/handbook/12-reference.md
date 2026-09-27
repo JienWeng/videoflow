@@ -25,7 +25,7 @@
 | `OPENCODE_GO_API_KEY` | Current default text-agent connection credential |
 | `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` | Built-in OpenRouter credential and endpoint |
 | `OPENROUTER_MODEL` | OpenRouter text model default |
-| `OPENROUTER_IMAGE_MODEL`, `OPENROUTER_VIDEO_MODEL` | OpenRouter media defaults; see resolution gaps in the audit |
+| `OPENROUTER_IMAGE_MODEL`, `OPENROUTER_VIDEO_MODEL` | OpenRouter media defaults, used when no saved model override exists |
 | `ATLASCLOUD_API_KEY`, `ATLASCLOUD_BASE_URL` | AtlasCloud media credential/endpoint |
 | `ATLAS_LLM_BASE_URL`, `ATLAS_VL_MODEL` | AtlasCloud vision/text route |
 | `ATLAS_IMAGE_MODEL`, `ATLAS_IMAGE_REF_MODEL` | AtlasCloud text-to-image and reference-edit model IDs |
