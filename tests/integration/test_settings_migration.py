@@ -40,6 +40,7 @@ def _legacy_engine(tmp_path):
         conn.execute(text("CREATE TABLE render_outputs (id VARCHAR PRIMARY KEY)"))
         conn.execute(text("CREATE TABLE scenes (id VARCHAR PRIMARY KEY)"))
         conn.execute(text("CREATE TABLE ops (id VARCHAR PRIMARY KEY, kind VARCHAR)"))
+        conn.execute(text("CREATE TABLE characters (id VARCHAR PRIMARY KEY, name VARCHAR)"))
     return engine
 
 
@@ -67,6 +68,20 @@ def test_migrate_adds_operation_project_scope(tmp_path):
     assert "project_id" not in _cols(engine, "ops")
     _migrate(engine)
     assert "project_id" in _cols(engine, "ops")
+
+
+def test_migrate_adds_character_sample_dialogue(tmp_path):
+    engine = _legacy_engine(tmp_path)
+    assert "sample_dialogue" not in _cols(engine, "characters")
+    _migrate(engine)
+    assert "sample_dialogue" in _cols(engine, "characters")
+
+
+def test_migrate_adds_scene_order(tmp_path):
+    engine = _legacy_engine(tmp_path)
+    assert "scene_order" not in _cols(engine, "scenes")
+    _migrate(engine)
+    assert "scene_order" in _cols(engine, "scenes")
 
 
 def test_migrate_is_idempotent(tmp_path):

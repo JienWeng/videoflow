@@ -57,6 +57,10 @@ def _migrate(target_engine) -> None:
         if cols and "script_id" not in cols:
             conn.exec_driver_sql("ALTER TABLE scenes ADD COLUMN script_id VARCHAR")
             conn.commit()
+        cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(scenes)")]
+        if cols and "scene_order" not in cols:
+            conn.exec_driver_sql("ALTER TABLE scenes ADD COLUMN scene_order INTEGER")
+            conn.commit()
         # Settings: per-project agent overrides (NULL = global/default override).
         cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(agent_settings)")]
         if cols and "project_id" not in cols:
@@ -89,6 +93,12 @@ def _migrate(target_engine) -> None:
                     f"ALTER TABLE {table} ADD COLUMN project_id VARCHAR"
                 )
                 conn.commit()
+        cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info(characters)")]
+        if cols and "sample_dialogue" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE characters ADD COLUMN sample_dialogue VARCHAR NOT NULL DEFAULT ''"
+            )
+            conn.commit()
 
 
 def get_session() -> Iterator[Session]:

@@ -173,6 +173,8 @@ async def test_build_character_bible_includes_style_block():
     )
     assert "Project style guide" in llm.user_prompt
     assert "soft pastel" in llm.user_prompt
+    assert "sample_dialogue" in llm.user_prompt
+    assert "one natural spoken line" in llm.user_prompt
 
 
 async def test_build_character_bible_without_style_omits_block():

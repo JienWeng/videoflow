@@ -28,6 +28,7 @@
   import SceneDetail from '$lib/scenes/SceneDetail.svelte';
 
   let scenes: any[] = $state([]);
+  let scripts: any[] = $state([]);
   let characters: any[] = $state([]);
   let shotsByScene: Record<string, any[]> = $state({});
   let storyboards: Record<string, any> = $state({});
@@ -108,9 +109,35 @@
   let search = $state('');
   // '' = all; otherwise the furthest-stage label we filter on.
   let stageFilter = $state<'' | 'new' | 'expanded' | 'shots' | 'storyboard' | 'rendered'>('');
+  let sceneSort = $state<'latest' | 'story'>('latest');
 
-  // List order: newest-activity first (matches the old reversed render).
-  const orderedScenes = $derived(scenes.slice().reverse());
+  const orderedScenes = $derived.by(() => {
+    const storyPosition = new Map<string, { time: number; order: number }>();
+    const sortedScripts = scripts.slice().sort((a, b) =>
+      (a.created_at ?? '').localeCompare(b.created_at ?? '')
+    );
+    for (let scriptIndex = 0; scriptIndex < sortedScripts.length; scriptIndex += 1) {
+      const script = sortedScripts[scriptIndex];
+      const scriptScenes = scenes
+        .filter((scene) => scene.script_id === script.id)
+        .sort((a, b) => (a.scene_order ?? Number.MAX_SAFE_INTEGER) - (b.scene_order ?? Number.MAX_SAFE_INTEGER) ||
+          (a.created_at ?? '').localeCompare(b.created_at ?? ''));
+      for (const [sceneIndex, scene] of scriptScenes.entries()) {
+        storyPosition.set(scene.id, {
+          time: new Date(script.created_at ?? scene.created_at ?? 0).getTime(),
+          order: scriptIndex * 10000 + (scene.scene_order ?? sceneIndex)
+        });
+      }
+    }
+    return scenes.slice().sort((a, b) => {
+      if (sceneSort === 'latest') {
+        return (b.updated_at ?? b.created_at ?? '').localeCompare(a.updated_at ?? a.created_at ?? '');
+      }
+      const aPosition = storyPosition.get(a.id) ?? { time: new Date(a.created_at ?? 0).getTime(), order: 0 };
+      const bPosition = storyPosition.get(b.id) ?? { time: new Date(b.created_at ?? 0).getTime(), order: 0 };
+      return aPosition.time - bPosition.time || aPosition.order - bPosition.order;
+    });
+  });
 
   function stageOf(s: any): 'new' | 'expanded' | 'shots' | 'storyboard' | 'rendered' {
     if (renderedScenes[s.id]) return 'rendered';
@@ -197,8 +224,11 @@
   }
 
   async function refresh() {
-    const [freshScenes, chars] = await Promise.all([get('/scenes'), get('/characters')]);
+    const [freshScenes, chars, freshScripts] = await Promise.all([
+      get('/scenes'), get('/characters'), get('/scripts')
+    ]);
     characters = chars;
+    scripts = freshScripts;
     const [allAssets, jobs] = await Promise.all([
       get('/assets'),
       get('/render-jobs').catch(() => [])
@@ -793,6 +823,16 @@
                     : 'bg-muted text-muted-foreground hover:bg-accent'}"
                 onclick={() => (stageFilter = f.value)}>
                 {f.label}
+              </button>
+            {/each}
+          </div>
+          <div class="flex items-center gap-1" role="group" aria-label="Scene order">
+            <span class="mr-1 text-[11px] text-muted-foreground">Order:</span>
+            {#each [{ value: 'latest', label: 'Latest' }, { value: 'story', label: 'Story order' }] as option}
+              <button type="button" aria-pressed={sceneSort === option.value}
+                class="rounded-full px-2 py-0.5 text-[11px] transition-colors {sceneSort === option.value ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-accent'}"
+                onclick={() => (sceneSort = option.value as 'latest' | 'story')}>
+                {option.label}
               </button>
             {/each}
           </div>

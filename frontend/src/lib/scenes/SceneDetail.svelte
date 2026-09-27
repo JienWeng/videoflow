@@ -147,6 +147,16 @@
           <Video class="size-3.5 mr-1" />{busy[`render-${s.id}`] ? 'Submitting…' : 'Re-render'}
         </Button>
       {/if}
+      {#if shots.length > 0 && !steps.find((st: any) => st.key === 'render')?.done}
+        <Button
+          variant="outline"
+          size="sm"
+          title="Submit the current shots directly without generating a storyboard"
+          disabled={busy[`render-${s.id}`] || sceneDirty || shots.some((shot: any) => shotDirty(shot))}
+          onclick={() => onRenderScene(s)}>
+          <Video class="size-3.5 mr-1" />{busy[`render-${s.id}`] ? 'Submitting…' : 'Render now'}
+        </Button>
+      {/if}
       <Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-destructive"
         title="Delete scene" disabled={busy[`delete-${s.id}`]} onclick={() => onDelete(s)}>
         <Trash2 class="size-4" />

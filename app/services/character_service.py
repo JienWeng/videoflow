@@ -60,6 +60,7 @@ def update_character(
     personality: str | None = None,
     visual_rules: list[str] | None = None,
     voice_rules: list[str] | None = None,
+    sample_dialogue: str | None = None,
 ) -> Character:
     """Patch the editable identity fields of a character.
 
@@ -83,6 +84,8 @@ def update_character(
         char.visual_rules_json = list(visual_rules)
     if voice_rules is not None:
         char.voice_rules_json = list(voice_rules)
+    if sample_dialogue is not None:
+        char.sample_dialogue = sample_dialogue.strip()
 
     char.updated_at = utcnow()
     session.add(char)
@@ -144,6 +147,7 @@ async def generate_bible(session: Session, character_id: str, notes: str) -> Cha
     char.personality = bible.personality
     char.visual_rules_json = bible.visual_rules
     char.voice_rules_json = bible.voice_rules
+    char.sample_dialogue = bible.sample_dialogue
     char.reference_asset_ids_json = bible.reference_asset_ids or ref_ids
     char.updated_at = utcnow()
     session.add(char)

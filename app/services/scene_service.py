@@ -112,6 +112,7 @@ def character_to_bible(char: Character) -> CharacterBible:
         personality=char.personality,
         visual_rules=list(char.visual_rules_json or []),
         voice_rules=list(char.voice_rules_json or []),
+        sample_dialogue=char.sample_dialogue,
         reference_asset_ids=list(char.reference_asset_ids_json or []),
     )
 
@@ -175,11 +176,12 @@ async def create_script(
         draft_json={**draft.model_dump(), **({"generation_brief": generation_brief} if generation_brief else {})},
     )
     session.add(script)
-    for s in draft.scenes:
+    for scene_order, s in enumerate(draft.scenes):
         scene = Scene(
             id=new_id("scene"),
             project_id=pid,
             script_id=script.id,
+            scene_order=scene_order,
             title=s.title,
             summary=s.summary,
             duration=s.suggested_duration,

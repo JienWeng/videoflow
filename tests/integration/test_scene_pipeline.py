@@ -1304,6 +1304,7 @@ def test_generate_script_persists_script_row(script_ctx):
         scenes = list(s.exec(select(Scene)).all())
         assert len(scenes) == 3
         assert all(sc.script_id == script.id for sc in scenes)
+        assert sorted(sc.scene_order for sc in scenes) == [0, 1, 2]
 
     listed = client.get("/scripts").json()
     assert [r["id"] for r in listed] == [body["script"]["id"]]

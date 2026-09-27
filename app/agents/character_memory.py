@@ -27,7 +27,9 @@ async def build_character_bible(
         parts.append(as_block("Project style guide", style))
     parts.append(
         "Produce a CharacterBible. Set character_id and reference_asset_ids "
-        "from the given values. Make visual_rules concrete and reproducible."
+        "from the given values. Make visual_rules concrete and reproducible. "
+        "Fill sample_dialogue with one natural spoken line without quotation "
+        "marks that demonstrates how this character talks."
     )
     prompt = "\n\n".join(parts)
     return await run_agent(

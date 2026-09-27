@@ -22,6 +22,10 @@ class CharacterBible(BaseModel):
         default_factory=list,
         description="Voice/speech traits, e.g. 'low calm voice, British accent'",
     )
+    sample_dialogue: str = Field(
+        default="",
+        description="One short natural spoken line that demonstrates the character's voice",
+    )
     reference_asset_ids: list[str] = Field(
         default_factory=list, description="IDs of reference images for this character"
     )
