@@ -16,7 +16,7 @@ Start by identifying the stage that failed. Keep the project, scene, operation, 
 | OpenRouter fails despite a working text test | Text, image, and video use separate requests; review the compatibility audit and built-in media credentials |
 | OpenRouter-only story asks for AtlasCloud | Check Engines and agent routes; media provider and LLM provider settings are separate |
 | Video generated remotely but download fails | Check the OpenRouter render job and local disk/storage errors before resubmitting; retrieval uses the authenticated content endpoint |
-| Too many references or invalid duration | Check the selected model's actual limits and reduce inputs; current capability rules are incomplete |
+| Too many references, unsupported resolution, or duration error | Open the selected route in Settings → Engines, check its displayed model limits and VideoFlow reference cap, then choose a supported value or reduce references before retrying |
 | Story progress appears stuck | Stage updates are currently saved at completion; inspect backend errors and Activity before restarting |
 | Refreshed Create page looks empty | Its operation tracking is in memory; inspect Scenes/My videos/Activity before creating a duplicate |
 | Chosen style did not apply | An existing project style guide takes precedence; inspect it under Assets |

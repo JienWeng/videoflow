@@ -8,8 +8,8 @@ Use these pages when identity, recurring objects, or a consistent visual style m
 
 1. Open **Characters**, create a character, and enter a stable name and description.
 2. Describe appearance, clothing, personality, and constraints in concrete terms.
-3. Use **Generate bible** to turn those notes into structured appearance, visual rules, and voice rules.
-4. Review with **Edit**. Correct invented details before generating more media.
+3. Use **Generate bible** to turn those notes into structured appearance, visual rules, and voice rules. Add a short sample dialogue line so later prompts have a concrete example of the character's speaking style.
+4. Review with **Edit**. Correct invented details and the sample line before generating more media. The line guides tone; it does not train a voice or guarantee exact spoken audio.
 5. Use **Upload reference photo** for your own images, or the reference-sheet generation action for AI angles.
 6. Link the character to the scene's cast in Scenes or Studio.
 
@@ -35,4 +35,4 @@ An existing project style guide takes precedence over the style selected on Crea
 
 ## Know the limits
 
-A character bible is reusable production information, not a trained identity model or a guarantee of consistent faces. H3 text-to-video currently receives descriptive prompts but no reference images. OpenRouter sends ordinary references as visual guidance; only explicit first/last-frame asset IDs become frame anchors. Preview every generated take before accepting it.
+A character bible is reusable production information, not a trained identity model or a guarantee of consistent faces. The default AtlasCloud H3 Developer Reference-to-Video route can send character, prop, and storyboard images as visual references within the configured cap. H3 Developer Text-to-Video omits them. OpenRouter sends ordinary references as visual guidance; only explicit first/last-frame asset IDs become frame anchors. Preview every generated take before accepting it.

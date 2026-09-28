@@ -2,7 +2,7 @@
 
 [Handbook](README.md) · Previous: [Projects](04-projects.md) · Next: [Characters and assets](06-characters-assets.md)
 
-You need a running API/frontend, an active project, and configured text and media routes. Existing photos, character bibles, scripts, and videos are optional. Read the [current provider limitations](03-providers.md) first; this workflow is implemented but paid end-to-end success was not established by the audit.
+You need a running API/frontend, an active project, and configured text and media routes. Existing photos, character bibles, scripts, and videos are optional. Read the [current provider limitations](03-providers.md) first. The audit verified local contracts but did not run a paid live generation.
 
 ## Guided workflow
 
@@ -11,9 +11,10 @@ You need a running API/frontend, an active project, and configured text and medi
 3. Choose a visual style and format. Start with vertical or landscape and one short scene.
 4. Choose the language and **Conversational** dialogue.
 5. In More options, use a short target duration and optional dialogue direction, such as “Two brief lines; Maya explains and Leo answers.” The target is a planning hint; each scene must fit the selected video model's actual supported duration.
-6. Click **Create video** once. This starts multiple paid AI stages, not just one video request.
-7. Wait for orchestration to finish. The app then opens **My videos** while render jobs may still be generating.
-8. Open a finished output, play it, check appearance and speech, then download it. Use [captions](10-captions-editor.md) if needed.
+6. Click **Create video** and review the **Before you create** preflight panel. Check the text, image, and video routes; selected format; duration and resolution; reference cap; and whether generated audio is supported. This local check does not contact providers. Resolve any missing route or incompatible setting before proceeding.
+7. Confirm **Create video** once. This starts multiple provider stages, not just one video request, and can incur usage charges.
+8. Wait for orchestration to finish. The app then opens **My videos** while render jobs may still be generating.
+9. Open a finished output, play it, check appearance and speech, then download it. Use [captions](10-captions-editor.md) if needed.
 
 ## Understand the current controls
 

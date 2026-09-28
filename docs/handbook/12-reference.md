@@ -27,10 +27,11 @@
 | `OPENROUTER_MODEL` | OpenRouter text model default |
 | `OPENROUTER_IMAGE_MODEL`, `OPENROUTER_VIDEO_MODEL` | OpenRouter media defaults, used when no saved model override exists |
 | `ATLASCLOUD_API_KEY`, `ATLASCLOUD_BASE_URL` | AtlasCloud media credential/endpoint |
+| `ATLAS_VIDEO_RESOLUTION` | AtlasCloud output resolution; the selected model must support it |
 | `ATLAS_LLM_BASE_URL`, `ATLAS_VL_MODEL` | AtlasCloud vision/text route |
 | `ATLAS_IMAGE_MODEL`, `ATLAS_IMAGE_REF_MODEL` | AtlasCloud text-to-image and reference-edit model IDs |
 | `ATLAS_VIDEO_MODEL` | AtlasCloud video model ID; adapter currently emits H3 payloads |
-| `DEFAULT_IMAGE_PROVIDER`, `DEFAULT_VIDEO_PROVIDER` | Media selection defaults; not honored uniformly across all services |
+| `DEFAULT_IMAGE_PROVIDER`, `DEFAULT_VIDEO_PROVIDER` | Initial media defaults; saved settings may override them, so confirm the effective route in the Create preflight panel |
 | `DATABASE_URL`, `STORAGE_ROOT` | Local database and media locations |
 | `POLL_INTERVAL_S`, `POLL_TIMEOUT_S` | Render polling timing |
 | `LLM_TIMEOUT_S`, `LLM_MAX_RETRIES` | Text request timeout and validation retries |
@@ -70,4 +71,4 @@ npm run check
 npm run build
 ```
 
-The audit baseline has 23 failing backend tests. Consult [verification evidence](../audits/2026-09-27-verification.md); a successful frontend build does not establish media compatibility.
+The current local verification is 640 passing backend tests plus passing frontend checks/build. This verifies local contracts and UI compilation, not paid live provider generation. Consult [verification evidence](../audits/2026-09-27-verification.md) for the exact scope and limitation.

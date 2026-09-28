@@ -19,6 +19,8 @@ Use the graph to answer “Which asset belongs to this shot?” or “Which outp
 
 Type a concrete request, such as “Generate a storyboard for the kitchen scene.” Chat classifies the intent and prepares an action card. Review the selected entity and fields, then use **Run** to call the pipeline action.
 
+The docked chat panel on the right can be collapsed to make room for the canvas, restored from its edge control, or expanded to give the conversation more width. Drag the divider to adjust the split when both panes are open.
+
 A chat response alone does not mean a video was generated. The application executes the reviewed action through an endpoint. Requests for generation, refinement, or recognition may consume provider usage.
 
 Press **Ctrl+K** (Windows/Linux) or **Cmd+K** (macOS) to open the global command palette. Studio-specific node focus actions need the Studio canvas; navigation commands can be used from other pages.

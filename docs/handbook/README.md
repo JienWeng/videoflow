@@ -1,8 +1,8 @@
 # VideoFlow handbook
 
-This handbook describes the implementation inspected on 27 September 2026, including the pending provider and continuity changes. Start here whether you have an empty computer, an empty VideoFlow project, or an existing story.
+This handbook describes the local VideoFlow workflow inspected on 27 September 2026. Start here whether you have an empty computer, an empty VideoFlow project, or an existing story.
 
-**Current readiness:** the workspace and authoring tools are implemented. OpenRouter media routes have deterministic contract coverage, but live account/model behavior and video reference data-URL acceptance remain unverified. The full backend suite currently has 593 passing tests and 23 known failures in the AtlasCloud migration/settings expectations. Read the [implementation audit](../audits/2026-09-27-implementation.md) before depending on unattended generation.
+**Current readiness:** all 640 backend tests pass, frontend checks and build pass, and GitHub CI is green. No paid live provider generation was run for this guide, so confirm credentials, account access, and model behavior before production use. AtlasCloud H3 Developer Reference-to-Video is the default video route; OpenRouter route behavior has contract coverage, but live account/model behavior still needs a smoke test. See [provider setup](03-providers.md) and the [implementation audit](../audits/2026-09-27-implementation.md).
 
 ## Read in order
 

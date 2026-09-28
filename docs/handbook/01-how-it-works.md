@@ -18,11 +18,11 @@ flowchart LR
   Output --> Captions
 ```
 
-The diagram shows application relationships. Whether references and shot timing reach a video model depends on its adapter. The current AtlasCloud H3 adapter sends a text prompt and does not send the stored image references.
+The diagram shows application relationships. The default AtlasCloud H3 Developer Reference-to-Video route sends selected image references, including a storyboard when a direct render has no other reference. H3 Developer Text-to-Video sends a prompt without image references. Provider capability still determines what the generated video follows.
 
 ## Two ways to work
 
-**Create video** runs the script, scene, shot, optional conversational conversion, storyboard, and render-submission stages for you. It produces scene jobs; it does not currently stitch all scenes into one finished movie.
+**Create video** runs the script, scene, shot, dialogue, storyboard, and render-submission stages for you. Before it starts, review the local preflight summary for the selected routes, format, duration, resolution, reference limit, and audio support. Preflight checks configuration without contacting providers. Create produces scene jobs; it does not currently stitch all scenes into one finished movie.
 
 **Advanced** exposes the same stored work in Scenes, Characters, Assets, and Studio. Use it to inspect the script, correct identities, adjust shot durations, and recover intermediate work. Changes to a scene do not rewrite an already generated video. Generate another take after editing.
 

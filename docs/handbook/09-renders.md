@@ -19,7 +19,7 @@ Succeeded does not guarantee that QA passed. QA is best effort and can be absent
 
 ## Review a take
 
-1. Select the scene group in My videos.
+1. Choose **Latest** to see scene groups with recent render activity first, or **Story** to return to the story's scene order. Select a scene group in My videos.
 2. Play the output and inspect identity, action, visual artifacts, timing, and speech.
 3. Review available QA issues and score.
 4. Select the take you want to keep where offered. Selection is scoped to a job's outputs, not a project-wide final edit.
@@ -29,7 +29,7 @@ Succeeded does not guarantee that QA passed. QA is best effort and can be absent
 
 A failed-job **resubmit** reconstructs the saved render spec and sends another provider request. A corrective output retry adds QA feedback. Either can create a new charge. A download failure can happen after the provider already generated and billed a video; inspect that job before paying for another generation.
 
-Saved `RenderSpec` rows are mapped through the currently selected provider adapter. AtlasCloud H3 Developer Reference-to-Video (`minimax/h3-developer/reference-to-video`) receives references through `refers` and a chronological prompt with spoken-dialogue instructions; resubmission preserves the stored model and prompt, then rebuilds that provider payload. A job created with H3 Developer Text-to-Video continues to replay through that model without image references. The older `minimax/h3/reference-to-video` model ID remains supported with its own 768P/2K resolution set.
+Saved `RenderSpec` rows are mapped through the selected provider adapter. AtlasCloud H3 Developer Reference-to-Video (`minimax/h3-developer/reference-to-video`) receives image references through `refers` and a chronological prompt with spoken-dialogue instructions; resubmission preserves the stored model and prompt, then rebuilds the provider payload. A job created with H3 Developer Text-to-Video continues through that model without image references. The older `minimax/h3/reference-to-video` model ID remains supported with its own 768P/2K resolution set.
 
 ## What is currently missing
 
